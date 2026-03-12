@@ -6,6 +6,8 @@ import pauc.pain_au_choc.PauCPipeline;
 import pauc.pain_au_choc.EntityLodBillboardRenderer;
 import pauc.pain_au_choc.TerrainProxyController;
 import pauc.pain_au_choc.render.PauCWorldRenderer;
+import pauc.pain_au_choc.render.shader.DeferredWorldRenderingPipeline;
+import pauc.pain_au_choc.render.shader.WorldRenderingPhase;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -88,6 +90,83 @@ public abstract class LevelRendererMixin {
         PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
         if (renderer != null) {
             renderer.setupTerrain(camera, frustum, this.ticks, isSpectator, false);
+        }
+    }
+
+    // ================================================================
+    // Deferred shader pipeline hooks (Phase 2)
+    // ================================================================
+
+    /**
+     * Begin the deferred pipeline at the start of world rendering.
+     * Initializes uniforms and prepares GBuffer pass if a shaderpack is active.
+     */
+    @Inject(
+            method = "renderLevel(Lcom/mojang/blaze3d/vertex/PoseStack;FJZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/GameRenderer;Lnet/minecraft/client/renderer/LightTexture;Lorg/joml/Matrix4f;)V",
+            at = @At("HEAD")
+    )
+    private void pauc$beginDeferredPipeline(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                             boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                             LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            pipeline.beginWorldRendering(camera, poseStack.last().pose(), projectionMatrix, partialTick);
+            // Execute shadow pass before scene rendering
+            pipeline.renderShadows(() -> {
+                // TODO Phase 3: Render shadow casters (terrain + entities)
+            });
+            // Begin GBuffer geometry pass
+            pipeline.beginGBufferPass();
+        }
+    }
+
+    /**
+     * After all geometry is rendered, run deferred + composite + final passes.
+     */
+    @Inject(
+            method = "renderLevel(Lcom/mojang/blaze3d/vertex/PoseStack;FJZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/GameRenderer;Lnet/minecraft/client/renderer/LightTexture;Lorg/joml/Matrix4f;)V",
+            at = @At("RETURN")
+    )
+    private void pauc$endDeferredPipeline(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                           boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                           LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            // End GBuffer geometry pass
+            pipeline.endGBufferPass();
+
+            // Run deferred lighting passes
+            pipeline.runDeferredPasses();
+
+            // Run composite post-processing passes
+            pipeline.runCompositePasses();
+
+            // Run final tone-mapping pass to screen
+            pipeline.runFinalPass();
+
+            pipeline.endWorldRendering();
+        }
+    }
+
+    /**
+     * Set shader rendering phase for terrain chunks.
+     */
+    @Inject(
+            method = "renderChunkLayer(Lnet/minecraft/client/renderer/RenderType;Lcom/mojang/blaze3d/vertex/PoseStack;DDDLorg/joml/Matrix4f;)V",
+            at = @At("HEAD")
+    )
+    private void pauc$setTerrainPhase(RenderType renderType, PoseStack poseStack, double camX, double camY,
+                                       double camZ, Matrix4f projectionMatrix, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            // Set appropriate GBuffer phase based on render type
+            if (renderType == RenderType.solid()) {
+                pipeline.setPhase(WorldRenderingPhase.TERRAIN_SOLID);
+            } else if (renderType == RenderType.cutout() || renderType == RenderType.cutoutMipped()) {
+                pipeline.setPhase(WorldRenderingPhase.TERRAIN_CUTOUT);
+            } else if (renderType == RenderType.translucent()) {
+                pipeline.setPhase(WorldRenderingPhase.TERRAIN_TRANSLUCENT);
+            }
         }
     }
 
