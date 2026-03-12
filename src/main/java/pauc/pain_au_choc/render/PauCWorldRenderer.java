@@ -167,14 +167,8 @@ public class PauCWorldRenderer {
         PauCTerrainRenderPass pass = DefaultTerrainRenderPasses.fromVanilla(renderType);
         if (pass == null) return;
 
-        pass.startDrawing();
-
-        // TODO Phase 1.5: Use PauCChunkRenderer to draw visible sections for this pass
-        // For now, the mixin falls through to vanilla rendering
-        List<PauCRenderSection> visible = this.sectionManager.getVisibleSections();
-        // Actual draw calls will be added in Phase 1.5
-
-        pass.endDrawing();
+        // Delegate to the section manager which uses PauCChunkRenderer for GPU draw calls
+        this.sectionManager.renderLayer(pass, modelView, camX, camY, camZ);
     }
 
     // ---- Block entity rendering ----

@@ -16,8 +16,10 @@ import pauc.pain_au_choc.render.region.PauCRenderRegion;
 import pauc.pain_au_choc.render.terrain.DefaultTerrainRenderPasses;
 import pauc.pain_au_choc.render.terrain.PauCTerrainRenderPass;
 
+import pauc.pain_au_choc.render.compile.PauCChunkBuildOutput;
+import pauc.pain_au_choc.render.compile.PauCChunkBuilder;
+
 import java.util.*;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Consumer;
 
 /**
@@ -53,8 +55,14 @@ public class PauCRenderSectionManager {
     /** Queues for pending updates, keyed by priority. */
     private final Map<ChunkUpdateType, ArrayDeque<PauCRenderSection>> rebuildLists = new EnumMap<>(ChunkUpdateType.class);
 
-    /** Results from async chunk build tasks. */
-    private final ConcurrentLinkedDeque<Object> buildResults = new ConcurrentLinkedDeque<>();
+    /** Multi-threaded chunk mesh builder. */
+    private PauCChunkBuilder chunkBuilder;
+
+    /** GPU upload manager. */
+    private final PauCUploadManager uploadManager = new PauCUploadManager();
+
+    /** GPU chunk renderer. */
+    private PauCChunkRenderer chunkRenderer;
 
     /** Current camera state. */
     private Vec3 cameraPosition = Vec3.ZERO;
@@ -72,6 +80,8 @@ public class PauCRenderSectionManager {
         this.world = world;
         this.renderDistance = renderDistance;
         this.occlusionCuller = new PauCOcclusionCuller(this.sectionByPosition, world);
+        this.chunkBuilder = new PauCChunkBuilder(world);
+        this.chunkRenderer = new PauCChunkRenderer(this.uploadManager);
 
         // Initialize rebuild queues
         for (ChunkUpdateType type : ChunkUpdateType.values()) {
@@ -238,24 +248,31 @@ public class PauCRenderSectionManager {
                 PauCRenderSection section = queue.poll();
                 if (section.isDisposed()) continue;
 
-                // TODO Phase 1.3: Submit to PauCChunkBuilder thread pool
-                // For now, mark as needs build
-                budget--;
+                // Submit to the multi-threaded chunk builder
+                boolean accepted = this.chunkBuilder.submitBuild(section, this.currentFrame, type);
+                if (accepted) {
+                    section.setPendingUpdate(null); // Clear pending flag
+                    budget--;
+                } else {
+                    // Back-pressure: re-enqueue and stop this priority level
+                    queue.addFirst(section);
+                    break;
+                }
             }
         }
     }
 
     /**
      * Upload completed mesh data to GPU buffers.
-     * Called after updateChunks.
+     * Called after updateChunks on the render thread.
      */
     public void uploadChunks() {
-        // TODO Phase 1.5: Process buildResults queue and upload to GPU
-        // Drain build results
-        while (!this.buildResults.isEmpty()) {
-            Object result = this.buildResults.poll();
-            // Process result...
-        }
+        // Drain completed build results from the worker threads
+        List<PauCChunkBuildOutput> results = this.chunkBuilder.drainResults();
+        if (results.isEmpty()) return;
+
+        // Upload all results to GPU via the upload manager
+        this.uploadManager.upload(results);
     }
 
     // ---- Rendering ----
@@ -267,6 +284,30 @@ public class PauCRenderSectionManager {
     public List<PauCRenderSection> getVisibleSections() {
         return this.visibleSections;
     }
+
+    /**
+     * Render a terrain pass for all visible sections.
+     * Delegates to PauCChunkRenderer for GPU draw calls.
+     *
+     * @param pass           The terrain render pass (SOLID, CUTOUT, TRANSLUCENT)
+     * @param modelViewMatrix Current model-view matrix
+     * @param cameraX        Camera world X position
+     * @param cameraY        Camera world Y position
+     * @param cameraZ        Camera world Z position
+     */
+    public void renderLayer(PauCTerrainRenderPass pass, org.joml.Matrix4f modelViewMatrix,
+                             double cameraX, double cameraY, double cameraZ) {
+        this.chunkRenderer.renderPass(this.visibleSections, pass, modelViewMatrix, cameraX, cameraY, cameraZ);
+    }
+
+    /** Get the chunk renderer for statistics. */
+    public PauCChunkRenderer getChunkRenderer() { return this.chunkRenderer; }
+
+    /** Get the upload manager. */
+    public PauCUploadManager getUploadManager() { return this.uploadManager; }
+
+    /** Get the chunk builder for back-pressure info. */
+    public PauCChunkBuilder getChunkBuilder() { return this.chunkBuilder; }
 
     /**
      * Iterate over all visible block entities.
@@ -348,6 +389,8 @@ public class PauCRenderSectionManager {
         this.world = world;
         if (world != null) {
             this.occlusionCuller = new PauCOcclusionCuller(this.sectionByPosition, world);
+            this.chunkBuilder = new PauCChunkBuilder(world);
+            this.chunkRenderer = new PauCChunkRenderer(this.uploadManager);
         }
     }
 
@@ -359,6 +402,19 @@ public class PauCRenderSectionManager {
     // ---- Cleanup ----
 
     public void destroy() {
+        // Shutdown chunk builder threads
+        if (this.chunkBuilder != null) {
+            this.chunkBuilder.destroy();
+        }
+
+        // Release GPU resources
+        if (this.chunkRenderer != null) {
+            this.chunkRenderer.destroy();
+        }
+        if (this.uploadManager != null) {
+            this.uploadManager.destroy();
+        }
+
         for (PauCRenderSection section : this.sectionByPosition.values()) {
             section.delete();
         }
@@ -371,7 +427,6 @@ public class PauCRenderSectionManager {
 
         this.visibleSections.clear();
         this.sectionsWithGlobalEntities.clear();
-        this.buildResults.clear();
         for (ArrayDeque<PauCRenderSection> queue : this.rebuildLists.values()) {
             queue.clear();
         }
@@ -389,7 +444,8 @@ public class PauCRenderSectionManager {
         for (ArrayDeque<PauCRenderSection> q : this.rebuildLists.values()) {
             pending += q.size();
         }
-        lines.add("Pending builds: " + pending);
+        lines.add("Pending builds: " + pending + ", Builder: " + this.chunkBuilder.toString());
+        lines.add(this.chunkRenderer.getDebugString());
         return lines;
     }
 
