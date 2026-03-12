@@ -5,7 +5,10 @@ import pauc.pain_au_choc.ChunkBuildQueueController;
 import pauc.pain_au_choc.PauCPipeline;
 import pauc.pain_au_choc.EntityLodBillboardRenderer;
 import pauc.pain_au_choc.TerrainProxyController;
+import pauc.pain_au_choc.render.PauCWorldRenderer;
 import net.minecraft.client.Camera;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
@@ -13,10 +16,12 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.chunk.ChunkRenderDispatcher;
 import net.minecraft.client.renderer.chunk.RenderRegionCache;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
 import net.minecraft.world.entity.Entity;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -25,8 +30,70 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(LevelRenderer.class)
 public abstract class LevelRendererMixin {
+    @Shadow private ClientLevel level;
+    @Shadow private int ticks;
+
     @Unique
     private boolean pauc$lastChunkScheduled;
+
+    // ================================================================
+    // PAUC Embeddium-like pipeline hooks (Phase 1.6)
+    // ================================================================
+
+    /**
+     * Initialize PauCWorldRenderer when Minecraft creates the LevelRenderer.
+     * This ensures the singleton is ready before any world is loaded.
+     */
+    @Inject(method = "<init>", at = @At("RETURN"))
+    private void pauc$onInit(Minecraft minecraft, net.minecraft.client.renderer.entity.EntityRenderDispatcher entityRenderDispatcher,
+                              net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher blockEntityRenderDispatcher,
+                              net.minecraft.client.renderer.RenderBuffers renderBuffers, CallbackInfo ci) {
+        new PauCWorldRenderer(minecraft);
+    }
+
+    /**
+     * When the world changes, notify PauCWorldRenderer.
+     */
+    @Inject(method = "setLevel", at = @At("RETURN"))
+    private void pauc$onSetLevel(ClientLevel world, CallbackInfo ci) {
+        PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
+        if (renderer != null) {
+            renderer.setWorld(world);
+        }
+    }
+
+    /**
+     * When the renderer is reloaded (resource packs, render distance, etc.),
+     * notify PauCWorldRenderer.
+     */
+    @Inject(method = "allChanged", at = @At("RETURN"))
+    private void pauc$onAllChanged(CallbackInfo ci) {
+        PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
+        if (renderer != null) {
+            renderer.reload();
+        }
+    }
+
+    /**
+     * Hook into setupRender to run PAUC's visibility/culling before vanilla.
+     * We inject BEFORE the vanilla setupRender body to run our occlusion culler
+     * and schedule chunk builds.
+     */
+    @Inject(
+            method = "setupRender(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/culling/Frustum;ZZ)V",
+            at = @At("HEAD")
+    )
+    private void pauc$onSetupRender(Camera camera, Frustum frustum, boolean hasForcedFrustum,
+                                     boolean isSpectator, CallbackInfo ci) {
+        PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
+        if (renderer != null) {
+            renderer.setupTerrain(camera, frustum, this.ticks, isSpectator, false);
+        }
+    }
+
+    // ================================================================
+    // Original PAUC hooks (sky, clouds, weather, entities, etc.)
+    // ================================================================
 
     @Inject(
             method = "renderSky(Lcom/mojang/blaze3d/vertex/PoseStack;Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V",
@@ -70,7 +137,16 @@ public abstract class LevelRendererMixin {
             cancellable = true
     )
     private void pauc$simplifyChunkLayers(RenderType renderType, PoseStack poseStack, double camX, double camY, double camZ, Matrix4f projectionMatrix, CallbackInfo callbackInfo) {
+        // First check: PAUC budget may skip this layer entirely
         if (!PauCPipeline.shouldRenderChunkLayer(renderType)) {
+            callbackInfo.cancel();
+            return;
+        }
+
+        // Second check: redirect through PAUC's Embeddium-like GPU renderer
+        PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
+        if (renderer != null && renderer.getSectionManager() != null) {
+            renderer.drawChunkLayer(renderType, poseStack.last().pose(), camX, camY, camZ);
             callbackInfo.cancel();
         }
     }
