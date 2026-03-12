@@ -9,7 +9,10 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
+import pauc.pain_au_choc.ChunkBuildQueueController;
 import pauc.pain_au_choc.GlobalPerformanceGovernor;
+import pauc.pain_au_choc.ManagedChunkRadiusController;
+import pauc.pain_au_choc.PauCClient;
 import pauc.pain_au_choc.render.occlusion.GraphDirection;
 import pauc.pain_au_choc.render.occlusion.PauCOcclusionCuller;
 import pauc.pain_au_choc.render.region.PauCRenderRegion;
@@ -446,6 +449,14 @@ public class PauCRenderSectionManager {
         }
         lines.add("Pending builds: " + pending + ", Builder: " + this.chunkBuilder.toString());
         lines.add(this.chunkRenderer.getDebugString());
+
+        // Governor integration info
+        if (this.governor != null) {
+            lines.add("Governor: " + GlobalPerformanceGovernor.getMode()
+                    + " pressure=" + GlobalPerformanceGovernor.getGlobalPressure()
+                    + " distMul=" + String.format("%.2f", getGovernorDistanceMultiplier())
+                    + " buildBudget=" + getFrameBuildBudget());
+        }
         return lines;
     }
 
@@ -481,18 +492,47 @@ public class PauCRenderSectionManager {
     }
 
     private int getFrameBuildBudget() {
-        // Base budget, adjusted by PAUC quality
-        int base = 8;
-        if (this.governor != null) {
-            // Governor provides budget multiplier based on mode and pressure
-            // TODO Phase 1.7: integrate with ChunkBuildQueueController
+        // If PAUC budget system is not active, use generous default
+        if (!PauCClient.isBudgetActive()) {
+            return 12;
         }
-        return base;
+
+        // Use ChunkBuildQueueController's computed budget (factors in CPU level,
+        // quality ratio, latency, bottleneck, back-pressure, authority, and governor mode)
+        int controllerBudget = ChunkBuildQueueController.beginCompilePass();
+        if (controllerBudget == Integer.MAX_VALUE) {
+            return 16; // Uncapped
+        }
+
+        // Scale based on governor mode multiplier
+        double modeMultiplier = GlobalPerformanceGovernor.getChunkCompileBudgetMultiplier();
+        int budget = (int) Math.round(controllerBudget * modeMultiplier);
+
+        // Also factor in the ChunkBuilder's own back-pressure
+        float builderPressure = this.chunkBuilder.getBackPressureRatio();
+        if (builderPressure > 0.8f) {
+            budget = Math.max(2, budget / 2); // Reduce budget under heavy load
+        }
+
+        return Math.max(2, Math.min(24, budget));
     }
 
     private float getGovernorDistanceMultiplier() {
-        // TODO Phase 1.7: integrate with ManagedChunkRadiusController
-        return 1.0f;
+        if (!PauCClient.isBudgetActive()) {
+            return 1.0f;
+        }
+
+        // Use ManagedChunkRadiusController to get the effective chunk radius
+        int managedRadius = ManagedChunkRadiusController.getManagedRadiusChunks();
+        if (managedRadius <= 0 || this.renderDistance <= 0) {
+            return 1.0f;
+        }
+
+        // Ratio of managed radius to configured render distance
+        float multiplier = (float) managedRadius / this.renderDistance;
+
+        // Clamp: never go below 50% or above 100% of configured distance
+        return Math.max(0.5f, Math.min(1.0f, multiplier));
     }
 
     private static long sectionKey(int x, int y, int z) {
