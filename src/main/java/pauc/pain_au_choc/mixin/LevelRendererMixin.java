@@ -1,0 +1,183 @@
+package pauc.pain_au_choc.mixin;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import pauc.pain_au_choc.ChunkBuildQueueController;
+import pauc.pain_au_choc.PauCPipeline;
+import pauc.pain_au_choc.EntityLodBillboardRenderer;
+import pauc.pain_au_choc.TerrainProxyController;
+import net.minecraft.client.Camera;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.GameRenderer;
+import net.minecraft.client.renderer.chunk.ChunkRenderDispatcher;
+import net.minecraft.client.renderer.chunk.RenderRegionCache;
+import net.minecraft.client.renderer.entity.EntityRenderDispatcher;
+import net.minecraft.world.entity.Entity;
+import org.joml.Matrix4f;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+@Mixin(LevelRenderer.class)
+public abstract class LevelRendererMixin {
+    @Unique
+    private boolean pauc$lastChunkScheduled;
+
+    @Inject(
+            method = "renderSky(Lcom/mojang/blaze3d/vertex/PoseStack;Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private void pauc$simplifySky(PoseStack poseStack, Matrix4f projectionMatrix, float partialTick, Camera camera, boolean foggy, Runnable fogSetup, CallbackInfo callbackInfo) {
+        if (PauCPipeline.shouldRenderSkyMesh()) {
+            return;
+        }
+
+        fogSetup.run();
+        callbackInfo.cancel();
+    }
+
+    @Inject(
+            method = "renderClouds(Lcom/mojang/blaze3d/vertex/PoseStack;Lorg/joml/Matrix4f;FDDD)V",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private void pauc$simplifyClouds(PoseStack poseStack, Matrix4f projectionMatrix, float partialTick, double camX, double camY, double camZ, CallbackInfo callbackInfo) {
+        if (!PauCPipeline.shouldRenderClouds()) {
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(
+            method = "renderSnowAndRain(Lnet/minecraft/client/renderer/LightTexture;FDDD)V",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private void pauc$simplifyWeather(LightTexture lightTexture, float partialTick, double camX, double camY, double camZ, CallbackInfo callbackInfo) {
+        if (!PauCPipeline.shouldRenderWeather()) {
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(
+            method = "renderChunkLayer(Lnet/minecraft/client/renderer/RenderType;Lcom/mojang/blaze3d/vertex/PoseStack;DDDLorg/joml/Matrix4f;)V",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private void pauc$simplifyChunkLayers(RenderType renderType, PoseStack poseStack, double camX, double camY, double camZ, Matrix4f projectionMatrix, CallbackInfo callbackInfo) {
+        if (!PauCPipeline.shouldRenderChunkLayer(renderType)) {
+            callbackInfo.cancel();
+        }
+    }
+
+    @Inject(
+            method = "renderLevel(Lcom/mojang/blaze3d/vertex/PoseStack;FJZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/GameRenderer;Lnet/minecraft/client/renderer/LightTexture;Lorg/joml/Matrix4f;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/LevelRenderer;setupRender(Lnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/culling/Frustum;ZZ)V",
+                    shift = At.Shift.BEFORE
+            )
+    )
+    private void pauc$renderTerrainProxy(
+            PoseStack poseStack,
+            float partialTick,
+            long finishNanoTime,
+            boolean renderBlockOutline,
+            Camera camera,
+            GameRenderer gameRenderer,
+            LightTexture lightTexture,
+            Matrix4f projectionMatrix,
+            CallbackInfo callbackInfo
+    ) {
+        TerrainProxyController.render(poseStack, projectionMatrix, camera, partialTick);
+    }
+
+    @Inject(
+            method = "renderEntity(Lnet/minecraft/world/entity/Entity;DDDFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private void pauc$simplifyEntities(Entity entity, double camX, double camY, double camZ, float partialTick, PoseStack poseStack, MultiBufferSource multiBufferSource, CallbackInfo callbackInfo) {
+        if (!PauCPipeline.shouldRenderEntity(entity)) {
+            callbackInfo.cancel();
+            return;
+        }
+
+        if (!PauCPipeline.shouldRenderEntityThisFrame(entity)) {
+            callbackInfo.cancel();
+            return;
+        }
+
+        if (PauCPipeline.shouldRenderEntityAsBillboard(entity)) {
+            EntityLodBillboardRenderer.render(entity, camX, camY, camZ, poseStack, multiBufferSource);
+            callbackInfo.cancel();
+        }
+    }
+
+    @Redirect(
+            method = "renderEntity(Lnet/minecraft/world/entity/Entity;DDDFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;render(Lnet/minecraft/world/entity/Entity;DDDFFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V"
+            )
+    )
+    private void pauc$applyEntityLodPartialTick(EntityRenderDispatcher entityRenderDispatcher, Entity entity, double x, double y, double z, float yaw, float partialTick, PoseStack poseStack, MultiBufferSource multiBufferSource, int packedLight) {
+        float lodPartialTick = PauCPipeline.remapEntityPartialTick(entity, partialTick);
+        entityRenderDispatcher.render(entity, x, y, z, yaw, lodPartialTick, poseStack, multiBufferSource, packedLight);
+    }
+
+    @Inject(
+            method = "compileChunks(Lnet/minecraft/client/Camera;)V",
+            at = @At("HEAD")
+    )
+    private void pauc$beginChunkCompileBudget(Camera camera, CallbackInfo callbackInfo) {
+        ChunkBuildQueueController.beginCompilePass();
+        this.pauc$lastChunkScheduled = false;
+    }
+
+    @Redirect(
+            method = "compileChunks(Lnet/minecraft/client/Camera;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher$RenderChunk;rebuildChunkAsync(Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher;Lnet/minecraft/client/renderer/chunk/RenderRegionCache;)V"
+            )
+    )
+    private void pauc$applyChunkCompileBackPressure(ChunkRenderDispatcher.RenderChunk renderChunk, ChunkRenderDispatcher chunkRenderDispatcher, RenderRegionCache renderRegionCache) {
+        if (ChunkBuildQueueController.consumeBuildSlot()) {
+            renderChunk.rebuildChunkAsync(chunkRenderDispatcher, renderRegionCache);
+            this.pauc$lastChunkScheduled = true;
+            return;
+        }
+
+        this.pauc$lastChunkScheduled = false;
+    }
+
+    @Redirect(
+            method = "compileChunks(Lnet/minecraft/client/Camera;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/chunk/ChunkRenderDispatcher$RenderChunk;setNotDirty()V",
+                    ordinal = 1
+            )
+    )
+    private void pauc$preserveDirtyFlagWhenDeferred(ChunkRenderDispatcher.RenderChunk renderChunk) {
+        if (this.pauc$lastChunkScheduled) {
+            renderChunk.setNotDirty();
+        }
+        this.pauc$lastChunkScheduled = false;
+    }
+
+    @Inject(
+            method = "compileChunks(Lnet/minecraft/client/Camera;)V",
+            at = @At("RETURN")
+    )
+    private void pauc$endChunkCompileBudget(Camera camera, CallbackInfo callbackInfo) {
+        ChunkBuildQueueController.endCompilePass();
+    }
+}
+

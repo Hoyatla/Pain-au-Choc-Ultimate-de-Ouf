@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "compatibilityLevel": "JAVA_17",
+  "package": "pauc.pain_au_choc.mixin",
+  "refmap": "mixins.pauc.refmap.json",
+  "mixins": [
+    "MobServerAiMixin"
+  ],
+  "client": [
+    "BlockEntityRenderDispatcherMixin",
+    "EntityMixin",
+    "EntityRenderDispatcherMixin",
+    "GameRendererAccessor",
+    "GameRendererMixin",
+    "ItemEntityRendererMixin",
+    "LevelRendererMixin",
+    "MinecraftMainRenderTargetAccessor",
+    "MinecraftMixin",
+    "ParticleEngineAccessor",
+    "ParticleEngineMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
+

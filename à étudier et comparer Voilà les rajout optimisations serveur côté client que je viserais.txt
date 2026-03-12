@@ -1,0 +1,337 @@
+En clair :
+
+client = FPS, rendu, GPU, draw calls
+
+serveur intégré = TPS, logique, IA, chunks, collisions, block entities, pathfinding
+
+Si tu veux un mod vraiment fort, il faut que ton gouverneur de performance pilote les deux côtés.
+
+Ce qu’il faut viser côté serveur intégré
+
+Le bon objectif n’est pas “faire tourner tout moins souvent au hasard”.
+
+Le bon objectif est :
+
+tenir 20 TPS en réduisant d’abord ce que le joueur remarque le moins.
+
+1. Budget de tick entités
+
+Très rentable.
+
+Tu peux créer un système de tick LOD pour les entités :
+
+proches du joueur : tick normal
+
+moyennes distances : tick 1 fois sur 2
+
+lointaines : tick 1 fois sur 4
+
+très lointaines : sommeil partiel
+
+Ça marche bien surtout sur :
+
+animaux passifs
+
+mobs hors combat
+
+items au sol
+
+minecarts/boats inactifs
+
+À éviter ou traiter à part :
+
+entités en combat
+
+entités montées
+
+villager en échange actif
+
+redstone contraptions basées sur entités
+
+boss
+
+Idée simple :
+
+if (distanceSq > FAR_DIST_SQ && !isCriticalEntity(entity)) {
+    if ((serverTick + entity.getId()) % 4 != 0) {
+        skipTick(entity);
+    }
+}
+
+Le modulo décalé par entityId évite que tout saute le même tick.
+
+
+2. Activation Range serveur
+
+Très classique, mais redoutable.
+
+Le serveur ne devrait pas simuler toutes les entités de tous les chunks chargés avec la même intensité.
+
+Tu peux créer des zones d’activation :
+
+rayon combat
+
+rayon interaction
+
+rayon ambiance
+
+Exemple :
+
+mobs hostiles : activation plus large
+
+animaux : plus courte
+
+projectiles : toujours actifs
+
+items au sol : courte
+
+villagers : moyenne, selon heure/activité
+
+Ça coupe énormément les coûts d’IA et de déplacement.
+
+3. Pathfinding Budget
+
+Le pathfinding est souvent un tueur de TPS.
+
+Tu peux ajouter :
+
+quota max de path recalculés par tick
+
+cache de chemins courts
+
+cooldown de recalcul
+
+priorité haute seulement si le mob est proche ou engagé
+
+Exemple :
+
+zombie à 80 blocs du joueur → recalcul de path bien moins fréquent
+
+mob bloqué depuis 20 ticks → ne pas recalculer chaque tick
+
+villagers lointains → navigation simplifiée
+
+Idée :
+
+if (pathBudgetExceededThisTick) {
+    deferPathRecompute(entity);
+}
+
+Ça donne un effet énorme dans les villages et fermes à mobs.
+
+4. Collision Budget
+
+Les collisions entité-bloc et entité-entité coûtent cher.
+
+Tu peux optimiser en deux étages :
+
+broad phase : spatial index / grille / octree
+
+narrow phase : seulement pour les candidats proches
+
+Comme tu as déjà un BoxOctree côté client, tu peux reprendre la logique côté logique serveur pour :
+
+recherche des voisins
+
+collisions
+
+entités interactives proches
+
+densité locale
+
+Très bon sur les zones avec beaucoup d’items et mobs.
+
+5. Chunk Tick Budget
+
+Là, tu tiens quelque chose de très solide si tu l’unifies avec ton ChunkBudgetController.
+
+Idée : tous les chunks chargés ne valent pas le même coût.
+
+Tu peux classer les chunks :
+
+hot : près du joueur, activité forte
+
+warm : un peu plus loin
+
+cold : chargés mais peu importants
+
+Puis ralentir dans les chunks froids :
+
+entités
+
+block entities
+
+random ticks secondaires
+
+scans techniques
+
+C’est plus propre qu’un simple “simulation distance” global.
+
+6. Block updates / redstone burst control
+
+Très utile dans les mondes industriels.
+
+Quand il y a un burst :
+
+redstone clocks
+
+chaînes de hoppers
+
+machines modées
+
+fermes auto
+
+tu peux mettre un budget max d’updates par tick pour éviter les spikes.
+
+Pas pour casser la logique, mais pour étaler ce qui peut l’être.
+
+Exemple :
+
+traiter un paquet d’updates cette tick
+
+reporter le surplus au tick suivant
+
+prioriser ce qui est proche du joueur
+
+Ça ne fait pas gagner le coût total, mais ça lisse les grosses chutes TPS.
+
+7. Random Tick Governor
+
+Très bon pour mondes lourds.
+
+Tu peux faire varier dynamiquement certains coûts liés au monde quand le serveur interne décroche :
+
+croissance cultures
+
+feuilles
+
+feu
+
+comportements naturels secondaires
+
+Pas besoin de toucher brutalement au gamerule affiché au joueur.
+Tu peux faire un gouverneur interne qui réduit certains traitements non critiques quand le tick time monte.
+
+8. Sleep / Idle detection
+
+Très rentable.
+
+Détecter ce qui est effectivement inactif :
+
+entité immobile
+
+machine sans input/output
+
+hopper sans changement
+
+chunk sans joueur proche
+
+village hors activité
+
+spawner hors portée utile
+
+Puis basculer dans un mode “veille”.
+
+C’est souvent plus puissant que les optimisations purement globales.
+
+9. Internal client-server packet coalescing
+
+Dans le serveur intégré, le client et le serveur se parlent localement, mais il reste quand même des coûts de sync.
+
+Tu peux réduire certains coûts de synchronisation en regroupant les mises à jour non urgentes :
+
+inventaires
+
+block entity states décoratifs
+
+métadonnées visuelles secondaires
+
+À faire avec prudence, mais ça peut réduire un peu les à-coups en solo moddé.
+
+Ce que je te conseille concrètement d’ajouter
+
+Si tu veux quelque chose de propre, ajoute un second gouverneur :
+
+ServerTickBudgetManager
+
+Il piloterait par tick :
+
+budget entités
+
+budget block entities
+
+budget pathfinding
+
+budget collisions
+
+budget chunk activity
+
+budget random ticks
+
+priorité des chunks proches du joueur
+
+Avec comme métriques :
+
+mspt réel
+
+moyenne glissante sur 20/100 ticks
+
+pic max récent
+
+densité entités locale
+
+densité block entities locale
+
+nombre de paths recalculés
+
+nombre de chunks actifs
+
+Puis règles simples :
+
+si mspt > 50 ms → mode protection
+
+si mspt > 40 ms → réduction douce
+
+si mspt < 35 ms stable → relâcher progressivement
+
+Ordre de priorité des optimisations serveur
+
+Les plus rentables, selon moi :
+
+Niveau 1
+
+Chunk activity tiers
+
+Collision broad-phase optimisée
+
+Burst smoothing redstone / machines
+
+Niveau 2
+
+Random tick governor
+
+Sync local client-serveur plus intelligente
+
+Le plus important : ne pas casser le gameplay
+
+Côté serveur intégré, le piège c’est de gagner des perfs en détruisant la cohérence.
+
+Il faut donc marquer certaines choses comme intouchables :
+
+combat proche du joueur
+
+projectiles
+
+redstone critique proche
+
+interactions inventaire
+
+chunks autour du joueur
+
+boss
+
+véhicules utilisés
+
+pathfinding engagé à courte portée
+
+Le reste peut être ralenti de façon adaptative.

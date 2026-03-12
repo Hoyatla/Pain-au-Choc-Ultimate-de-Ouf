@@ -1,0 +1,38 @@
+PAUC QUICK CHECKLIST (A/B)
+
+1) Prepare
+- Use same world, same route, same packs, same shader stack.
+- Disable VSync.
+- Keep game restart between profile changes if needed.
+
+2) Profiles
+- A baseline: PauC OFF
+- B1 stable: PauC ON, quality 7, CPU 2, RCAS 0.35
+- B2 aggressive: PauC ON, quality 5, CPU 3, RCAS 0.45
+
+Quick apply from project root (PowerShell):
+- .\tools\apply_pauc_profile.ps1 -Profile baseline_off
+- .\tools\apply_pauc_profile.ps1 -Profile stable
+- .\tools\apply_pauc_profile.ps1 -Profile aggressive
+
+3) Scene order
+- Village
+- Fast movement/chunk loading
+- Combat particles
+- Modded base
+
+4) Pass order each scene
+- A -> B1 -> A -> B2 (3 min each)
+
+5) Track
+- FPS average
+- FPS 1% low
+- Stutter count
+- Visual issues
+- Errors/crashes
+
+6) Fill file
+- RESULTATS_TESTS_AB_PAUC.csv
+
+7) Keep or rollback
+- Keep if +15% 1% low OR -30% stutters, no major visual issue.

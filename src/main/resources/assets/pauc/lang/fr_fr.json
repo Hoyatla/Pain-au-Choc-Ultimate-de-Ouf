@@ -1,0 +1,16 @@
+{
+  "key.categories.pauc": "PauC",
+  "key.pauc.toggle": "Activer/desactiver Pain au Choc ultimate de Ouf",
+  "key.pauc.cycle_quality": "Changer la qualite Pain au Choc ultimate de Ouf",
+  "key.pauc.open_menu": "Ouvrir le menu Pain au Choc ultimate de Ouf",
+  "screen.pauc.title": "Pain au Choc ultimate de Ouf",
+  "text.pauc.quality_hint": "1 Pizza Ananas pourrie = minimum, 10 Frite parfaite = maximum",
+  "option.pauc.enabled": "Pain au Choc ultimate de Ouf : %s",
+  "option.pauc.quality": "Niveau de qualite : %s",
+  "option.pauc.cpu_involvement": "Implication CPU (taches) : %s",
+  "option.pauc.frame_time_stabilizer": "Stabilisateur frametime : %s",
+  "option.pauc.gpu_bottleneck": "Detecteur GPU bottleneck : %s",
+  "option.pauc.advanced_sharpening": "Sharpening avance (RCAS) : %s",
+  "option.pauc.advanced_sharpening_blocked": "Sharpening avance (RCAS) : bloque (shader mod)",
+  "option.pauc.sharpen_strength": "Intensite sharpening : %s%%"
+}

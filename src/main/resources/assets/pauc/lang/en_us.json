@@ -1,0 +1,16 @@
+{
+  "key.categories.pauc": "PauC",
+  "key.pauc.toggle": "Toggle Pain au Choc ultimate de Ouf",
+  "key.pauc.cycle_quality": "Cycle Pain au Choc ultimate de Ouf Quality",
+  "key.pauc.open_menu": "Open Pain au Choc ultimate de Ouf Menu",
+  "screen.pauc.title": "Pain au Choc ultimate de Ouf",
+  "text.pauc.quality_hint": "1 Rotten Pineapple Pizza = minimum, 10 Perfect Fries = maximum",
+  "option.pauc.enabled": "Pain au Choc ultimate de Ouf: %s",
+  "option.pauc.quality": "Quality level: %s",
+  "option.pauc.cpu_involvement": "CPU involvement (tasks): %s",
+  "option.pauc.frame_time_stabilizer": "Frame time stabilizer: %s",
+  "option.pauc.gpu_bottleneck": "GPU bottleneck detector: %s",
+  "option.pauc.advanced_sharpening": "Advanced sharpening (RCAS): %s",
+  "option.pauc.advanced_sharpening_blocked": "Advanced sharpening (RCAS): blocked (shader mod)",
+  "option.pauc.sharpen_strength": "Sharpening strength: %s%%"
+}
