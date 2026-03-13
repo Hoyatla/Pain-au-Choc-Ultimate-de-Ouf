@@ -7,6 +7,8 @@ import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.*;
 
+import pauc.pain_au_choc.GlobalPerformanceGovernor;
+
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -39,6 +41,9 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
 
     /** Shadow map render targets. */
     private ShadowRenderTargets shadowTargets;
+
+    /** Dedicated shadow renderer. */
+    private ShadowRenderer shadowRenderer;
 
     /** Standard uniform manager. */
     private final ShaderUniforms uniforms = new ShaderUniforms();
@@ -96,10 +101,11 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
         this.gbuffers = new GBufferTargets();
         this.gbuffers.create(screenWidth, screenHeight, colorTargets);
 
-        // Create shadow targets if the shaderpack uses shadows
+        // Create shadow targets and renderer if the shaderpack uses shadows
         if (this.shaderPack.hasShadow) {
             this.shadowTargets = new ShadowRenderTargets();
             this.shadowTargets.create(this.shadowMapResolution);
+            this.shadowRenderer = new ShadowRenderer(this);
         }
 
         // Compile all shader programs
@@ -174,35 +180,20 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
 
     /**
      * Execute the shadow pass.
-     * Renders the scene from the sun/moon perspective into shadow maps.
+     * Delegates to the dedicated ShadowRenderer which handles terrain and entity
+     * rendering from the light's perspective into shadow maps.
+     *
+     * @param camera    The player camera
+     * @param partialTick Partial tick for entity interpolation
      */
-    public void renderShadows(Runnable sceneRenderer) {
-        if (!this.initialized || this.shadowTargets == null) return;
+    public void renderShadows(Camera camera, float partialTick) {
+        if (!this.initialized || this.shadowRenderer == null) return;
+
+        // Governor may skip shadows entirely in extreme crisis
+        if (GlobalPerformanceGovernor.shouldSkipShadowPass()) return;
 
         this.currentPhase = WorldRenderingPhase.SHADOW;
-
-        // Set up shadow matrices
-        Matrix4f shadowView = computeShadowModelView();
-        Matrix4f shadowProj = computeShadowProjection();
-        this.uniforms.setShadowModelView(shadowView);
-        this.uniforms.setShadowProjection(shadowProj);
-
-        // Bind shadow FBO
-        this.shadowTargets.bind();
-        GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-
-        // Use shadow program
-        PauCShaderProgram shadowProg = this.compiledPrograms.get("shadow");
-        if (shadowProg != null) {
-            shadowProg.bind();
-            this.uniforms.apply(shadowProg);
-        }
-
-        // Render scene into shadow map
-        sceneRenderer.run();
-
-        PauCShaderProgram.unbind();
-        ShadowRenderTargets.unbind();
+        this.shadowRenderer.renderShadowPass(camera, partialTick);
         this.currentPhase = WorldRenderingPhase.NONE;
     }
 
@@ -343,7 +334,11 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
     // Helpers
     // ============================
 
-    private PauCShaderProgram getCompiledProgram(String name) {
+    /**
+     * Look up a compiled shader program by name, following the fallback chain.
+     * Package-private so ShadowRenderer can access it.
+     */
+    PauCShaderProgram getCompiledProgram(String name) {
         PauCShaderProgram prog = this.compiledPrograms.get(name);
         if (prog != null) return prog;
 
@@ -416,15 +411,20 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
     public ShaderPackLoader.ShaderPack getShaderPack() { return shaderPack; }
     public GBufferTargets getGBuffers() { return gbuffers; }
     public ShadowRenderTargets getShadowTargets() { return shadowTargets; }
+    public ShadowRenderer getShadowRenderer() { return shadowRenderer; }
     public ShaderUniforms getUniforms() { return uniforms; }
     public boolean isInitialized() { return initialized; }
 
     public String getDebugString() {
         if (!initialized) return "PAUC Shader: inactive";
-        return "PAUC Shader: " + (shaderPack != null ? shaderPack.name : "?")
+        String debug = "PAUC Shader: " + (shaderPack != null ? shaderPack.name : "?")
                 + " phase=" + currentPhase
                 + " programs=" + compiledPrograms.size()
                 + " shadow=" + (shadowTargets != null);
+        if (shadowRenderer != null) {
+            debug += " | " + shadowRenderer.getDebugString();
+        }
+        return debug;
     }
 
     // ============================
@@ -442,6 +442,8 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
             this.gbuffers.close();
             this.gbuffers = null;
         }
+
+        this.shadowRenderer = null;
 
         if (this.shadowTargets != null) {
             this.shadowTargets.close();

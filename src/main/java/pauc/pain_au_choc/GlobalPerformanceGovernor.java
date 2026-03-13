@@ -133,6 +133,29 @@ public final class GlobalPerformanceGovernor {
         };
     }
 
+    /**
+     * Shadow distance multiplier per governor mode.
+     * CRISIS and COMBAT reduce shadow distance to save GPU time,
+     * BASE stays normal, TRANSIT and EXPLORATION are full.
+     */
+    public static double getShadowDistanceMultiplier() {
+        return switch (mode) {
+            case CRISIS -> 0.50D;
+            case COMBAT -> 0.75D;
+            case BASE -> 0.90D;
+            case TRANSIT -> 1.00D;
+            default -> 1.00D; // EXPLORATION
+        };
+    }
+
+    /**
+     * Whether the deferred shader pipeline should skip shadow rendering entirely.
+     * Only in extreme crisis with high pressure.
+     */
+    public static boolean shouldSkipShadowPass() {
+        return mode == GlobalPerformanceMode.CRISIS && globalPressure >= 3;
+    }
+
     public static boolean shouldFavorPlayerAffectedChunkPriority() {
         return mode == GlobalPerformanceMode.TRANSIT || mode == GlobalPerformanceMode.COMBAT || mode == GlobalPerformanceMode.CRISIS;
     }

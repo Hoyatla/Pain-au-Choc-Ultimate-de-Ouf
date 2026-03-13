@@ -111,10 +111,8 @@ public abstract class LevelRendererMixin {
         DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
         if (pipeline != null && pipeline.isInitialized()) {
             pipeline.beginWorldRendering(camera, poseStack.last().pose(), projectionMatrix, partialTick);
-            // Execute shadow pass before scene rendering
-            pipeline.renderShadows(() -> {
-                // TODO Phase 3: Render shadow casters (terrain + entities)
-            });
+            // Execute shadow pass — renders terrain + entities from light's perspective
+            pipeline.renderShadows(camera, partialTick);
             // Begin GBuffer geometry pass
             pipeline.beginGBufferPass();
         }
@@ -167,6 +165,110 @@ public abstract class LevelRendererMixin {
             } else if (renderType == RenderType.translucent()) {
                 pipeline.setPhase(WorldRenderingPhase.TERRAIN_TRANSLUCENT);
             }
+        }
+    }
+
+    /**
+     * Set entity rendering phase for shader programs.
+     * This allows shaderpacks to use gbuffers_entities program.
+     */
+    @Inject(
+            method = "renderEntity(Lnet/minecraft/world/entity/Entity;DDDFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V",
+            at = @At("HEAD")
+    )
+    private void pauc$setEntityPhase(Entity entity, double camX, double camY, double camZ,
+                                      float partialTick, PoseStack poseStack,
+                                      MultiBufferSource multiBufferSource, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            // Glowing entities use a different program in OptiFine spec
+            if (entity.isCurrentlyGlowing()) {
+                pipeline.setPhase(WorldRenderingPhase.ENTITIES);
+            } else {
+                pipeline.setPhase(WorldRenderingPhase.ENTITIES);
+            }
+        }
+    }
+
+    /**
+     * Set sky rendering phase for shader programs.
+     */
+    @Inject(
+            method = "renderSky(Lcom/mojang/blaze3d/vertex/PoseStack;Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V",
+            at = @At("HEAD")
+    )
+    private void pauc$setSkyPhase(PoseStack poseStack, Matrix4f projectionMatrix, float partialTick,
+                                    Camera camera, boolean foggy, Runnable fogSetup, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            pipeline.setPhase(WorldRenderingPhase.SKY);
+        }
+    }
+
+    /**
+     * Set weather rendering phase for shader programs.
+     */
+    @Inject(
+            method = "renderSnowAndRain(Lnet/minecraft/client/renderer/LightTexture;FDDD)V",
+            at = @At("HEAD")
+    )
+    private void pauc$setWeatherPhase(LightTexture lightTexture, float partialTick,
+                                        double camX, double camY, double camZ, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            pipeline.setPhase(WorldRenderingPhase.WEATHER);
+        }
+    }
+
+    /**
+     * Set cloud rendering phase for shader programs.
+     */
+    @Inject(
+            method = "renderClouds(Lcom/mojang/blaze3d/vertex/PoseStack;Lorg/joml/Matrix4f;FDDD)V",
+            at = @At("HEAD")
+    )
+    private void pauc$setCloudPhase(PoseStack poseStack, Matrix4f projectionMatrix, float partialTick,
+                                      double camX, double camY, double camZ, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            pipeline.setPhase(WorldRenderingPhase.CLOUDS);
+        }
+    }
+
+    /**
+     * Reset phase after entity rendering completes (return from renderEntity).
+     */
+    @Inject(
+            method = "renderEntity(Lnet/minecraft/world/entity/Entity;DDDFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V",
+            at = @At("RETURN")
+    )
+    private void pauc$resetEntityPhase(Entity entity, double camX, double camY, double camZ,
+                                        float partialTick, PoseStack poseStack,
+                                        MultiBufferSource multiBufferSource, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            // Reset to the previous terrain phase — entities are rendered interleaved with terrain
+            pipeline.setPhase(WorldRenderingPhase.NONE);
+        }
+    }
+
+    /**
+     * Set block entity rendering phase for shader programs.
+     * This allows shaderpacks to use gbuffers_block program.
+     */
+    @Inject(
+            method = "renderLevel(Lcom/mojang/blaze3d/vertex/PoseStack;FJZLnet/minecraft/client/Camera;Lnet/minecraft/client/renderer/GameRenderer;Lnet/minecraft/client/renderer/LightTexture;Lorg/joml/Matrix4f;)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher;render(Lnet/minecraft/world/level/block/entity/BlockEntity;FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;)V"
+            )
+    )
+    private void pauc$setBlockEntityPhase(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                            boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                            LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
+        DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
+        if (pipeline != null && pipeline.isInitialized()) {
+            pipeline.setPhase(WorldRenderingPhase.BLOCK_ENTITIES);
         }
     }
 
