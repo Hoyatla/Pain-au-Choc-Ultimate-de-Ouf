@@ -1,125 +1,103 @@
-Voilà les 10 optimisations très hardcore que je viserais.
-1. Résolution interne dynamique pilotée par frametime
+VoilÃ  les 10 optimisations trÃ¨s hardcore que je viserais.
+1. RÃ©solution interne dynamique pilotÃ©e par frametime
 Pas juste un upscale shader.
-Il te faut un vrai Dynamic Resolution Scaling :
 * cible en ms/frame, pas seulement en FPS,
 * baisse rapide quand le GPU sature,
-* remontée lente pour éviter le pompage,
+* remontÃ©e lente pour Ã©viter le pompage,
 * couplage avec sharpen adaptatif.
 Exemple de logique :
 * cible 16.6 ms
 * si GPU > 18 ms pendant N frames ? scale 0.95 puis 0.90 puis 0.85
 * si GPU < 14 ms stable ? remonte doucement
-Pourquoi c’est hardcore : ça demande une boucle de contrôle propre, stable, et un historique de frametime GPU.
-Pourquoi ça peut battre Sodium sur certaines scènes : Sodium optimise beaucoup le pipeline, mais si tu rends moins de pixels intelligemment, tu peux gagner beaucoup plus dans les scènes GPU-bound.
-2. Occlusion culling hiérarchique basé profondeur
-Le vrai cran au-dessus, c’est un système de Hi-Z occlusion culling :
+2. Occlusion culling hiÃ©rarchique basÃ© profondeur
+Le vrai cran au-dessus, câ€™est un systÃ¨me de Hi-Z occlusion culling :
 * depth pyramid / hierarchical Z,
 * test des bounding volumes avant soumission,
-* rejet des chunks, block entities et entités masquées.
-Ton octree est une bonne base, mais il faut aller jusqu’au culling par visibilité réelle, pas juste distance/frustum.
-Pourquoi c’est hardcore :
-* il faut gérer la latence de visibilité,
-* éviter le popping,
-* garder un coût GPU/CPU inférieur au gain.
-Pourquoi ça peut battre Sodium : dans des villes, bases, grottes, forêts denses, les objets cachés sont innombrables.
-3. Clustered / tiled visibility pour entités et block entities
-Au lieu de traiter les entités une par une :
-* découpe l’espace écran ou monde en tiles/clusters,
-* fais une passe de visibilité et de budget par cluster,
-* rends / ticks / anime selon priorité.
-Ça te permet de faire :
+* rejet des chunks, block entities et entitÃ©s masquÃ©es.
+* il faut gÃ©rer la latence de visibilitÃ©,
+* Ã©viter le popping,
+* garder un coÃ»t GPU/CPU infÃ©rieur au gain.
+3. Clustered / tiled visibility pour entitÃ©s et block entities
+Au lieu de traiter les entitÃ©s une par une :
+* dÃ©coupe lâ€™espace Ã©cran ou monde en tiles/clusters,
+* fais une passe de visibilitÃ© et de budget par cluster,
+* rends / ticks / anime selon prioritÃ©.
 * culling plus fin,
 * budgets locaux,
 * LOD local,
 * plafonds par zone.
-C’est bien plus agressif qu’un simple rayon global.
-4. LOD multi-niveaux pour entités
-Pas juste “render / no render”.
+4. LOD multi-niveaux pour entitÃ©s
+Pas juste â€œrender / no renderâ€.
 Il faut 4 ou 5 niveaux :
-* LOD0 : rendu complet, animation complète
-* LOD1 : animation simplifiée
-* LOD2 : pose mise à jour moins souvent
-* LOD3 : impostor / sprite orienté caméra
+* LOD0 : rendu complet, animation complÃ¨te
+* LOD1 : animation simplifiÃ©e
+* LOD2 : pose mise Ã  jour moins souvent
+* LOD3 : impostor / sprite orientÃ© camÃ©ra
 * LOD4 : proxy ou rien
-Applicable à :
+Applicable Ã  :
 * mobs passifs
 * villagers
 * armor stands
 * items au sol
-* entités décoratives modées
-Pourquoi c’est puissant : dans beaucoup de scènes moddées, le goulet n’est plus le terrain mais la masse d’entités visibles.
-5. LOD de terrain réel, pas seulement distance de chunks
-C’est la philosophie Distant Horizons : rendre du terrain simplifié au loin au lieu de continuer à pousser la géométrie standard. Distant Horizons dit explicitement rendre des chunks simplifiés au-delà de la distance normale pour permettre une plus grande distance de vue sans casser les performances. 
+* entitÃ©s dÃ©coratives modÃ©es
+5. LOD de terrain rÃ©el, pas seulement distance de chunks
 Pour toi, version hardcore :
-* génération de meshes simplifiés par chunk / macro-chunk,
+* gÃ©nÃ©ration de meshes simplifiÃ©s par chunk / macro-chunk,
 * fusion des surfaces coplanaires,
-* atlas matériaux pour loin,
+* atlas matÃ©riaux pour loin,
 * stream disque + cache RAM + cache VRAM.
-Là, tu peux viser des panoramas que Sodium seul ne tiendra pas aussi bien.
-6. Rebuild de meshes chunk par régions + cache incrémental
-Une des grosses douleurs du rendu Minecraft, c’est la reconstruction de meshes.
-Version hardcore :
-* découpage par sub-chunks / régions de matériaux,
+6. Rebuild de meshes chunk par rÃ©gions + cache incrÃ©mental
+* dÃ©coupage par sub-chunks / rÃ©gions de matÃ©riaux,
 * invalidation ultra-fine,
-* cache de géométrie tant que la topologie ne change pas,
-* recompilation incrémentale,
-* pool mémoire dédié pour éviter les allocs.
+* cache de gÃ©omÃ©trie tant que la topologie ne change pas,
+* recompilation incrÃ©mentale,
+* pool mÃ©moire dÃ©diÃ© pour Ã©viter les allocs.
 Objectif :
 * moins de rebuilds complets,
 * moins de stutter,
 * frametime plus propre.
-C’est typiquement le genre de chose qui ne se voit pas sur un benchmark “FPS moyen”, mais qui écrase la concurrence sur la sensation réelle.
 7. Upload GPU asynchrone + ring buffers persistants
-Très technique, très rentable si bien fait.
-Idée :
+IdÃ©e :
 * buffers persistants,
-* uploads groupés,
-* ring buffer pour géométrie dynamique,
-* évitement des stalls CPU?GPU,
-* réduction des sync points.
-C’est ce qui fait la différence entre :
-* “beaucoup de FPS sur capture statique”
-* et “frame pacing propre quand le joueur se déplace vite”.
-Si ton objectif est de battre Sodium sur le micro-stutter, ça vaut de l’or.
-8. Moteur de budgets unifié client + serveur intégré
-Ça, c’est probablement ton angle le plus original.
-Sodium se concentre surtout sur le rendu client ; Lithium couvre beaucoup de systèmes jeu ; Starlight a réécrit l’éclairage. 
-Toi, tu peux construire un governor global :
+* uploads groupÃ©s,
+* ring buffer pour gÃ©omÃ©trie dynamique,
+* Ã©vitement des stalls CPU?GPU,
+* rÃ©duction des sync points.
+* â€œbeaucoup de FPS sur capture statiqueâ€
+* et â€œframe pacing propre quand le joueur se dÃ©place viteâ€.
+8. Moteur de budgets unifiÃ© client + serveur intÃ©grÃ©
+construire un governor global :
 * budget rendu
 * budget chunks
 * budget particules
-* budget entités visibles
+* budget entitÃ©s visibles
 * budget block entities
 * budget pathfinding
 * budget simulation distance
-* budget résolution interne
-Le tout piloté par :
+* budget rÃ©solution interne
+Le tout pilotÃ© par :
 * frametime GPU
 * frametime CPU
-* MSPT du serveur intégré
+* MSPT du serveur intÃ©grÃ©
 * pression VRAM
-* densité locale
-C’est là que tu peux surclasser un mod purement rendu en solo moddé.
+* densitÃ© locale
 9. Virtualisation VRAM / streaming intelligent des textures et assets
-Très peu de mods Minecraft vont loin là-dessus.
-Tu peux tenter :
-* préchauffage des mip levels probables,
+* prÃ©chauffage des mip levels probables,
 * chargement agressif des mips lointains uniquement,
-* relâchement des assets peu probables,
-* budget VRAM avec éviction contrôlée,
-* détection des packs HD dangereux.
-Sur certains setups, le vrai problème n’est pas le shader ou le CPU. C’est la pression VRAM, qui entraîne hitches, swaps, et frametimes dégueulasses.
-Si ton mod sait survivre à un pack textures lourd mieux que Sodium, tu as un vrai avantage différenciant.
-10. Réécriture ciblée du pipeline lumière / transparence / particules
-Starlight montre qu’une réécriture profonde d’un sous-système peut rapporter gros. Son objectif affiché est précisément de réécrire le moteur de lumière vanilla. 
+* relÃ¢chement des assets peu probables,
+* budget VRAM avec Ã©viction contrÃ´lÃ©e,
+* dÃ©tection des packs HD dangereux.
+Sur certains setups, le vrai problÃ¨me nâ€™est pas le shader ou le CPU. Câ€™est la pression VRAM, qui entraÃ®ne hitches, swaps, et frametimes dÃ©gueulasses.
+Si ton mod sait survivre Ã  un pack textures lourd, tu as un vrai avantage diffÃ©renciant.
+10. RÃ©Ã©criture ciblÃ©e du pipeline lumiÃ¨re / transparence / particules
+Starlight montre quâ€™une rÃ©Ã©criture profonde dâ€™un sous-systÃ¨me peut rapporter gros. Son objectif affichÃ© est prÃ©cisÃ©ment de rÃ©Ã©crire le moteur de lumiÃ¨re vanilla. 
 Toi, le cran au-dessus serait :
-* pipeline séparé pour particules,
+* pipeline sÃ©parÃ© pour particules,
 * budget transparence,
 * binning des effets,
-* ordre simplifié quand surcharge,
-* lumière locale approximée pour objets lointains,
-* mode “degraded but stable” quand surcharge GPU.
-En gros : ne pas traiter chaque effet comme sacré.
-Quand la scène déborde, il faut que le moteur sache tricher proprement.
+* ordre simplifiÃ© quand surcharge,
+* lumiÃ¨re locale approximÃ©e pour objets lointains,
+* mode â€œdegraded but stableâ€ quand surcharge GPU.
+En gros : ne pas traiter chaque effet comme sacrÃ©.
+Quand la scÃ¨ne dÃ©borde, il faut que le moteur sache tricher proprement.
 
