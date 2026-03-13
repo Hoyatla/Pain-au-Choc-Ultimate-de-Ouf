@@ -13,7 +13,7 @@ public class PauCGlBuffer implements AutoCloseable {
     public enum Type {
         VERTEX(GL15.GL_ARRAY_BUFFER),
         INDEX(GL15.GL_ELEMENT_ARRAY_BUFFER),
-        UNIFORM(GL30.GL_UNIFORM_BUFFER);
+        UNIFORM(org.lwjgl.opengl.GL31.GL_UNIFORM_BUFFER);
 
         public final int glTarget;
 

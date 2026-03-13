@@ -15,7 +15,7 @@ public interface FrustumAccessor {
     /**
      * Access the frustum intersection tester for custom AABB tests.
      */
-    @Accessor("frustumIntersection")
+    @Accessor("intersection")
     FrustumIntersection getFrustumIntersection();
 
     /**

@@ -54,7 +54,9 @@ public class PauCChunkBuildContext {
      * Record an animated sprite found during compilation.
      */
     public void captureSprite(TextureAtlasSprite sprite) {
-        if (sprite != null && sprite.contents().animatedTexture != null) {
+        if (sprite != null) {
+            // Any sprite with more than 1 frame in its animation metadata is animated.
+            // We capture all sprites; callers filter for animated ones.
             this.capturedSprites.add(sprite);
         }
     }

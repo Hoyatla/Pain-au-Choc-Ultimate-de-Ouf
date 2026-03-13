@@ -94,11 +94,8 @@ public class PauCWorldRenderer {
             this.renderDistance = this.client.options.renderDistance().get();
             this.sectionManager = new PauCRenderSectionManager(this.client, world, this.renderDistance);
 
-            // Connect to PAUC governor if available
-            GlobalPerformanceGovernor governor = PauCClient.getGovernor();
-            if (governor != null) {
-                this.sectionManager.setGovernor(governor);
-            }
+            // Governor is static — section manager accesses it directly via
+            // GlobalPerformanceGovernor.getMode() / .getGlobalPressure() etc.
         } else {
             this.sectionManager = null;
         }

@@ -111,7 +111,7 @@ public class PauCChunkRenderer {
 
             // Push section offset to the model-view matrix
             // The shader needs to know the section's position relative to camera
-            RenderSystem.getModelViewStack().pushMatrix();
+            RenderSystem.getModelViewStack().pushPose();
             RenderSystem.getModelViewStack().translate(offsetX, offsetY, offsetZ);
             RenderSystem.applyModelViewMatrix();
 
@@ -121,7 +121,7 @@ public class PauCChunkRenderer {
                     gpuData.vertexOffset);
 
             // Pop matrix
-            RenderSystem.getModelViewStack().popMatrix();
+            RenderSystem.getModelViewStack().popPose();
             RenderSystem.applyModelViewMatrix();
 
             this.lastDrawCalls++;
