@@ -3,6 +3,8 @@ package pauc.pain_au_choc;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.forgespi.language.IModInfo;
 
+import pauc.pain_au_choc.render.shader.DeferredWorldRenderingPipeline;
+
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -89,24 +91,44 @@ public final class AuthoritativeRuntimeController {
         return runtimePressureBias;
     }
 
+    /**
+     * Check if PAUC's own internal shader pipeline is active.
+     * When active, PAUC owns the shader domain natively and external
+     * contest flags for shader_pipeline don't apply the same way.
+     */
+    public static boolean isInternalShaderPipelineActive() {
+        return DeferredWorldRenderingPipeline.isShaderActive();
+    }
+
+    /**
+     * When PAUC's own deferred pipeline is active, DRS should render into the
+     * pipeline's GBuffer FBO rather than the vanilla framebuffer.
+     * We only yield to external pipelines (Oculus/Iris) not our own.
+     */
     public static boolean shouldYieldDynamicResolutionToExternalPipeline() {
-        return shaderPipelineContested;
+        return shaderPipelineContested && !isInternalShaderPipelineActive();
     }
 
     public static boolean shouldYieldAdaptiveFrameCapToExternalPipeline() {
-        return shaderPipelineContested;
+        return shaderPipelineContested && !isInternalShaderPipelineActive();
     }
 
     public static boolean shouldYieldEntityBillboardsToExternalPipeline() {
-        return shaderPipelineContested;
+        return shaderPipelineContested && !isInternalShaderPipelineActive();
     }
 
     public static boolean shouldYieldAdvancedSharpeningToExternalPipeline() {
-        return shaderPipelineContested;
+        return shaderPipelineContested && !isInternalShaderPipelineActive();
     }
 
+    /**
+     * Terrain proxy is disabled when external shaders contest, but stays
+     * available when PAUC's own deferred pipeline runs (it manages its own
+     * GBuffer state and knows how to handle proxy geometry).
+     */
     public static boolean shouldDisableTerrainProxy() {
-        return chunkAuthorityContested || shaderPipelineContested;
+        if (chunkAuthorityContested) return true;
+        return shaderPipelineContested && !isInternalShaderPipelineActive();
     }
 
     public static String getTerrainProxyBlockReason() {
@@ -291,16 +313,23 @@ public final class AuthoritativeRuntimeController {
 
     private static Map<String, ModAuthorityPolicy> createKnownPolicies() {
         HashMap<String, ModAuthorityPolicy> policies = new HashMap<>();
-        registerPolicy(policies, "embeddium", AuthorityDomain.RENDER_BACKEND, ModDisposition.DELEGATED_BACKEND);
-        registerPolicy(policies, "rubidium", AuthorityDomain.RENDER_BACKEND, ModDisposition.DELEGATED_BACKEND);
+        // PAUC now owns render_backend and shader_pipeline natively.
+        // Embeddium/Rubidium conflict with PAUC's built-in Embeddium-like chunk renderer.
+        registerPolicy(policies, "embeddium", AuthorityDomain.RENDER_BACKEND, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
+        registerPolicy(policies, "rubidium", AuthorityDomain.RENDER_BACKEND, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
+        // Oculus/Iris conflict with PAUC's built-in Oculus-like shader pipeline.
+        registerPolicy(policies, "oculus", AuthorityDomain.SHADER_PIPELINE, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
+        registerPolicy(policies, "iris", AuthorityDomain.SHADER_PIPELINE, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
+        // Passive mods — no conflict with PAUC
         registerPolicy(policies, "geckolib", AuthorityDomain.ENTITY_RENDERING, ModDisposition.PASSIVE_ALLOWED);
         registerPolicy(policies, "servercore", AuthorityDomain.SERVER_SIMULATION, ModDisposition.PASSIVE_ALLOWED);
         registerPolicy(policies, "vmp", AuthorityDomain.SERVER_SIMULATION, ModDisposition.PASSIVE_ALLOWED);
-        registerPolicy(policies, "oculus", AuthorityDomain.SHADER_PIPELINE, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
+        // Contested — external mods that overlap with PAUC managed domains
         registerPolicy(policies, "distanthorizons", AuthorityDomain.CHUNK_STREAMING, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
         registerPolicy(policies, "flerovium", AuthorityDomain.RENDER_BACKEND, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
         registerPolicy(policies, "replaymod", AuthorityDomain.CAPTURE_PIPELINE, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
         registerPolicy(policies, "reforgedplaymod", AuthorityDomain.CAPTURE_PIPELINE, ModDisposition.FORBIDDEN_IN_AUTHORITATIVE_PROFILE);
+        // High risk — may destabilize server tick
         registerPolicy(policies, "expandedworld", AuthorityDomain.WORLDGEN, ModDisposition.HIGH_RISK);
         return policies;
     }

@@ -9,8 +9,11 @@
   ],
   "client": [
     "BlockEntityRenderDispatcherMixin",
+    "ClientLevelMixin",
+    "DebugScreenOverlayMixin",
     "EntityMixin",
     "EntityRenderDispatcherMixin",
+    "FrustumAccessor",
     "GameRendererAccessor",
     "GameRendererMixin",
     "ItemEntityRendererMixin",
