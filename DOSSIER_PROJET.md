@@ -17,7 +17,7 @@ Document de reprise proxy a relire en priorite en cas de plantage:
 - Nom visible: `Pain au Choc ultimate de Ouf`
 - Identifiant technique principal: `pauc`
 - Scope: optimisation client Minecraft 1.20.1 Forge
-- Release courante: `1.4.1-ultimate`
+- Release courante: `2.0.0-ultimate`
 
 ## Objectif produit
 
@@ -31,6 +31,23 @@ Obtenir en solo un pilotage unifie client + serveur integre, en priorisant stabi
 
 ## Systeme en production
 
+### Pipeline de rendu (Embeddium-like, natif)
+- Renderer de chunks optimise avec format de vertex compact (20 octets/vertex).
+- Compilation de mesh multi-thread avec back-pressure.
+- Occlusion culler BFS avec matrice de visibilite 6x6 en `long` 64-bit.
+- Rendu terrain GPU par multidraw batching.
+- Gestion de sections par region.
+
+### Pipeline de shaders deferes (Oculus-like, natif)
+- Chargeur de shaderpacks OptiFine (ZIP + dossier, `#include`, macros).
+- Rendu GBuffer (`colortex0-7`, `depthtex0-2`).
+- Shadow mapping avec distance adaptative par mode gouverneur.
+- Passes deferred + composite + final.
+- Systeme d'uniforms (camera, celestial, temps, brouillard, PauC exclusifs).
+- Suivi des phases de rendu pour programmes `gbuffers_*`.
+- UI de selection de shaderpack dans F10 + persistance config.
+
+### Gouvernance et performance
 - Gouverneur qualite `1..10`.
 - Ajustements runtime options video.
 - Entity LOD local multistade + bridge GeckoLib optionnel.
@@ -56,14 +73,21 @@ Obtenir en solo un pilotage unifie client + serveur integre, en priorisant stabi
   - `crisis`
 - Runtime autoritaire:
   - classification `delegated backend` / `passive` / `forbidden` / `high-risk`
-  - suivi des domaines `render_backend`, `shader_pipeline`, `chunk_streaming`, `server_simulation`, `capture_pipeline`, `worldgen`
+  - suivi des domaines `render_backend`, `shader_pipeline`, `chunk_streaming`, `server_simulation`, `capture_pipeline`, `worldgen`, `entity_rendering`
   - statut runtime `sovereign` / `contested` / `degraded`
+  - reconnaissance du pipeline deferred interne (pas de yield a soi-meme)
+
+### Debug overlay F3
+- Etat PauC, mode gouverneur, pression, autorite, chunks visible/total, shader, pipeline deferred.
 
 ## Compatibilite runtime
 
-- Embeddium: backend rendu tolere.
+PauC possede nativement les domaines `render_backend` et `shader_pipeline`.
+
+- Embeddium / Rubidium: domaine `render_backend` conteste (PauC natif).
+- Oculus / Iris: domaine `shader_pipeline` conteste (PauC natif).
 - ServerCore / VMP: modules passifs toleres.
-- Oculus: domaine `shader_pipeline` conteste.
+- GeckoLib: rendu entites passif tolere.
 - Stack replay: domaine `capture_pipeline` conteste.
 - Distant Horizons: domaine `chunk_streaming` conteste.
 - Flerovium: domaine `render_backend` conteste.
@@ -90,6 +114,9 @@ Parametres exposes F10:
 - cycle shader actif
 - reload shaders externes
 - ouverture dossier shader
+- cycle shaderpack deferred (OptiFine)
+- reload shaderpack deferred
+- ouverture dossier `shaderpacks/`
 
 ## Configuration persistante
 
@@ -104,9 +131,10 @@ Parametres exposes F10:
   - `cpuInvolvementLevel`
   - `frameTimeStabilizerEnabled`
   - `gpuBottleneckDetectorEnabled`
-- `advancedSharpeningEnabled`
-- `advancedSharpeningStrength`
-- `activeShaderKey`
+  - `advancedSharpeningEnabled`
+  - `advancedSharpeningStrength`
+  - `activeShaderKey`
+  - `deferredShaderPack`
 
 ## Build
 
@@ -124,10 +152,17 @@ Build:
 
 Artefact:
 
-- `build/libs/pauc-ultimate-de-ouf-1.4.1-ultimate.jar`
+- `build/libs/pauc-ultimate-de-ouf-2.0.0-ultimate.jar`
 
 ## Historique recent
 
+- **2.0.0**: Integration native du renderer Embeddium-like et du pipeline deferred Oculus-like.
+  - Renderer de chunks optimise avec vertex compact, multidraw, occlusion culler BFS.
+  - Pipeline deferred complet: GBuffers, shadow mapping, composite/final passes.
+  - Support shaderpacks OptiFine natif depuis `shaderpacks/`.
+  - UI shaderpack deferred dans F10 + persistance config.
+  - Debug overlay F3.
+  - Runtime autoritaire: PauC possede nativement `render_backend` et `shader_pipeline`.
 - Suppression LOD terrain/proxy distant.
 - Ajout Entity LOD local.
 - Ajout queue compile chunks priorisee + back-pressure.
@@ -140,8 +175,6 @@ Artefact:
 - Ajout d'une premiere logique predictive au proxy terrain.
 - Ajout du backend shaderpack externe multi-pass PauC.
 - Correction du runtime pour garder PauC actif a `qualityLevel=10`.
-- Le proxy terrain ne cede plus au simple stack replay hors vrai conflit shader/streaming.
-- Les packs exemples deviennent directement chargeables sous `packs/`.
 
 ## Etat transfert 2026-03-12
 

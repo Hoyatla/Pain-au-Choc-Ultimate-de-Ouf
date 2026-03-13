@@ -1,8 +1,8 @@
 # Pain au Choc ultimate de Ouf (PauC UO) - Forge 1.20.1
 
-Version courante: `1.4.1-ultimate`
+Version courante: `2.0.0-ultimate`
 
-Pain au Choc ultimate de Ouf est la variante experimentale orientee gouverneur global client + serveur integre: budgets de rendu, arbitrage runtime, autorite pack-wide, lisibilite camera et stabilite sous charge.
+Pain au Choc ultimate de Ouf est un mod all-in-one de performance Minecraft Forge 1.20.1. Il integre un renderer de chunks optimise (Embeddium-like), un pipeline de shaders deferes (Oculus-like), un gouverneur global client + serveur integre, des budgets de rendu, un arbitrage runtime autoritaire, de la lisibilite camera et de la stabilite sous charge.
 
 ## Passation
 
@@ -20,6 +20,27 @@ Pour transfert a un nouveau mainteneur, commencer par:
 
 ## Fonctionnalites actives
 
+### Pipeline de rendu de chunks (Embeddium-like)
+- Format de vertex compact (20 octets/vertex au lieu de 32 vanilla).
+- Compilation de mesh multi-thread avec back-pressure.
+- Occlusion culler BFS avec matrice de visibilite 6x6 encodee en `long` 64-bit.
+- Rendu terrain GPU par multidraw batching.
+- Gestion de sections par region.
+- Mixins remplacant le rendu de chunks vanilla.
+- Integration complete avec le gouverneur, le budget et le proxy terrain PauC.
+
+### Pipeline de shaders deferes (Oculus-like)
+- Chargeur de shaderpacks OptiFine (ZIP + dossier, `#include`, macros).
+- Rendu GBuffer (`colortex0-7`, `depthtex0-2`).
+- Shadow mapping avec distance adaptative par mode gouverneur.
+- Passes deferred + composite + final.
+- Systeme d'uniforms (camera, celestial, temps, brouillard, uniforms PauC exclusifs).
+- Suivi des phases de rendu (`WorldRenderingPhase`) pour les programmes `gbuffers_*`.
+- UI de selection de shaderpack dans l'ecran F10 (cycle, reload, dossier).
+- Persistance du shaderpack selectionne dans la config.
+- Activation automatique du shaderpack sauvegarde au demarrage.
+
+### Gouvernance et performance
 - Pilotage dynamique de plusieurs options video selon un niveau de qualite `1..10`.
 - Gouverneur global runtime avec modes `exploration`, `combat`, `transit`, `base`, `crisis`.
 - Runtime autoritaire `AuthoritativeRuntimeController`.
@@ -44,23 +65,29 @@ Pour transfert a un nouveau mainteneur, commencer par:
 - Shaderpacks externes PauC multi-pass.
 - Mode `Sharp` interne base sur RCAS avec intensite reglable.
 
-## Ce que la variante ajoute maintenant
+### Debug overlay F3
+- Affichage dans l'ecran F3 de l'etat PauC: qualite, budget, mode gouverneur, pression, autorite, chunks visible/total, shader actif, pipeline deferred (pack + etat).
 
+## Ce que la variante 2.0 ajoute
+
+- Renderer de chunks Embeddium-like integre nativement dans PauC.
+- Pipeline de shaders deferes Oculus-like integre nativement dans PauC.
+- Support des shaderpacks OptiFine standard depuis `shaderpacks/` (meme emplacement qu'Iris/Oculus).
+- Shadow mapping avec distance adaptative par mode gouverneur (skip en CRISIS haute pression).
+- Hooks de phase entites et block-entities pour les programmes `gbuffers_*`.
+- Le runtime autoritaire reconnait le pipeline deferred interne (pas de yield a soi-meme).
+- Debug overlay F3 avec l'etat complet du pipeline PauC.
 - Classification de la stack en `delegated backend`, `passive`, `forbidden`, `high-risk`.
 - Statut d'autorite runtime `sovereign`, `contested`, `degraded`.
 - Pression pack injectee dans le gouverneur global.
 - Penalite compile chunks et throttle chunk streaming quand un domaine est conteste ou qu'un risque worldgen est detecte.
-- Affichage du statut d'autorite dans l'ecran `F10`.
 - Decouplage entre rayon detail vanilla, rayon de streaming PauC et rayon proxy jusqu'a `256` chunks geres.
 - Cache ephemere de proxies terrain alimentes par les chunks charges.
-- Rendu terrain lointain simplifie injecte avant le setup terrain vanilla.
 - Capture proxy predictive avec biais vers l'avant du joueur selon le mouvement et le mode runtime.
-- Backend shaderpack externe multi-pass pilote par PauC, en dossier ou `.zip`.
-- Passes built-in actuelles: `fxaa_photon`, `fxaa_elite`, `shadow_lift`, `light_clarity`, `warm_tonemap`.
+- Backend shaderpack PauC multi-pass en dossier ou `.zip` (en plus des packs OptiFine).
+- Passes built-in PauC: `fxaa_photon`, `fxaa_elite`, `shadow_lift`, `light_clarity`, `warm_tonemap`.
 - Controle shader depuis l'ecran `F10` avec cycle, reload et ouverture du dossier.
 - Niveau `10` conserve maintenant le runtime PauC actif au lieu de couper tout le budget.
-- Le proxy terrain n'est plus desactive par la seule presence du stack replay quand aucun vrai conflit shader/chunk n'est detecte.
-- Les exemples shaderpacks generes sont maintenant directement chargeables sous `packs/competitive_fxaa/` et `packs/cinematic_light/`.
 
 ## Valeurs par defaut de la variante
 
@@ -74,20 +101,18 @@ Pour transfert a un nouveau mainteneur, commencer par:
 
 ## Compatibilite runtime
 
-- `embeddium`: backend rendu tolere.
+PauC integre maintenant nativement le rendu de chunks et le pipeline shader. Les mods externes sur ces domaines sont contestes:
+
+- `embeddium` / `rubidium`: domaine `render_backend` conteste (PauC possede nativement ce domaine).
+- `oculus` / `iris`: domaine `shader_pipeline` conteste (PauC possede nativement ce domaine).
 - `servercore` / `vmp`: modules passifs toleres.
-- `oculus`: domaine `shader_pipeline` conteste.
+- `geckolib`: rendu entites passif tolere.
 - stack replay: domaine `capture_pipeline` conteste.
 - `distanthorizons`: domaine `chunk_streaming` conteste.
 - `flerovium`: domaine `render_backend` conteste.
 - `expandedworld`: domaine `worldgen` marque `high-risk`.
 
-Les shaderpacks externes PauC restent chargeables sans `Oculus`. Le backend actuel est un systeme multi-pass PauC controle, en dossiers ou `.zip`, pas encore une compatibilite universelle Iris/Oculus.
-
-Note transfert:
-
-- ecran noir intermittent observe en entree monde dans le contexte `capture_pipeline` conteste (stack replay presente)
-- voir `TRANSFERT_PROJET.md` pour le profil de reprise recommande et les priorites de correction
+Les shaderpacks OptiFine standard sont chargeables nativement par PauC depuis `shaderpacks/`, sans besoin d'Oculus/Iris. Les shaderpacks PauC multi-pass restent aussi supportes depuis `pauc_ultimate_de_ouf_shaders/packs/`.
 
 ## Raccourcis
 
@@ -111,6 +136,9 @@ Note transfert:
 - Cycle shader actif.
 - Reload shaders externes.
 - Ouverture du dossier shader.
+- Cycle shaderpack deferred (OptiFine).
+- Reload shaderpack deferred.
+- Ouverture du dossier `shaderpacks/`.
 
 ## Configuration disque
 
@@ -131,6 +159,7 @@ Cles principales:
 - `advancedSharpeningEnabled=true|false`
 - `advancedSharpeningStrength=0.0..1.0`
 - `activeShaderKey=<shader actif>`
+- `deferredShaderPack=<nom du shaderpack OptiFine ou (off)>`
 
 ## Build
 
@@ -148,7 +177,7 @@ Commandes:
 
 Sortie:
 
-- `build/libs/pauc-ultimate-de-ouf-1.4.1-ultimate.jar`
+- `build/libs/pauc-ultimate-de-ouf-2.0.0-ultimate.jar`
 
 ## Dossier de contexte
 

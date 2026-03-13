@@ -15,7 +15,7 @@ Le systeme vise 4 anneaux distincts:
 
 ## Etat courant
 
-Release de reference: `1.4.1-ultimate`
+Release de reference: `2.0.0-ultimate`
 
 Le proxy terrain actuel est un `far-field cache` ephemere:
 
@@ -66,16 +66,18 @@ Le proxy terrain n'est autorise que si:
 - le runtime autoritaire est actif
 - aucun backend concurrent n'a la main sur le domaine critique
 
-Le proxy se desactive si un des domaines suivants est conteste:
+Le proxy se desactive si un des domaines suivants est conteste par un mod externe:
 
 - `chunk_streaming`
-- `shader_pipeline`
-- `capture_pipeline`
+- `shader_pipeline` (uniquement si conteste par un mod externe, pas par le pipeline deferred interne de PauC)
 
-Donc:
+Depuis la `2.0.0`, PauC possede nativement le pipeline shader. Le proxy reste actif quand le pipeline deferred PauC est actif, car PauC gere son propre GBuffer state et sait comment traiter la geometrie proxy.
 
-- `Distant Horizons` conteste le proxy
-- `Oculus` peut aussi le bloquer tant que PauC ne possede pas encore tout le pipeline visuel
+Le proxy se desactive si:
+
+- `Distant Horizons` est present (conteste `chunk_streaming`)
+- `Oculus` / `Iris` externe est present (conteste `shader_pipeline` — mais PauC les remplace nativement)
+- `capture_pipeline` n'est plus un bloqueur direct du proxy (corrige en `1.4.1`)
 
 ## Modele de donnees actuel
 
@@ -224,4 +226,4 @@ $env:Path="$env:JAVA_HOME\bin;$env:Path"
 
 Artefact de reference actuel:
 
-- `build/libs/pauc-ultimate-de-ouf-1.4.1-ultimate.jar`
+- `build/libs/pauc-ultimate-de-ouf-2.0.0-ultimate.jar`
