@@ -10,6 +10,7 @@
   "client": [
     "BlockEntityRenderDispatcherMixin",
     "ClientLevelMixin",
+    "DebugScreenOverlayMixin",
     "EntityMixin",
     "EntityRenderDispatcherMixin",
     "FrustumAccessor",

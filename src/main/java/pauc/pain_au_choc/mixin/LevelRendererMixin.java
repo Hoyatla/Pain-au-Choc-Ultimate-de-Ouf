@@ -7,6 +7,7 @@ import pauc.pain_au_choc.EntityLodBillboardRenderer;
 import pauc.pain_au_choc.TerrainProxyController;
 import pauc.pain_au_choc.render.PauCWorldRenderer;
 import pauc.pain_au_choc.render.shader.DeferredWorldRenderingPipeline;
+import pauc.pain_au_choc.render.shader.PauCDeferredShaderController;
 import pauc.pain_au_choc.render.shader.WorldRenderingPhase;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
@@ -74,6 +75,8 @@ public abstract class LevelRendererMixin {
         if (renderer != null) {
             renderer.reload();
         }
+        // GL context is ready — activate saved deferred shaderpack from config
+        PauCDeferredShaderController.activateFromConfig();
     }
 
     /**
