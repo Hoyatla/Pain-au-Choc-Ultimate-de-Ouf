@@ -307,6 +307,7 @@ public final class PauCClient {
         properties.setProperty("advancedSharpeningStrength", Double.toString(advancedSharpeningStrength));
         properties.setProperty("authoritativeRuntimeEnabled", Boolean.toString(authoritativeRuntimeEnabled));
         properties.setProperty("activeShaderKey", PauCShaderManager.getActiveShaderKey());
+        properties.setProperty("deferredShaderPack", pauc.pain_au_choc.render.shader.PauCDeferredShaderController.getConfigKey());
 
         try {
             Files.createDirectories(CONFIG_PATH.getParent());
@@ -338,6 +339,7 @@ public final class PauCClient {
             advancedSharpeningStrength = parseAdvancedSharpeningStrength(properties);
             authoritativeRuntimeEnabled = parseAuthoritativeRuntimeEnabled(properties);
             PauCShaderManager.setActiveShaderKey(properties.getProperty("activeShaderKey", PauCShaderManager.getDefaultShaderKey()));
+            pauc.pain_au_choc.render.shader.PauCDeferredShaderController.setConfigKey(properties.getProperty("deferredShaderPack", pauc.pain_au_choc.render.shader.PauCDeferredShaderController.NONE_KEY));
         } catch (IOException exception) {
             Pain_au_Choc.LOGGER.warn("Failed to load PauC config {}", CONFIG_PATH, exception);
         }

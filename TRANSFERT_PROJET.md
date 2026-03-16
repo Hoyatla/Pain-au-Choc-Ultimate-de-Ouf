@@ -8,8 +8,8 @@ Ce document donne un etat de passation exploitable immediatement pour un nouveau
 
 - Projet: `Pain_au_Choc_ultimate_de_Ouf`
 - Mod id: `pauc`
-- Version code actuelle: `1.4.1-ultimate`
-- Artefact: `build/libs/pauc-ultimate-de-ouf-1.4.1-ultimate.jar`
+- Version code actuelle: `2.0.0-ultimate`
+- Artefact: `build/libs/pauc-ultimate-de-ouf-2.0.0-ultimate.jar`
 
 ## Ce qui est valide
 
@@ -78,13 +78,34 @@ Si le noir disparait dans ce profil, reprendre ensuite par etapes:
 
 ## Fichiers clefs a reprendre
 
+### Coeur
 - `src/main/java/pauc/pain_au_choc/PauCClient.java`
 - `src/main/java/pauc/pain_au_choc/AuthoritativeRuntimeController.java`
+- `src/main/java/pauc/pain_au_choc/GlobalPerformanceGovernor.java`
+
+### Pipeline de rendu (Embeddium-like)
+- `src/main/java/pauc/pain_au_choc/render/PauCWorldRenderer.java`
+- `src/main/java/pauc/pain_au_choc/render/chunk/PauCRenderSectionManager.java`
+- `src/main/java/pauc/pain_au_choc/render/chunk/PauCChunkRenderer.java`
+- `src/main/java/pauc/pain_au_choc/render/chunk/PauCChunkBuilder.java`
+- `src/main/java/pauc/pain_au_choc/render/occlusion/PauCOcclusionCuller.java`
+
+### Pipeline deferred (Oculus-like)
+- `src/main/java/pauc/pain_au_choc/render/shader/DeferredWorldRenderingPipeline.java`
+- `src/main/java/pauc/pain_au_choc/render/shader/PauCDeferredShaderController.java`
+- `src/main/java/pauc/pain_au_choc/render/shader/ShadowRenderer.java`
+- `src/main/java/pauc/pain_au_choc/render/shader/ShaderPackLoader.java`
+
+### Systemes existants
 - `src/main/java/pauc/pain_au_choc/DynamicResolutionController.java`
 - `src/main/java/pauc/pain_au_choc/PauCShaderManager.java`
 - `src/main/java/pauc/pain_au_choc/PauCShaderPackManager.java`
 - `src/main/java/pauc/pain_au_choc/TerrainProxyController.java`
+
+### Mixins
+- `src/main/java/pauc/pain_au_choc/mixin/LevelRendererMixin.java`
 - `src/main/java/pauc/pain_au_choc/mixin/GameRendererMixin.java`
+- `src/main/java/pauc/pain_au_choc/mixin/DebugScreenOverlayMixin.java`
 
 ## Build / verification rapide
 
@@ -95,6 +116,6 @@ Si le noir disparait dans ce profil, reprendre ensuite par etapes:
 
 Verifier ensuite:
 
-- version jar: `1.4.1-ultimate`
+- version jar: `2.0.0-ultimate`
 - logs de chargement shaderpacks
 - absence d'ecran noir en entree monde sur profil safe debug

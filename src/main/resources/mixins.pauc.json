@@ -8,15 +8,22 @@
     "MobServerAiMixin"
   ],
   "client": [
+    "BillboardParticleMixin",
     "BlockEntityRenderDispatcherMixin",
+    "ClientLevelMixin",
+    "DebugScreenOverlayMixin",
     "EntityMixin",
     "EntityRenderDispatcherMixin",
+    "FrustumAccessor",
     "GameRendererAccessor",
     "GameRendererMixin",
     "ItemEntityRendererMixin",
+    "LeavesBlockMixin",
     "LevelRendererMixin",
     "MinecraftMainRenderTargetAccessor",
     "MinecraftMixin",
+    "ModelPartMixin",
+    "PalettedContainerMixin",
     "ParticleEngineAccessor",
     "ParticleEngineMixin"
   ],

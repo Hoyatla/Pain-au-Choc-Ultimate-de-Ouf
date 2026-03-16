@@ -7,6 +7,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import pauc.pain_au_choc.render.shader.PauCDeferredShaderController;
 
 public final class PauCConfigScreen extends Screen {
     private final Screen parent;
@@ -17,6 +18,9 @@ public final class PauCConfigScreen extends Screen {
     private Button shaderModeButton;
     private Button shaderReloadButton;
     private Button shaderFolderButton;
+    private Button deferredPackButton;
+    private Button deferredReloadButton;
+    private Button deferredFolderButton;
     private QualitySlider qualitySlider;
     private CpuInvolvementSlider cpuInvolvementSlider;
     private SharpenStrengthSlider sharpenStrengthSlider;
@@ -29,7 +33,7 @@ public final class PauCConfigScreen extends Screen {
     @Override
     protected void init() {
         int left = this.width / 2 - 100;
-        int top = Math.max(118, this.height / 5 + 10);
+        int top = Math.max(120, this.height / 5 + 10);
 
         this.toggleButton = this.addRenderableWidget(
                 Button.builder(buildToggleMessage(), button -> {
@@ -90,6 +94,26 @@ public final class PauCConfigScreen extends Screen {
                 Button.builder(Component.literal("Open Folder"), button -> PauCShaderManager.openShaderFolder()).bounds(left + 102, top, 98, 20).build()
         );
 
+        // ---- Deferred Shader Pipeline (OptiFine packs) ----
+        top += 28;
+        this.deferredPackButton = this.addRenderableWidget(
+                Button.builder(buildDeferredPackMessage(), button -> {
+                    PauCDeferredShaderController.cycleShaderPack();
+                    refreshButtonLabels();
+                }).bounds(left, top, 200, 20).build()
+        );
+
+        top += 24;
+        this.deferredReloadButton = this.addRenderableWidget(
+                Button.builder(Component.literal("Reload Pack"), button -> {
+                    PauCDeferredShaderController.reloadCurrentPack();
+                    refreshButtonLabels();
+                }).bounds(left, top, 98, 20).build()
+        );
+        this.deferredFolderButton = this.addRenderableWidget(
+                Button.builder(Component.literal("Packs Folder"), button -> PauCDeferredShaderController.openShaderPackFolder()).bounds(left + 102, top, 98, 20).build()
+        );
+
         top += 32;
         this.addRenderableWidget(
                 Button.builder(CommonComponents.GUI_DONE, button -> this.onClose()).bounds(left, top, 200, 20).build()
@@ -147,6 +171,14 @@ public final class PauCConfigScreen extends Screen {
                 94,
                 0xD5D5D5
         );
+        guiGraphics.drawCenteredString(
+                this.font,
+                Component.literal("Deferred: " + PauCDeferredShaderController.getShortLabel()
+                        + " | " + PauCDeferredShaderController.getPackCount() + " packs found"),
+                this.width / 2,
+                106,
+                PauCDeferredShaderController.isPipelineActive() ? 0x82D8F5 : 0x909090
+        );
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
@@ -171,6 +203,9 @@ public final class PauCConfigScreen extends Screen {
         this.advancedSharpeningButton.setMessage(buildAdvancedSharpeningMessage());
         if (this.shaderModeButton != null) {
             this.shaderModeButton.setMessage(buildShaderModeMessage());
+        }
+        if (this.deferredPackButton != null) {
+            this.deferredPackButton.setMessage(buildDeferredPackMessage());
         }
         this.advancedSharpeningButton.active = !CompatibilityGuards.shouldDisableAdvancedSharpening();
         if (this.qualitySlider != null) {
@@ -216,6 +251,10 @@ public final class PauCConfigScreen extends Screen {
 
     private Component buildShaderModeMessage() {
         return Component.literal("Shader: " + PauCShaderManager.getActiveShaderLabel());
+    }
+
+    private Component buildDeferredPackMessage() {
+        return Component.literal("Deferred Pack: " + PauCDeferredShaderController.getShortLabel());
     }
 
     private int resolveAuthorityColor() {

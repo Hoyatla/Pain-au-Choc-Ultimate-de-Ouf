@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.0.0-ultimate - 2026-03-13
+
+- **Pipeline de rendu de chunks Embeddium-like integre nativement dans PauC:**
+  - format de vertex compact (20 octets/vertex)
+  - compilation de mesh multi-thread avec back-pressure
+  - occlusion culler BFS avec matrice de visibilite 6x6
+  - rendu terrain GPU par multidraw batching
+  - gestion de sections par region
+  - mixins remplacant le rendu de chunks vanilla
+  - integration complete avec gouverneur, budget et proxy terrain
+- **Pipeline de shaders deferes Oculus-like integre nativement dans PauC:**
+  - chargeur de shaderpacks OptiFine (ZIP + dossier, `#include`, macros)
+  - rendu GBuffer (`colortex0-7`, `depthtex0-2`)
+  - shadow mapping avec distance adaptative par mode gouverneur
+  - passes deferred + composite + final
+  - systeme d'uniforms (camera, celestial, temps, brouillard, PauC exclusifs)
+  - suivi des phases de rendu pour les programmes `gbuffers_*`
+- **Shadow renderer avec integration gouverneur:**
+  - multiplicateur de distance d'ombres par mode (CRISIS=0.5, COMBAT=0.75, BASE=0.9)
+  - skip du shadow pass en CRISIS haute pression
+- **Hooks entites et block-entities dans LevelRenderer** pour phases `gbuffers_entities` et `gbuffers_block`.
+- **Runtime autoritaire mis a jour:**
+  - PauC reconnait son propre pipeline deferred interne (pas de yield a soi-meme)
+  - Embeddium/Rubidium passes de `DELEGATED_BACKEND` a `FORBIDDEN` (domaine possede nativement)
+- **UI shaderpack deferred** dans ecran F10: cycle pack, reload, dossier.
+- **PauCDeferredShaderController**: lifecycle complet de gestion des shaderpacks OptiFine.
+- **Config persistence** du shaderpack deferred selectionne.
+- **Activation automatique** du shaderpack sauvegarde au demarrage (apres GL context ready).
+- **Debug overlay F3**: etat PauC, mode gouverneur, pression, autorite, chunks visible/total, shader actif, pipeline deferred.
+
 ## 1.4.1-ultimate - 2026-03-12
 
 - `qualityLevel=10` ne coupe plus le runtime PauC.

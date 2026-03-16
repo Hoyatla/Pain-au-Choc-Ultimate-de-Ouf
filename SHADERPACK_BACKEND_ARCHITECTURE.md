@@ -4,30 +4,73 @@ Ce document decrit le backend shaderpack actuellement implemente par PauC.
 
 ## Positionnement
 
-Le backend shaderpack PauC n'est pas `Oculus`.
+PauC possede maintenant deux backends shader:
 
-Il s'agit d'un systeme de `post-process multi-pass` pilote par PauC:
+### 1. Pipeline deferred Oculus-like (nouveau, `2.0.0`)
+
+Pipeline de shaders deferes complet, compatible avec les shaderpacks OptiFine standard:
+
+- PauC controle le pipeline de rendu monde complet
+- GBuffers, shadow mapping, deferred/composite/final passes
+- Les shaderpacks OptiFine prennent le controle du rendu via programmes GLSL
+- Charge depuis `shaderpacks/` (meme emplacement qu'Iris/Oculus)
+- Integre avec le gouverneur PauC (distance ombres adaptative, skip shadow en CRISIS)
+
+### 2. Backend multi-pass PauC (existant)
+
+Systeme de `post-process multi-pass` pilote par PauC:
 
 - PauC reste l'autorite
-- les shaderpacks externes sont des stacks de passes ecran
+- les shaderpacks PauC sont des stacks de passes ecran
 - ils ne prennent pas le controle du rendu monde complet
+- Charge depuis `pauc_ultimate_de_ouf_shaders/packs/`
 
 ## Etat courant
 
-Release de reference: `1.4.1-ultimate`
+Release de reference: `2.0.0-ultimate`
 
-Le backend actuel sait:
+Le pipeline deferred sait:
 
-- scanner des shaderpacks externes dans `pauc_ultimate_de_ouf_shaders/packs/`
+- charger des shaderpacks OptiFine standard depuis `shaderpacks/` (ZIP ou dossier)
+- parser `shaders.properties`, resoudre les `#include`, injecter les macros
+- rendre dans des GBuffers (`colortex0-7`, `depthtex0-2`)
+- executer le shadow mapping avec distance adaptative
+- enchainer les passes deferred, composite et final
+- fournir des uniforms riches (camera, celestial, temps, brouillard, PauC exclusifs)
+- tracker les phases de rendu pour les programmes `gbuffers_*`
+- persister le pack selectionne dans la config PauC
+- s'activer automatiquement au demarrage apres GL context ready
+
+Le backend multi-pass PauC sait toujours:
+
+- scanner des shaderpacks PauC dans `pauc_ultimate_de_ouf_shaders/packs/`
 - scanner des packs en dossier et des packs `.zip`
 - lire un manifeste `pauc_shaderpack.json`
 - charger plusieurs passes par pack
 - executer ces passes en ping-pong sur des render targets temporaires
-- selectionner le pack actif depuis PauC
-- persister le `shaderKey` actif dans la config PauC
 
 ## Fichiers clefs
 
+### Pipeline deferred (Oculus-like)
+- `src/main/java/pauc/pain_au_choc/render/shader/DeferredWorldRenderingPipeline.java`
+  - pipeline principal: GBuffers, deferred, composite, final passes
+  - gestion des render targets, phases, uniforms
+- `src/main/java/pauc/pain_au_choc/render/shader/PauCDeferredShaderController.java`
+  - lifecycle de gestion des shaderpacks OptiFine
+  - scan `shaderpacks/`, selection, activation, cycle, reload
+  - persistance config (`deferredShaderPack`)
+- `src/main/java/pauc/pain_au_choc/render/shader/ShadowRenderer.java`
+  - rendu de la shadow map avec distance adaptative par gouverneur
+- `src/main/java/pauc/pain_au_choc/render/shader/ShaderPackLoader.java`
+  - chargement des shaderpacks OptiFine (ZIP/dossier, `#include`, macros)
+- `src/main/java/pauc/pain_au_choc/render/shader/PauCShaderProgram.java`
+  - compilation et gestion des programmes GLSL
+- `src/main/java/pauc/pain_au_choc/render/shader/PauCRenderTargets.java`
+  - GBuffers et render targets du pipeline
+- `src/main/java/pauc/pain_au_choc/render/shader/WorldRenderingPhase.java`
+  - enum des phases de rendu (SKY, TERRAIN_*, ENTITIES, etc.)
+
+### Backend multi-pass PauC
 - `src/main/java/pauc/pain_au_choc/PauCShaderManager.java`
   - point d'entree principal
   - arbitre entre shader interne, shader externe single-pass et shaderpack multi-pass
@@ -37,13 +80,19 @@ Le backend actuel sait:
   - creation des passes
   - execution du chainage multi-pass
   - gestion des render targets temporaires
+
+### Commun
 - `src/main/java/pauc/pain_au_choc/PauCClient.java`
-  - persistance du shader actif
+  - persistance du shader actif et du shaderpack deferred
 - `src/main/java/pauc/pain_au_choc/PauCConfigScreen.java`
-  - cycle du shader actif
-  - reload shaderpacks
-  - ouverture du dossier shader
-  - affichage du nombre de packs et du shader actif
+  - cycle shader actif + cycle shaderpack deferred
+  - reload shaderpacks (PauC + OptiFine)
+  - ouverture des dossiers shader
+- `src/main/java/pauc/pain_au_choc/mixin/LevelRendererMixin.java`
+  - hooks deferred pipeline (begin/end, terrain/entity/sky phases)
+  - activation du shaderpack sauvegarde dans `allChanged`
+- `src/main/java/pauc/pain_au_choc/mixin/DebugScreenOverlayMixin.java`
+  - affichage deferred pipeline dans F3
 
 ## Format d'un shaderpack
 
@@ -113,25 +162,26 @@ Ce flag reste subordonne a PauC:
 
 ## Limites actuelles
 
-Le backend actuel ne fait pas encore:
+Le pipeline deferred Oculus-like ne fait pas encore:
 
-- ombres monde reelles type shaderpack complet
+- PBR (normal maps, specular maps) — prevu Phase 3.3
+- optimisations avancees de rendu de blocs (feuilles, modeles bakes) — prevu Phase 3.1
+- optimisations avancees de rendu d'entites (fast model rendering) — prevu Phase 3.2
+- compatibilite universelle avec tous les shaderpacks OptiFine (certains uniforms/features manquants)
+
+Le backend multi-pass PauC ne fait toujours pas:
+
 - lumiere volumetrique monde
 - eau/shader sky/shadow map completes
-- compatibilite Iris/Oculus pack universelle
 
-Donc:
+## But technique de la 2.0
 
-- c'est deja un vrai backend externe multi-pass PauC
-- ce n'est pas encore un clone d'Oculus
+Cette version sert a:
 
-## But technique de cette etape
-
-Cette etape sert a:
-
-- eliminer la dependance conceptuelle a un seul shader simple
-- permettre AA/FXAA + lumiere/ombres ecran en couches
-- garder un format externe que PauC controle
+- posseder nativement le pipeline de rendu terrain et shader sans dependance externe
+- eliminer le besoin d'Embeddium et Oculus comme mods separees
+- integrer profondement le pipeline shader avec le gouverneur PauC (distance ombres adaptative, skip shadow en CRISIS)
+- permettre le chargement direct de shaderpacks OptiFine standard
 
 ## Reprise
 
@@ -146,11 +196,15 @@ Si ce chantier est interrompu, repartir de:
 
 ## Prochaine etape logique
 
-Si on continue le backend shaderpack PauC, les priorites sont:
+Phases restantes du plan d'integration:
+
+- **Phase 3.1**: optimisations de rendu de blocs (feuilles, modeles bakes, palette, sprites)
+- **Phase 3.2**: optimisations de rendu d'entites (fast model rendering, particles)
+- **Phase 3.3**: support PBR (normal maps, specular maps, detection auto)
+- **Phase 3.4**: mise a jour des policies AuthoritativeRuntime (detection si Embeddium/Oculus installes en plus)
+
+Pour le backend multi-pass PauC:
 
 - schema de manifeste plus riche et plus strict
 - uniforms plus riches et plus stables par passe
-- integration depth/color plus ambitieuse
-- passes additionnelles utiles au combat
 - meilleure integration DRS / AA / sharpen
-- eventual shadow/light backend plus ambitieux
