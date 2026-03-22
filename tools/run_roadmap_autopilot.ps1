@@ -81,6 +81,10 @@ function Get-LastExitCodeOrZero {
     return [int]$exitVar.Value
 }
 
+function Reset-LastExitCode {
+    Set-Variable -Name LASTEXITCODE -Scope Global -Value 0
+}
+
 function Resolve-ScriptPath {
     param(
         [string]$PathValue,
@@ -393,6 +397,7 @@ function Resolve-MetricsPath {
         -and ($preferPrismMetrics -or -not (Test-Path -LiteralPath $PreferredPath -PathType Leaf))
     if ($shouldResolveMetrics) {
         try {
+            Reset-LastExitCode
             $resolution = & $ResolverScriptPath `
                 -PreferredPath $PreferredPath `
                 -PrismRoot $PrismRootPath `
@@ -673,6 +678,7 @@ function Get-CampaignStatus {
         [string]$ResultsFilePath
     )
 
+    Reset-LastExitCode
     $status = & $CampaignStatusScript -ResultsPath $ResultsFilePath -PassThru
     if ($status -is [System.Array]) {
         $status = $status | Select-Object -Last 1
@@ -864,6 +870,7 @@ try {
                     $finishArgs.DisableAutoMetricsDiscovery = $true
                 }
 
+                Reset-LastExitCode
                 & $markFinishScript @finishArgs
                 if ((Get-LastExitCodeOrZero) -ne 0) {
                     throw "ab_mark_finish failed"
@@ -895,6 +902,7 @@ try {
                 $nextArgs.DisableAutoMetricsDiscovery = $true
             }
 
+            Reset-LastExitCode
             & $campaignNextScript @nextArgs
             if ((Get-LastExitCodeOrZero) -ne 0) {
                 throw "ab_campaign_next failed"
@@ -1008,6 +1016,7 @@ try {
 
                     $buildExitCode = 0
                     try {
+                        Reset-LastExitCode
                         & $buildCandidateScript @candidateArgs
                         $buildExitCode = Get-LastExitCodeOrZero
                     } catch {
@@ -1105,6 +1114,7 @@ try {
                                 $errorSortingArgs.FailOnNoiseFail = $true
                             }
 
+                            Reset-LastExitCode
                             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
                             $errorSortingExitCode = Get-LastExitCodeOrZero
                             if ($errorSortingExitCode -ne 0) {
@@ -1189,6 +1199,7 @@ try {
                 $errorSortingArgs.FailOnNoiseFail = $true
             }
 
+            Reset-LastExitCode
             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
             $errorSortingExitCode = Get-LastExitCodeOrZero
             if ($errorSortingExitCode -ne 0) {
@@ -1279,6 +1290,7 @@ $result = [PSCustomObject]@{
         $result.decision_freshness = "no_candidate"
     }
 
+    Reset-LastExitCode
     Write-Host ""
     Write-Host "Roadmap autopilot summary"
     Write-Host "-------------------------"
