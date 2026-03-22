@@ -3847,3 +3847,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Fresh capture processed: strict candidate failed (KPI/MSPT) and known-noise hits=3108. Pipeline kept with blocking-only strictness; safe profile re-applied on instance test for next capture.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 21:15:30 (UTC) - Codex
+
+- Statut: in_progress
+- Note: New capture detected but latest contiguous session too short (rows=3, duration=16.4s); autopilot kept pending_metrics and cached ready_for_beta 100. Error sorting blocking=0, known_noise=2672.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
