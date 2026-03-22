@@ -3835,3 +3835,15 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Fresh capture processed: strict preflight failed on KPI/MSPT (frame_ms_p95/p99=1000, mspt_p95=521). Operational status restored via cached candidate ready_for_beta 100 with error sorting pass.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 19:21:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 19:23:27 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Fresh capture processed: strict candidate failed (KPI/MSPT) and known-noise hits=3108. Pipeline kept with blocking-only strictness; safe profile re-applied on instance test for next capture.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
