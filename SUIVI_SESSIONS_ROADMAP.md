@@ -3859,3 +3859,33 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Capture processed: latest contiguous metrics now 220 rows / 221s, still below 480s gate. Autopilot kept cached ready_for_beta 100; error sorting pass blocking=0, known_noise=256 (pass).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 22:06:50 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 22:08:00 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 22:08:48 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 22:09:19 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 22:10:43 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Using current short capture, built beta_candidate_20260322_220939_377 with FrameMsP99Max=400 (decision not_ready due soak_stability skipped). Jar synced to instance test hash 86FC9AF0...
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
