@@ -3853,3 +3853,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: New capture detected but latest contiguous session too short (rows=3, duration=16.4s); autopilot kept pending_metrics and cached ready_for_beta 100. Error sorting blocking=0, known_noise=2672.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 22:04:46 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Capture processed: latest contiguous metrics now 220 rows / 221s, still below 480s gate. Autopilot kept cached ready_for_beta 100; error sorting pass blocking=0, known_noise=256 (pass).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
