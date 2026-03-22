@@ -1106,6 +1106,10 @@ try {
                             }
 
                             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
+                            $errorSortingExitCode = Get-LastExitCodeOrZero
+                            if ($errorSortingExitCode -ne 0) {
+                                throw ("run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode)
+                            }
                             $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
                             if ($null -eq $errorSortingSummary) {
                                 $errorSortingStatus = "missing_output"
@@ -1131,7 +1135,7 @@ try {
                             $errorSortingStatus = "error"
                             $errorSortingKnownNoiseStatus = "error"
                             Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
-                            if ($FailOnErrorSortingBlockingPatterns) {
+                            if ($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) {
                                 $buildExitCode = 1
                             }
                         }
@@ -1186,6 +1190,10 @@ try {
             }
 
             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
+            $errorSortingExitCode = Get-LastExitCodeOrZero
+            if ($errorSortingExitCode -ne 0) {
+                throw ("run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode)
+            }
             $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
             if ($null -eq $errorSortingSummary) {
                 $errorSortingStatus = "missing_output"
@@ -1211,6 +1219,9 @@ try {
             $errorSortingStatus = "error"
             $errorSortingKnownNoiseStatus = "error"
             Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
+            if ($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) {
+                throw
+            }
         }
     }
 

@@ -3805,3 +3805,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Noise budget ajoute dans run_error_sorting_pass (known_noise_status + seuils warn/fail). Autopilot execute maintenant la passe tri meme en pending_metrics pour monitoring continu.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 16:16:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Autopilot hardening: error sorting pass execute meme en stale metrics + propagation stricte des exit codes (FailOnErrorSortingNoiseFail/Blocking). Smoke valide (pass) et mode strict valide (echec attendu).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
