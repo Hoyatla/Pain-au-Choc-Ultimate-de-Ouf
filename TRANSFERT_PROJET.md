@@ -1,20 +1,23 @@
-# Transfert Projet - PauC Ultimate De Ouf
+﻿# Transfert Projet - PauC Ultimate De Ouf
 
 Date de transfert: `2026-03-12`
-Mise a jour transfert: `2026-03-21`
+Mise a jour transfert: `2026-03-22`
 
 Ce document donne un etat de passation exploitable immediatement pour un nouveau mainteneur.
 
 ## Reprise immediate (ici)
 
-- Candidat de reference: `run/beta_candidates/beta_candidate_20260321_201359_492` (`ready_for_beta`, `100%`).
-- Jar Prism `test` actuellement sync: `sha256=2B3A850EE742239DF20EAD48EAA334EFABFF10A97E6DA95990791C3E59200CFF`.
-- Commande unique de reprise:
-  - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot`
+- Candidat de reference strict: `run/beta_candidates/beta_candidate_20260322_160614_277` (`ready_for_beta`, `100%`).
+- Candidat exploratoire court (dernier run): `run/beta_candidates/beta_candidate_20260322_220939_377` (`not_ready`, `97.5%`, gate bloquant `soak_stability=skipped`).
+- Jar Prism `test` actuellement sync: `sha256=86FC9AF0E9932E7457BBF6D185B2DA91AC9ECC9CDE32988C0EA63E11DF4876C0`.
+- Commandes de reprise immediates:
+  - mode operationnel (recommande): `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns`
+  - mode strict complet (exige capture >=240 samples et >=480s): `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -StrictPreflight -StrictReadiness`
+  - mode exploratoire capture courte: `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -FrameMsP99Max 400`
 - Lecture du resultat:
-  - si une capture recente est disponible, `final_decision` peut etre directement `ready_for_beta`.
-  - `final_decision` peut rester `pending_metrics` si aucune nouvelle capture n'a ete produite.
-  - utiliser `effective_decision` / `effective_readiness_percent` pour la decision exploitable (cachee ou fraiche).
+  - utiliser `effective_decision` / `effective_readiness_percent` comme verdict exploitable.
+  - `final_decision` peut etre `pending_metrics` si session trop courte/stale.
+  - `final_decision` peut etre `candidate_build_failed` en strict si un gate bloque (dernier cas: `soak_stability=skipped`).
 
 ## Statut validations humaines (maj 2026-03-21)
 
@@ -32,7 +35,8 @@ Ce document donne un etat de passation exploitable immediatement pour un nouveau
 ## Verdict de cloture (etat actuel)
 
 - Validation humaine complete: `V1=ok`, `V2=ok`, `V3=ok_with_waivers`.
-- Candidat recommande pour suite release/beta: `beta_candidate_20260321_201359_492`.
+- Candidat recommande pour suite release/beta stricte: `beta_candidate_20260322_160614_277`.
+- Candidat de debug rapide disponible: `beta_candidate_20260322_220939_377` (`not_ready` uniquement pour soak court).
 - Waivers ouverts a lever plus tard (non bloquants pour l'etat courant):
   - Intel runtime GL non observe sur cette machine.
   - AMD non present sur la machine de validation.
@@ -112,7 +116,39 @@ Regle de reprise:
 - Si planning/scope/risques evoluent: mise a jour dans `ROADMAP_GOUVERNEUR_ULTIMATE_2026_2027.md`.
 - Si blocages de reprise evoluent: mise a jour ici meme (`TRANSFERT_PROJET.md`).
 
-## Point de reprise demain (maj 2026-03-21)
+## Point de reprise demain (maj 2026-03-22)
+
+- Etat global de sortie:
+  - pipeline operationnel: `ready_for_beta` disponible via cache candidate strict.
+  - dernier `autopilot_state`: `last_processed_metrics_signature` sur session courte (`rows=220`, `duration=221.101s`, `timestamp=2026-03-22T22:02:46Z`).
+  - blocage strict courant: `soak_stability` (session contigue insuffisante pour gate strict).
+- Candidat strict de reference:
+  - dossier: `run/beta_candidates/beta_candidate_20260322_160614_277`
+  - decision: `ready_for_beta`
+  - readiness: `100%`
+  - notes: `server governor health skipped (insufficient pressure samples)`
+  - manifeste: `run/beta_candidates/beta_candidate_20260322_160614_277/candidate_manifest.json`
+- Candidat exploratoire (session courte):
+  - dossier: `run/beta_candidates/beta_candidate_20260322_220939_377`
+  - decision: `not_ready`
+  - readiness: `97.5%`
+  - gate bloquant: `soak_stability=skipped`
+  - manifeste: `run/beta_candidates/beta_candidate_20260322_220939_377/candidate_manifest.json`
+- Dernier jar sync Prism `test`:
+  - `sha256=86FC9AF0E9932E7457BBF6D185B2DA91AC9ECC9CDE32988C0EA63E11DF4876C0`
+  - source: `build/libs/pauc-ultimate-de-ouf-2.0.0-ultimate.jar`
+- Derniers rapports clefs:
+  - preflight exploratoire: `run/pauc_reports/phase6_preflight_20260322_220919_908.md`
+  - error sorting: `run/pauc_reports/error_sorting_pass_20260322_220743_391.md` (`blocking_hits_total=0`, `known_noise_status=pass`, `known_noise_hits_total=256`)
+- Commits recents a connaitre:
+  - `1c90e6f`: fix autopilot `LASTEXITCODE` (elimine faux echec strict)
+  - `8dbe0ae`: checkpoint documentaire final + sync jar instance
+- Reprise minimale conseillee:
+  1. `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns`
+  2. produire une capture continue >= 480s
+  3. `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -StrictPreflight -StrictReadiness`
+
+## Point de reprise demain (archive maj 2026-03-21)
 
 - Etat global: `ready_for_beta` obtenu en pipeline strict.
 - Dernier candidate valide:
@@ -332,3 +368,4 @@ Verifier ensuite:
 - logs de chargement shaderpacks
 - absence d'ecran noir en entree monde sur profil safe debug
 - coherence des statuts phase/session dans `SUIVI_SESSIONS_ROADMAP.md`
+
