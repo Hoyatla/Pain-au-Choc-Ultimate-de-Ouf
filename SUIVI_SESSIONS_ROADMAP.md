@@ -3823,3 +3823,15 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Fix autopilot LASTEXITCODE + one-shot strict test instance test: exit clean, cached ready_for_beta 100, error sorting pass.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 18:20:49 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 18:22:17 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Fresh capture processed: strict preflight failed on KPI/MSPT (frame_ms_p95/p99=1000, mspt_p95=521). Operational status restored via cached candidate ready_for_beta 100 with error sorting pass.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
