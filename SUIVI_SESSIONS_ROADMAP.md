@@ -3775,3 +3775,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: ready_for_beta
 - Note: Autopilot one-shot valide (fresh_candidate ready_for_beta 100%). Bundle release final: run/releases/pauc_release_20260322_134251_812 (+ zip sha256 2B70DA54...). Jar instance test aligne hash 21CD6895...
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 14:25:53 (UTC) - Codex
+
+- Statut: ready_for_beta
+- Note: Freeze Git effectue: commit abdc08e + tag v2.0.0-ultimate. Smoke post-release auto passe (candidate verify pass, recettes/loot invalides=0, triage regenere).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
