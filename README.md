@@ -503,6 +503,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 ```powershell
 .\tools\run_roadmap_autopilot.ps1
 .\tools\run_roadmap_autopilot.ps1 -OneShot
+.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -FailOnErrorSortingBlockingPatterns
 ```
 
 Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):

@@ -26,7 +26,11 @@ param(
     [int]$MetricsCodeDriftToleranceMinutes = 2,
     [string]$RequiredTelemetrySchemaVersion = "20260318_shadowv2",
     [bool]$AutoSyncModJarToPrism = $true,
-    [switch]$BuildJarBeforeSync
+    [switch]$BuildJarBeforeSync,
+    [bool]$RunErrorSortingPass = $true,
+    [bool]$ErrorSortingIncludeWarnings = $true,
+    [int]$ErrorSortingTopN = 25,
+    [switch]$FailOnErrorSortingBlockingPatterns
 )
 
 Set-StrictMode -Version Latest
@@ -53,6 +57,9 @@ if ($MaxMetricsAgeMinutes -lt 0) {
 if ($MetricsCodeDriftToleranceMinutes -lt 0) {
     throw "MetricsCodeDriftToleranceMinutes must be >= 0"
 }
+if ($ErrorSortingTopN -lt 1) {
+    throw "ErrorSortingTopN must be >= 1"
+}
 
 function Get-LastExitCodeOrZero {
     $exitVar = Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
@@ -76,6 +83,21 @@ function Resolve-ScriptPath {
         return (Resolve-Path -LiteralPath $candidate).Path
     }
     throw "Script not found: $PathValue"
+}
+
+function Get-LastOutputObject {
+    param([object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+    if ($Value -is [System.Array]) {
+        if ($Value.Count -eq 0) {
+            return $null
+        }
+        return ($Value | Select-Object -Last 1)
+    }
+    return $Value
 }
 
 function Read-AutopilotState {
@@ -703,6 +725,10 @@ $campaignNextScript = Resolve-ScriptPath -PathValue ".\tools\ab_campaign_next.ps
 $markFinishScript = Resolve-ScriptPath -PathValue ".\tools\ab_mark_finish.ps1" -RepoRoot $repoRoot
 $buildCandidateScript = Resolve-ScriptPath -PathValue ".\tools\build_beta_candidate.ps1" -RepoRoot $repoRoot
 $metricsResolverScript = Resolve-ScriptPath -PathValue ".\tools\resolve_pauc_metrics_path.ps1" -RepoRoot $repoRoot
+$errorSortingScript = $null
+if ($RunErrorSortingPass) {
+    $errorSortingScript = Resolve-ScriptPath -PathValue ".\tools\run_error_sorting_pass.ps1" -RepoRoot $repoRoot
+}
 $autopilotStatePathResolved = if ([System.IO.Path]::IsPathRooted($AutopilotStatePath)) {
     $AutopilotStatePath
 } else {
@@ -758,6 +784,13 @@ $latestMetricsRows = 0
 $latestMetricsDurationSeconds = 0.0
 $latestMetricsPath = ""
 $latestMetricsTimestampUtc = ""
+$errorSortingStatus = "not_run"
+$errorSortingBlockingHits = 0
+$errorSortingKnownNoiseHits = 0
+$errorSortingTriageEvents = 0
+$errorSortingTriageUniqueSignatures = 0
+$errorSortingReportMdPath = ""
+$errorSortingReportJsonPath = ""
 
 Push-Location $repoRoot
 try {
@@ -1035,6 +1068,50 @@ try {
                         }
                     }
 
+                    if ($buildExitCode -eq 0 -and $RunErrorSortingPass) {
+                        try {
+                            $errorSortingArgs = @{
+                                InstanceName = $InstanceName
+                                PrismInstancesRoot = $PrismRoot
+                                OutDir = $ReportsDir
+                                TopN = $ErrorSortingTopN
+                                RunQuarantine = $true
+                                PassThru = $true
+                            }
+                            if ($ErrorSortingIncludeWarnings) {
+                                $errorSortingArgs.IncludeWarnings = $true
+                            }
+                            if ($FailOnErrorSortingBlockingPatterns) {
+                                $errorSortingArgs.FailOnBlocking = $true
+                            }
+
+                            $errorSortingRaw = & $errorSortingScript @errorSortingArgs
+                            $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
+                            if ($null -eq $errorSortingSummary) {
+                                $errorSortingStatus = "missing_output"
+                                Write-Warning "[Autopilot] Error sorting pass returned no summary object."
+                            } else {
+                                $errorSortingStatus = [string]$errorSortingSummary.overall_status
+                                $errorSortingBlockingHits = [int]$errorSortingSummary.blocking_hits_total
+                                $errorSortingKnownNoiseHits = [int]$errorSortingSummary.known_noise_hits_total
+                                $errorSortingTriageEvents = [int]$errorSortingSummary.triage_total_events
+                                $errorSortingTriageUniqueSignatures = [int]$errorSortingSummary.triage_unique_signatures
+                                $errorSortingReportMdPath = [string]$errorSortingSummary.report_md_path
+                                $errorSortingReportJsonPath = [string]$errorSortingSummary.report_json_path
+                                Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise_hits={2}" -f `
+                                        $errorSortingStatus,
+                                        $errorSortingBlockingHits,
+                                        $errorSortingKnownNoiseHits)
+                            }
+                        } catch {
+                            $errorSortingStatus = "error"
+                            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
+                            if ($FailOnErrorSortingBlockingPatterns) {
+                                $buildExitCode = 1
+                            }
+                        }
+                    }
+
                     if ($buildExitCode -eq 0 -and $finalDecision -eq "ready_for_beta") {
                         break
                     }
@@ -1073,6 +1150,13 @@ $result = [PSCustomObject]@{
         latest_metrics_duration_seconds = [Math]::Round($latestMetricsDurationSeconds, 3)
         latest_metrics_timestamp_utc = $latestMetricsTimestampUtc
         latest_metrics_path = $latestMetricsPath
+        error_sorting_status = $errorSortingStatus
+        error_sorting_blocking_hits = $errorSortingBlockingHits
+        error_sorting_known_noise_hits = $errorSortingKnownNoiseHits
+        error_sorting_triage_total_events = $errorSortingTriageEvents
+        error_sorting_triage_unique_signatures = $errorSortingTriageUniqueSignatures
+        error_sorting_report_md_path = $errorSortingReportMdPath
+        error_sorting_report_json_path = $errorSortingReportJsonPath
         cached_candidate_decision = $cachedCandidateDecision
         cached_candidate_readiness_percent = $cachedCandidateReadiness
         cached_candidate_dir = $cachedCandidateDir

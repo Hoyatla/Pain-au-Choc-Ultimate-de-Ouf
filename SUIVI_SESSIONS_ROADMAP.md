@@ -3787,3 +3787,15 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Ajout run_error_sorting_pass (triage + blocking patterns + quarantine). Validation sur test: overall_status=pass, blocking_hits_total=0, known_noise_hits_total=446.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 16:05:54 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 16:07:01 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Autopilot integre avec run_error_sorting_pass (status/hits/report paths remontes). OneShot valide: ready_for_beta 100 + error_sorting_status=pass (blocking=0).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
