@@ -16,8 +16,11 @@ param(
         "Can't keep up! Is the server overloaded?",
         "OpenGL debug message: id="
     ),
+    [int]$KnownNoiseWarnHitsTotal = 500,
+    [int]$KnownNoiseFailHitsTotal = 2000,
     [bool]$RunQuarantine = $true,
     [switch]$FailOnBlocking,
+    [switch]$FailOnNoiseFail,
     [switch]$PassThru
 )
 
@@ -26,6 +29,15 @@ $ErrorActionPreference = "Stop"
 
 if ($TopN -lt 1) {
     throw "TopN must be >= 1"
+}
+if ($KnownNoiseWarnHitsTotal -lt 0) {
+    throw "KnownNoiseWarnHitsTotal must be >= 0"
+}
+if ($KnownNoiseFailHitsTotal -lt 0) {
+    throw "KnownNoiseFailHitsTotal must be >= 0"
+}
+if ($KnownNoiseFailHitsTotal -lt $KnownNoiseWarnHitsTotal) {
+    throw "KnownNoiseFailHitsTotal must be >= KnownNoiseWarnHitsTotal"
 }
 
 if ([string]::IsNullOrWhiteSpace($PrismInstancesRoot)) {
@@ -180,6 +192,14 @@ $noiseHitsTotal = [int](($noiseRows | Measure-Object -Property count -Sum).Sum)
 $blockingTriggered = @($blockingRows | Where-Object { $_.count -gt 0 })
 $noiseTriggered = @($noiseRows | Where-Object { $_.count -gt 0 })
 
+$noiseStatus = if ($noiseHitsTotal -ge $KnownNoiseFailHitsTotal) {
+    "fail"
+} elseif ($noiseHitsTotal -ge $KnownNoiseWarnHitsTotal) {
+    "warn"
+} else {
+    "pass"
+}
+
 $quarantineSummary = $null
 if ($RunQuarantine) {
     $quarantineArgs = @{
@@ -219,6 +239,9 @@ $summary = [PSCustomObject]@{
     known_noise_pattern_count = $noiseRows.Count
     known_noise_patterns_triggered = $noiseTriggered.Count
     known_noise_hits_total = $noiseHitsTotal
+    known_noise_warn_hits_total = $KnownNoiseWarnHitsTotal
+    known_noise_fail_hits_total = $KnownNoiseFailHitsTotal
+    known_noise_status = $noiseStatus
     known_noise_patterns = $noiseRows
     quarantine_ran = [bool]$RunQuarantine
     quarantine_created_count = if ($null -eq $quarantineSummary) { 0 } else { [int]$quarantineSummary.created_count }
@@ -237,7 +260,11 @@ $md.Add(("- Instance: {0}" -f $summary.instance_name))
 $md.Add(("- Logs: {0}" -f ($summary.logs -join " | ")))
 $md.Add(("- Overall status: {0}" -f $summary.overall_status))
 $md.Add(("- Blocking hits total: {0}" -f $summary.blocking_hits_total))
-$md.Add(("- Known-noise hits total: {0}" -f $summary.known_noise_hits_total))
+$md.Add(("- Known-noise status: {0}" -f $summary.known_noise_status))
+$md.Add(("- Known-noise hits total: {0} (warn >= {1}, fail >= {2})" -f `
+        $summary.known_noise_hits_total,
+        $summary.known_noise_warn_hits_total,
+        $summary.known_noise_fail_hits_total))
 $md.Add("")
 $md.Add("## Triage")
 $md.Add("")
@@ -300,4 +327,7 @@ if ($PassThru) {
 
 if ($FailOnBlocking -and $overallStatus -ne "pass") {
     exit 2
+}
+if ($FailOnNoiseFail -and $noiseStatus -eq "fail") {
+    exit 3
 }

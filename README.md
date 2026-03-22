@@ -504,6 +504,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1
 .\tools\run_roadmap_autopilot.ps1 -OneShot
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -FailOnErrorSortingBlockingPatterns
+.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -ErrorSortingNoiseWarnHitsTotal 500 -ErrorSortingNoiseFailHitsTotal 2000
 ```
 
 Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
@@ -511,4 +512,6 @@ Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
 ```powershell
 .\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings
 .\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings -FailOnBlocking
+.\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings -KnownNoiseWarnHitsTotal 500 -KnownNoiseFailHitsTotal 2000
+.\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings -FailOnNoiseFail
 ```

@@ -30,7 +30,10 @@ param(
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
-    [switch]$FailOnErrorSortingBlockingPatterns
+    [int]$ErrorSortingNoiseWarnHitsTotal = 500,
+    [int]$ErrorSortingNoiseFailHitsTotal = 2000,
+    [switch]$FailOnErrorSortingBlockingPatterns,
+    [switch]$FailOnErrorSortingNoiseFail
 )
 
 Set-StrictMode -Version Latest
@@ -59,6 +62,15 @@ if ($MetricsCodeDriftToleranceMinutes -lt 0) {
 }
 if ($ErrorSortingTopN -lt 1) {
     throw "ErrorSortingTopN must be >= 1"
+}
+if ($ErrorSortingNoiseWarnHitsTotal -lt 0) {
+    throw "ErrorSortingNoiseWarnHitsTotal must be >= 0"
+}
+if ($ErrorSortingNoiseFailHitsTotal -lt 0) {
+    throw "ErrorSortingNoiseFailHitsTotal must be >= 0"
+}
+if ($ErrorSortingNoiseFailHitsTotal -lt $ErrorSortingNoiseWarnHitsTotal) {
+    throw "ErrorSortingNoiseFailHitsTotal must be >= ErrorSortingNoiseWarnHitsTotal"
 }
 
 function Get-LastExitCodeOrZero {
@@ -787,6 +799,9 @@ $latestMetricsTimestampUtc = ""
 $errorSortingStatus = "not_run"
 $errorSortingBlockingHits = 0
 $errorSortingKnownNoiseHits = 0
+$errorSortingKnownNoiseStatus = "not_run"
+$errorSortingKnownNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
+$errorSortingKnownNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
 $errorSortingTriageEvents = 0
 $errorSortingTriageUniqueSignatures = 0
 $errorSortingReportMdPath = ""
@@ -1075,6 +1090,8 @@ try {
                                 PrismInstancesRoot = $PrismRoot
                                 OutDir = $ReportsDir
                                 TopN = $ErrorSortingTopN
+                                KnownNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
+                                KnownNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
                                 RunQuarantine = $true
                                 PassThru = $true
                             }
@@ -1083,6 +1100,9 @@ try {
                             }
                             if ($FailOnErrorSortingBlockingPatterns) {
                                 $errorSortingArgs.FailOnBlocking = $true
+                            }
+                            if ($FailOnErrorSortingNoiseFail) {
+                                $errorSortingArgs.FailOnNoiseFail = $true
                             }
 
                             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
@@ -1094,17 +1114,22 @@ try {
                                 $errorSortingStatus = [string]$errorSortingSummary.overall_status
                                 $errorSortingBlockingHits = [int]$errorSortingSummary.blocking_hits_total
                                 $errorSortingKnownNoiseHits = [int]$errorSortingSummary.known_noise_hits_total
+                                $errorSortingKnownNoiseStatus = [string]$errorSortingSummary.known_noise_status
+                                $errorSortingKnownNoiseWarnHitsTotal = [int]$errorSortingSummary.known_noise_warn_hits_total
+                                $errorSortingKnownNoiseFailHitsTotal = [int]$errorSortingSummary.known_noise_fail_hits_total
                                 $errorSortingTriageEvents = [int]$errorSortingSummary.triage_total_events
                                 $errorSortingTriageUniqueSignatures = [int]$errorSortingSummary.triage_unique_signatures
                                 $errorSortingReportMdPath = [string]$errorSortingSummary.report_md_path
                                 $errorSortingReportJsonPath = [string]$errorSortingSummary.report_json_path
-                                Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise_hits={2}" -f `
+                                Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise={2} ({3})" -f `
                                         $errorSortingStatus,
                                         $errorSortingBlockingHits,
-                                        $errorSortingKnownNoiseHits)
+                                        $errorSortingKnownNoiseHits,
+                                        $errorSortingKnownNoiseStatus)
                             }
                         } catch {
                             $errorSortingStatus = "error"
+                            $errorSortingKnownNoiseStatus = "error"
                             Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
                             if ($FailOnErrorSortingBlockingPatterns) {
                                 $buildExitCode = 1
@@ -1138,6 +1163,57 @@ try {
         Start-Sleep -Seconds $PollIntervalSeconds
     }
 
+    if ($RunErrorSortingPass -and $errorSortingStatus -eq "not_run") {
+        try {
+            $errorSortingArgs = @{
+                InstanceName = $InstanceName
+                PrismInstancesRoot = $PrismRoot
+                OutDir = $ReportsDir
+                TopN = $ErrorSortingTopN
+                KnownNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
+                KnownNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
+                RunQuarantine = $true
+                PassThru = $true
+            }
+            if ($ErrorSortingIncludeWarnings) {
+                $errorSortingArgs.IncludeWarnings = $true
+            }
+            if ($FailOnErrorSortingBlockingPatterns) {
+                $errorSortingArgs.FailOnBlocking = $true
+            }
+            if ($FailOnErrorSortingNoiseFail) {
+                $errorSortingArgs.FailOnNoiseFail = $true
+            }
+
+            $errorSortingRaw = & $errorSortingScript @errorSortingArgs
+            $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
+            if ($null -eq $errorSortingSummary) {
+                $errorSortingStatus = "missing_output"
+                Write-Warning "[Autopilot] Error sorting pass returned no summary object."
+            } else {
+                $errorSortingStatus = [string]$errorSortingSummary.overall_status
+                $errorSortingBlockingHits = [int]$errorSortingSummary.blocking_hits_total
+                $errorSortingKnownNoiseHits = [int]$errorSortingSummary.known_noise_hits_total
+                $errorSortingKnownNoiseStatus = [string]$errorSortingSummary.known_noise_status
+                $errorSortingKnownNoiseWarnHitsTotal = [int]$errorSortingSummary.known_noise_warn_hits_total
+                $errorSortingKnownNoiseFailHitsTotal = [int]$errorSortingSummary.known_noise_fail_hits_total
+                $errorSortingTriageEvents = [int]$errorSortingSummary.triage_total_events
+                $errorSortingTriageUniqueSignatures = [int]$errorSortingSummary.triage_unique_signatures
+                $errorSortingReportMdPath = [string]$errorSortingSummary.report_md_path
+                $errorSortingReportJsonPath = [string]$errorSortingSummary.report_json_path
+                Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise={2} ({3})" -f `
+                        $errorSortingStatus,
+                        $errorSortingBlockingHits,
+                        $errorSortingKnownNoiseHits,
+                        $errorSortingKnownNoiseStatus)
+            }
+        } catch {
+            $errorSortingStatus = "error"
+            $errorSortingKnownNoiseStatus = "error"
+            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
+        }
+    }
+
 $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         iterations = $iteration
@@ -1153,6 +1229,9 @@ $result = [PSCustomObject]@{
         error_sorting_status = $errorSortingStatus
         error_sorting_blocking_hits = $errorSortingBlockingHits
         error_sorting_known_noise_hits = $errorSortingKnownNoiseHits
+        error_sorting_known_noise_status = $errorSortingKnownNoiseStatus
+        error_sorting_known_noise_warn_hits_total = $errorSortingKnownNoiseWarnHitsTotal
+        error_sorting_known_noise_fail_hits_total = $errorSortingKnownNoiseFailHitsTotal
         error_sorting_triage_total_events = $errorSortingTriageEvents
         error_sorting_triage_unique_signatures = $errorSortingTriageUniqueSignatures
         error_sorting_report_md_path = $errorSortingReportMdPath

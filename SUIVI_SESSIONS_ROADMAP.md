@@ -3799,3 +3799,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Autopilot integre avec run_error_sorting_pass (status/hits/report paths remontes). OneShot valide: ready_for_beta 100 + error_sorting_status=pass (blocking=0).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 16:14:41 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Noise budget ajoute dans run_error_sorting_pass (known_noise_status + seuils warn/fail). Autopilot execute maintenant la passe tri meme en pending_metrics pour monitoring continu.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
