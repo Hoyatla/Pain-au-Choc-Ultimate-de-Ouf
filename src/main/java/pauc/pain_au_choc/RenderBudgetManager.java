@@ -43,15 +43,60 @@ public final class RenderBudgetManager {
     }
 
     public static boolean shouldRenderSkyMesh() {
-        return !isSimplificationActive() || PauCClient.getQualityLevel() >= 2;
+        if (!isSimplificationActive()) {
+            return true;
+        }
+
+        int qualityLevel = PauCClient.getQualityLevel();
+        int degradeTier = GlobalPerformanceGovernor.getRenderDegradeTier();
+        if (degradeTier >= 4 && GlobalPerformanceGovernor.getGlobalPressure() >= 3 && qualityLevel <= 5) {
+            return false;
+        }
+
+        return qualityLevel >= 2;
     }
 
     public static boolean shouldRenderClouds() {
-        return !isSimplificationActive() || PauCClient.getActiveProfile().cloudStatus() != CloudStatus.OFF;
+        if (!isSimplificationActive()) {
+            return true;
+        }
+
+        if (PauCClient.getActiveProfile().cloudStatus() == CloudStatus.OFF) {
+            return false;
+        }
+
+        int qualityLevel = PauCClient.getQualityLevel();
+        int degradeTier = GlobalPerformanceGovernor.getRenderDegradeTier();
+        if (degradeTier >= 4) {
+            return false;
+        }
+        if (degradeTier >= 2 && qualityLevel <= 6) {
+            return false;
+        }
+        if (degradeTier >= 1 && qualityLevel <= 4) {
+            return false;
+        }
+        return true;
     }
 
     public static boolean shouldRenderWeather() {
-        return !isSimplificationActive() || PauCClient.getQualityLevel() >= 3;
+        if (!isSimplificationActive()) {
+            return true;
+        }
+
+        int qualityLevel = PauCClient.getQualityLevel();
+        GlobalPerformanceMode mode = GlobalPerformanceGovernor.getMode();
+        int degradeTier = GlobalPerformanceGovernor.getRenderDegradeTier();
+        if (mode == GlobalPerformanceMode.CRISIS) {
+            return false;
+        }
+        if (mode == GlobalPerformanceMode.COMBAT && qualityLevel <= 8) {
+            return false;
+        }
+        if (degradeTier >= 2 && qualityLevel <= 5) {
+            return false;
+        }
+        return qualityLevel >= 3;
     }
 
     public static boolean shouldRenderChunkLayer(RenderType renderType) {
@@ -67,7 +112,20 @@ public final class RenderBudgetManager {
     }
 
     public static boolean shouldRenderParticles() {
-        return !isSimplificationActive() || PauCClient.getQualityLevel() >= 3;
+        if (!isSimplificationActive()) {
+            return true;
+        }
+
+        int qualityLevel = PauCClient.getQualityLevel();
+        GlobalPerformanceMode mode = GlobalPerformanceGovernor.getMode();
+        int degradeTier = GlobalPerformanceGovernor.getRenderDegradeTier();
+        if (mode == GlobalPerformanceMode.CRISIS && qualityLevel <= 8) {
+            return false;
+        }
+        if (degradeTier >= 2 && qualityLevel <= 2) {
+            return false;
+        }
+        return qualityLevel >= 3;
     }
 
     public static boolean shouldRenderEntity(Entity entity) {

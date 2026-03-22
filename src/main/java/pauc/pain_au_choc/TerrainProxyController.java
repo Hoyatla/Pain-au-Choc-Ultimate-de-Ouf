@@ -24,6 +24,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -36,6 +37,7 @@ public final class TerrainProxyController {
     private static final int CELL_COUNT = CELL_GRID * CELL_GRID;
     private static final int CELL_SIZE_BLOCKS = 16 / CELL_GRID;
     private static final int RESET_SHRINK_THRESHOLD = 4096;
+    private static final int MIN_CACHE_ENTRIES = 2048;
     private static final int MAX_CACHE_ENTRIES = 24576;
     private static final int STALE_SWEEP_GRACE = 12;
     private static final int CACHE_DISTANCE_SLACK = 24;
@@ -54,6 +56,7 @@ public final class TerrainProxyController {
     private static int predictiveBiasChunks;
     private static int lastRenderedProxyChunks;
     private static int lastRenderedCells;
+    private static int lastTargetCacheEntries;
 
     private TerrainProxyController() {
     }
@@ -86,6 +89,10 @@ public final class TerrainProxyController {
         int targetCaptureRadius = ManagedChunkRadiusController.getProxyCaptureRadiusChunks();
         if (captureAnchor.chunkX != centerChunkX || captureAnchor.chunkZ != centerChunkZ || targetCaptureRadius != captureRadiusChunks) {
             beginCapture(captureAnchor.chunkX, captureAnchor.chunkZ, targetCaptureRadius);
+        }
+
+        if (AuthoritativeRuntimeController.shouldDeferNonCriticalMutations()) {
+            return;
         }
 
         captureTicker++;
@@ -168,6 +175,7 @@ public final class TerrainProxyController {
         predictiveBiasChunks = 0;
         lastRenderedProxyChunks = 0;
         lastRenderedCells = 0;
+        lastTargetCacheEntries = MIN_CACHE_ENTRIES;
         if (proxyChunks.size() > RESET_SHRINK_THRESHOLD) {
             proxyChunks = new HashMap<>(1024);
         } else {
@@ -184,12 +192,17 @@ public final class TerrainProxyController {
         return proxyChunks.size();
     }
 
+    public static int getTargetCacheEntries() {
+        return lastTargetCacheEntries;
+    }
+
     public static String getStatusLine() {
-        if (!ManagedChunkRadiusController.isProxyEnabled()) {
-            return "Terrain proxy: off (" + AuthoritativeRuntimeController.getTerrainProxyBlockReason() + ")";
+        if (!ManagedChunkRadiusController.shouldRenderProxyTerrain()) {
+            return "Terrain proxy: off (" + ManagedChunkRadiusController.getProxyRuntimeReason() + ")";
         }
 
         return "Terrain proxy: cache=" + proxyChunks.size()
+                + "/" + lastTargetCacheEntries
                 + " render=" + lastRenderedProxyChunks
                 + " cells=" + lastRenderedCells
                 + " bias=" + predictiveBiasChunks;
@@ -291,6 +304,7 @@ public final class TerrainProxyController {
         int managedRadius = ManagedChunkRadiusController.getManagedRadiusChunks();
         int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
         boolean trimForCapacity = proxyChunks.size() > MAX_CACHE_ENTRIES;
+        lastTargetCacheEntries = resolveTargetCacheEntries();
 
         Iterator<Map.Entry<Long, TerrainProxyChunk>> iterator = proxyChunks.entrySet().iterator();
         while (iterator.hasNext()) {
@@ -305,6 +319,8 @@ public final class TerrainProxyController {
                 iterator.remove();
             }
         }
+
+        enforceCacheBudget(player, captureAnchor, fullDetailRadius);
     }
 
     private static void prepareRenderBuffer(Camera camera, LocalPlayer player) {
@@ -320,6 +336,7 @@ public final class TerrainProxyController {
         int playerChunkZ = Mth.floor(player.getZ()) >> 4;
         int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
         int proxyRadius = ManagedChunkRadiusController.getProxyRadiusChunks();
+        int ultraImpostorStartRadius = ManagedChunkRadiusController.getUltraImpostorStartRadiusChunks();
         double fullDetailDistanceSqr = square(ManagedChunkRadiusController.getProxyStartDistanceBlocks());
         double proxyDistanceSqr = square(ManagedChunkRadiusController.getProxyDistanceBlocks() + CHUNK_SIZE);
         Vec3 cameraPosition = camera.getPosition();
@@ -344,6 +361,9 @@ public final class TerrainProxyController {
             }
 
             double bonusDegrees = distanceChunks >= 128 ? 18.0D : 10.0D;
+            if (distanceChunks >= ultraImpostorStartRadius) {
+                bonusDegrees -= 4.0D;
+            }
             if (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.TRANSIT && isAheadOfTravelVector(player, proxyChunk.centerX(), proxyChunk.centerZ())) {
                 bonusDegrees += 8.0D;
             }
@@ -444,12 +464,16 @@ public final class TerrainProxyController {
     private static float resolveChunkAlpha(int distanceChunks) {
         int proxyStart = ManagedChunkRadiusController.getProxyStartRadiusChunks();
         int proxyRadius = ManagedChunkRadiusController.getProxyRadiusChunks();
+        int ultraImpostorStart = ManagedChunkRadiusController.getUltraImpostorStartRadiusChunks();
         if (proxyRadius <= proxyStart) {
             return 0.55F;
         }
 
         double progress = (distanceChunks - proxyStart) / (double) Math.max(1, proxyRadius - proxyStart);
         double alpha = 0.84D - progress * 0.34D;
+        if (distanceChunks >= ultraImpostorStart) {
+            alpha *= 0.72D;
+        }
         if (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.CRISIS) {
             alpha *= 0.82D;
         }
@@ -488,6 +512,9 @@ public final class TerrainProxyController {
         double chunkSpan = CHUNK_SIZE * stride;
         double cellSpan = chunkSpan / CELL_GRID;
         int cellStep = resolveRenderCellStep(resolveChunkDistanceFromWorld(proxyChunk.chunkX(), proxyChunk.chunkZ(), cameraX, cameraZ));
+        if (stride >= 8) {
+            cellStep = CELL_GRID;
+        }
         int renderedCells = 0;
 
         for (int cellZ = 0; cellZ < CELL_GRID; cellZ += cellStep) {
@@ -584,6 +611,62 @@ public final class TerrainProxyController {
         return value * value;
     }
 
+    private static int resolveTargetCacheEntries() {
+        int proxyRadius = ManagedChunkRadiusController.getProxyRadiusChunks();
+        int baseTarget = proxyRadius * proxyRadius * 2;
+        double modeMultiplier = switch (GlobalPerformanceGovernor.getMode()) {
+            case TRANSIT -> 1.20D;
+            case EXPLORATION -> 1.05D;
+            case COMBAT -> 0.95D;
+            case BASE -> 0.90D;
+            case CRISIS -> 0.65D;
+        };
+
+        int pressure = LatencyController.getPressureLevel() + IntegratedServerLoadController.getPressureLevel();
+        double pressurePenalty = 1.0D - Math.min(0.35D, pressure * 0.08D);
+        int target = (int) Math.round(baseTarget * modeMultiplier * pressurePenalty);
+        return Math.max(MIN_CACHE_ENTRIES, Math.min(MAX_CACHE_ENTRIES, target));
+    }
+
+    private static void enforceCacheBudget(LocalPlayer player, ChunkAnchor captureAnchor, int fullDetailRadius) {
+        int overflow = proxyChunks.size() - lastTargetCacheEntries;
+        if (overflow <= 0) {
+            return;
+        }
+
+        ArrayList<TerrainProxyChunk> evictionCandidates = new ArrayList<>(proxyChunks.values());
+        evictionCandidates.sort(Comparator.comparingInt(chunk -> -computeEvictionScore(player, captureAnchor, fullDetailRadius, chunk)));
+
+        for (TerrainProxyChunk chunk : evictionCandidates) {
+            if (overflow <= 0) {
+                break;
+            }
+
+            int distanceChunks = Math.max(Math.abs(chunk.chunkX() - captureAnchor.chunkX), Math.abs(chunk.chunkZ() - captureAnchor.chunkZ));
+            if (distanceChunks <= fullDetailRadius + 2) {
+                continue;
+            }
+
+            if (proxyChunks.remove(chunk.chunkKey()) != null) {
+                overflow--;
+            }
+        }
+    }
+
+    private static int computeEvictionScore(LocalPlayer player, ChunkAnchor captureAnchor, int fullDetailRadius, TerrainProxyChunk chunk) {
+        int distanceChunks = Math.max(Math.abs(chunk.chunkX() - captureAnchor.chunkX), Math.abs(chunk.chunkZ() - captureAnchor.chunkZ));
+        int age = Math.max(0, captureGeneration - chunk.lastSeenGeneration());
+        int score = distanceChunks * 5 + age * 7;
+        if (distanceChunks <= fullDetailRadius + 4) {
+            score -= 48;
+        }
+        if (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.TRANSIT
+                && isAheadOfTravelVector(player, chunk.centerX(), chunk.centerZ())) {
+            score -= 18;
+        }
+        return score;
+    }
+
     private record ChunkAnchor(int chunkX, int chunkZ) {
     }
 
@@ -618,6 +701,10 @@ public final class TerrainProxyController {
 
         private int chunkX() {
             return this.chunkX;
+        }
+
+        private long chunkKey() {
+            return this.chunkKey;
         }
 
         private int chunkZ() {

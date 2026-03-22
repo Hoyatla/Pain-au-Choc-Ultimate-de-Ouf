@@ -3,6 +3,7 @@ package pauc.pain_au_choc;
 
 import com.mojang.logging.LogUtils;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.RenderGuiOverlayEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.event.entity.EntityJoinLevelEvent;
@@ -41,6 +42,11 @@ public class Pain_au_Choc {
         @SubscribeEvent
         public static void onEntityJoinLevel(EntityJoinLevelEvent event) {
             PauCClient.onClientEntityJoin(event);
+        }
+
+        @SubscribeEvent
+        public static void onRenderGuiOverlayPre(RenderGuiOverlayEvent.Pre event) {
+            OverlayCrashGuardController.onRenderGuiOverlayPre(event);
         }
     }
 }

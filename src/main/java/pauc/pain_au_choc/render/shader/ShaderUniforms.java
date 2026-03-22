@@ -187,6 +187,32 @@ public class ShaderUniforms {
         this.gbufferPreviousProjection.rewind();
         program.setUniformMatrix4f("gbufferPreviousProjection", false, this.gbufferPreviousProjection);
 
+        // Iris/OptiFine alias uniforms used by several external shaderpacks.
+        this.gbufferModelView.rewind();
+        program.setUniformMatrix4f("modelViewMatrix", false, this.gbufferModelView);
+        this.gbufferModelViewInverse.rewind();
+        program.setUniformMatrix4f("modelViewMatrixInverse", false, this.gbufferModelViewInverse);
+        this.gbufferProjection.rewind();
+        program.setUniformMatrix4f("projectionMatrix", false, this.gbufferProjection);
+        this.gbufferProjectionInverse.rewind();
+        program.setUniformMatrix4f("projectionMatrixInverse", false, this.gbufferProjectionInverse);
+        this.gbufferModelView.rewind();
+        program.setUniformMatrix4f("pauc_ModelViewMatrix", false, this.gbufferModelView);
+        this.gbufferModelViewInverse.rewind();
+        program.setUniformMatrix4f("pauc_ModelViewMatrixInverse", false, this.gbufferModelViewInverse);
+        this.gbufferProjection.rewind();
+        program.setUniformMatrix4f("pauc_ProjectionMatrix", false, this.gbufferProjection);
+        this.gbufferProjectionInverse.rewind();
+        program.setUniformMatrix4f("pauc_ProjectionMatrixInverse", false, this.gbufferProjectionInverse);
+
+        // Legacy fog bridge for pre-130 style references (gl_Fog.*).
+        float fogRange = Math.max(0.0001f, this.far - this.near);
+        program.setUniform4f("pauc_Fog.color", fogColor[0], fogColor[1], fogColor[2], 1.0f);
+        program.setUniform1f("pauc_Fog.density", 0.0f);
+        program.setUniform1f("pauc_Fog.start", this.near);
+        program.setUniform1f("pauc_Fog.end", this.far);
+        program.setUniform1f("pauc_Fog.scale", 1.0f / fogRange);
+
         // Sun/Moon
         program.setUniform3f("sunPosition", sunPosition[0], sunPosition[1], sunPosition[2]);
         program.setUniform3f("moonPosition", moonPosition[0], moonPosition[1], moonPosition[2]);
@@ -241,6 +267,12 @@ public class ShaderUniforms {
         program.setUniform1i("shadowtex1", 13);
         program.setUniform1i("shadowcolor0", 14);
         program.setUniform1i("noisetex", 15);
+
+        // Common OptiFine/Iris aliases frequently used in external packs.
+        program.setUniform1i("tex", 0);
+        program.setUniform1i("texture", 0);
+        program.setUniform1i("normals", Math.min(2, gbuffers.getAllocatedColorTargets() - 1));
+        program.setUniform1i("specular", Math.min(3, gbuffers.getAllocatedColorTargets() - 1));
     }
 
     // ---- Shadow matrix setters ----

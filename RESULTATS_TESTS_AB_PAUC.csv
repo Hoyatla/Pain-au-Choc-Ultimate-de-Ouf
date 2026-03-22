@@ -1,17 +1,18 @@
-date,build,scene,profile,fps_avg,fps_1pct_low,stutter_count,visual_issues,crash_or_error,point_eval,decision,notes
-2026-03-06,pauc-1.0-SNAPSHOT,scene_1_village,A_baseline,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_1_village,B1_stable,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_1_village,A_baseline_repeat,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_1_village,B2_aggressive,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_2_fast_move,A_baseline,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_2_fast_move,B1_stable,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_2_fast_move,A_baseline_repeat,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_2_fast_move,B2_aggressive,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_3_combat_particles,A_baseline,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_3_combat_particles,B1_stable,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_3_combat_particles,A_baseline_repeat,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_3_combat_particles,B2_aggressive,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_4_modded_base,A_baseline,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_4_modded_base,B1_stable,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_4_modded_base,A_baseline_repeat,,,,,,,, 
-2026-03-06,pauc-1.0-SNAPSHOT,scene_4_modded_base,B2_aggressive,,,,,,,, 
+"date","build","scene","profile","fps_avg","fps_1pct_low","stutter_count","visual_issues","crash_or_error","point_eval","decision","notes"
+"2026-03-20","pauc-2.0.0-ultimate","scene_1_village","A_baseline","71.289","20","0","","","","","guided_capture duration=180s min_rows=153"
+"2026-03-20","pauc-2.0.0-ultimate","scene_1_village","B1_stable","80.074","16.01","0","","","","","guided_capture duration=180s min_rows=153"
+"2026-03-06","pauc-1.0-SNAPSHOT","scene_1_village","A_baseline_repeat","","","","","","","",""
+"2026-03-20","pauc-2.0.0-ultimate","scene_1_village","B2_aggressive","80.189","20","0","","","","","guided_capture duration=180s min_rows=153"
+"2026-03-15","pauc-2.0.0-ultimate","scene_2_fast_move","A_baseline","27.853","1","0","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_2_fast_move","B1_stable","51.6","9","0","","","","",""
+"2026-03-06","pauc-1.0-SNAPSHOT","scene_2_fast_move","A_baseline_repeat","","","","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_2_fast_move","B2_aggressive","39.097","2","0","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_3_combat_particles","A_baseline","19.536","2","0","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_3_combat_particles","B1_stable","11.143","1","0","","","","",""
+"2026-03-06","pauc-1.0-SNAPSHOT","scene_3_combat_particles","A_baseline_repeat","","","","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_3_combat_particles","B2_aggressive","7.72","0.99","0","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_4_modded_base","A_baseline","7.208","1","0","","","","",""
+"2026-03-20","pauc-2.0.0-ultimate","scene_4_modded_base","B1_stable","99.833","0","0","","","","","black_screen_recovery"
+"2026-03-06","pauc-1.0-SNAPSHOT","scene_4_modded_base","A_baseline_repeat","","","","","","","",""
+"2026-03-15","pauc-2.0.0-ultimate","scene_4_modded_base","B2_aggressive","27.308","1.19","0","","","","",""
+"2026-03-20","pauc-2.0.0-ultimate","scene_4_modded_base","B_safe","122.422","20","0","","","","","guided_capture duration=600s min_rows=510"

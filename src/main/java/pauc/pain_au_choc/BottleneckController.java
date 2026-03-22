@@ -52,7 +52,7 @@ public final class BottleneckController {
         targetFrameMillis = 1000.0F / Math.max(1.0F, targetFps);
 
         float fpsPressure = targetFps / Math.max(1.0F, smoothedFps);
-        float scalePressure = (float) Math.pow(Math.max(0.50D, DynamicResolutionController.getCurrentScale()), 0.70D);
+        float scalePressure = (float) Math.pow(Math.max(0.35D, DynamicResolutionController.getCurrentScale()), 0.70D);
         float gpuLoadWeight = GpuHeadroomController.getTargetGpuLoad() * fpsPressure * scalePressure;
 
         float jitterWeight = 1.0F + Math.min(0.65F, LatencyController.getFrameTimeJitterMillis() / Math.max(1.0F, targetFrameMillis));

@@ -1,16 +1,22 @@
 package pauc.pain_au_choc.render.shader;
 
-import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.vertex.*;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.*;
 
+import pauc.pain_au_choc.BottleneckController;
+import pauc.pain_au_choc.DynamicResolutionController;
 import pauc.pain_au_choc.GlobalPerformanceGovernor;
+import pauc.pain_au_choc.GlobalPerformanceMode;
+import pauc.pain_au_choc.LatencyController;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -35,6 +41,8 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
 
     /** Compiled shader programs, keyed by program name. */
     private final Map<String, PauCShaderProgram> compiledPrograms = new LinkedHashMap<>();
+    private final List<PauCShaderProgram> deferredPassPrograms = new ArrayList<>();
+    private final List<PauCShaderProgram> compositePassPrograms = new ArrayList<>();
 
     /** GBuffer render targets. */
     private GBufferTargets gbuffers;
@@ -59,6 +67,8 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
 
     /** Shadow map resolution. */
     private int shadowMapResolution = 1024;
+    private int lastDeferredPassLimit;
+    private int lastCompositePassLimit;
 
     /**
      * Create and initialize the deferred pipeline from a shaderpack.
@@ -120,12 +130,29 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
                 program.close();
             }
         }
+        rebuildPassProgramLists();
 
-        this.initialized = true;
+        boolean hasCoreGBufferProgram = this.compiledPrograms.containsKey("gbuffers_terrain")
+                || this.compiledPrograms.containsKey("gbuffers_basic")
+                || this.compiledPrograms.containsKey("gbuffers_textured");
+        boolean hasFinalProgram = this.compiledPrograms.containsKey("final");
+        this.initialized = hasCoreGBufferProgram && hasFinalProgram;
+
+        if (!this.initialized) {
+            System.err.println("[PAUC Pipeline] Shaderpack initialization rejected: missing compiled critical programs "
+                    + "(coreGbuffer=" + hasCoreGBufferProgram + ", final=" + hasFinalProgram + ").");
+            return;
+        }
+
         System.out.println("[PAUC Pipeline] Initialized deferred pipeline: "
                 + this.compiledPrograms.size() + " programs compiled, "
                 + colorTargets + " GBuffer targets, "
                 + "shadow=" + (this.shadowTargets != null));
+        if (this.shaderPack != null && !this.shaderPack.warnings.isEmpty()) {
+            for (String warning : this.shaderPack.warnings) {
+                System.out.println("[PAUC Pipeline] Pack warning: " + warning);
+            }
+        }
     }
 
     // ============================
@@ -260,11 +287,9 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
         if (!this.initialized) return;
 
         this.currentPhase = WorldRenderingPhase.DEFERRED;
-
-        for (int i = 0; i < this.shaderPack.deferredPassCount; i++) {
-            String name = i == 0 ? "deferred" : "deferred" + i;
-            PauCShaderProgram program = this.compiledPrograms.get(name);
-            if (program == null) continue;
+        this.lastDeferredPassLimit = resolveDeferredPassLimit();
+        for (int i = 0; i < this.lastDeferredPassLimit; i++) {
+            PauCShaderProgram program = this.deferredPassPrograms.get(i);
 
             // Bind GBuffer textures for reading
             bindGBufferTextures();
@@ -283,11 +308,9 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
         if (!this.initialized) return;
 
         this.currentPhase = WorldRenderingPhase.COMPOSITE;
-
-        for (int i = 0; i < this.shaderPack.compositePassCount; i++) {
-            String name = i == 0 ? "composite" : "composite" + i;
-            PauCShaderProgram program = this.compiledPrograms.get(name);
-            if (program == null) continue;
+        this.lastCompositePassLimit = resolveCompositePassLimit();
+        for (int i = 0; i < this.lastCompositePassLimit; i++) {
+            PauCShaderProgram program = this.compositePassPrograms.get(i);
 
             // Bind GBuffer textures for reading
             bindGBufferTextures();
@@ -309,10 +332,15 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
 
         PauCShaderProgram finalProg = this.compiledPrograms.get("final");
         if (finalProg != null) {
-            // Bind to default framebuffer (screen)
-            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, 0);
             Minecraft mc = Minecraft.getInstance();
-            GL11.glViewport(0, 0, mc.getWindow().getWidth(), mc.getWindow().getHeight());
+            RenderTarget mainTarget = mc.getMainRenderTarget();
+            int targetFbo = mainTarget == null ? 0 : mainTarget.frameBufferId;
+            int targetWidth = mainTarget == null ? mc.getWindow().getWidth() : mainTarget.viewWidth;
+            int targetHeight = mainTarget == null ? mc.getWindow().getHeight() : mainTarget.viewHeight;
+
+            // Render the deferred final output to the active main target.
+            GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, targetFbo);
+            GL11.glViewport(0, 0, targetWidth, targetHeight);
 
             bindGBufferTextures();
             renderFullScreenPass(finalProg);
@@ -363,6 +391,113 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
         if (this.shadowTargets != null) {
             this.shadowTargets.bindTextures(12);
         }
+    }
+
+    private void rebuildPassProgramLists() {
+        this.deferredPassPrograms.clear();
+        this.compositePassPrograms.clear();
+
+        for (int i = 0; i < this.shaderPack.deferredPassCount; i++) {
+            String name = i == 0 ? "deferred" : "deferred" + i;
+            PauCShaderProgram program = this.compiledPrograms.get(name);
+            if (program != null) {
+                this.deferredPassPrograms.add(program);
+            }
+        }
+
+        for (int i = 0; i < this.shaderPack.compositePassCount; i++) {
+            String name = i == 0 ? "composite" : "composite" + i;
+            PauCShaderProgram program = this.compiledPrograms.get(name);
+            if (program != null) {
+                this.compositePassPrograms.add(program);
+            }
+        }
+    }
+
+    private int resolveDeferredPassLimit() {
+        int available = this.deferredPassPrograms.size();
+        if (available <= 0) {
+            return 0;
+        }
+        int tier = resolveGpuStressTier();
+        if (tier <= 0) {
+            return available;
+        }
+        if (tier == 1) {
+            return Math.max(1, available - 2);
+        }
+        if (tier == 2) {
+            return Math.max(1, Math.min(2, available));
+        }
+        return 1;
+    }
+
+    private int resolveCompositePassLimit() {
+        int available = this.compositePassPrograms.size();
+        if (available <= 0) {
+            return 0;
+        }
+
+        int tier = resolveGpuStressTier();
+        if (tier <= 0) {
+            return available;
+        }
+
+        int minPasses = resolveMinimumCompositePasses(available);
+        if (tier == 1) {
+            return Math.max(minPasses, (int) Math.ceil(available * 0.75D));
+        }
+        if (tier == 2) {
+            return Math.max(minPasses, (int) Math.ceil(available * 0.50D));
+        }
+        if (tier == 3) {
+            return Math.max(minPasses, (int) Math.ceil(available * 0.35D));
+        }
+        return Math.max(minPasses, (int) Math.ceil(available * 0.20D));
+    }
+
+    private int resolveGpuStressTier() {
+        int tier = 0;
+        if (BottleneckController.isGpuBound()) {
+            tier++;
+        }
+        if (GlobalPerformanceGovernor.getGlobalPressure() >= 2) {
+            tier++;
+        }
+        if (GlobalPerformanceGovernor.getGlobalPressure() >= 3) {
+            tier++;
+        }
+        if (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.COMBAT) {
+            tier++;
+        }
+        if (DynamicResolutionController.getCurrentScale() <= 0.56D) {
+            tier++;
+        }
+
+        float frameMillis = LatencyController.getStabilizedFrameMillis();
+        if (frameMillis >= 45.0F) {
+            tier++;
+        }
+        if (frameMillis >= 65.0F) {
+            tier++;
+        }
+        if (GlobalPerformanceGovernor.shouldSkipShadowPass()) {
+            tier++;
+        }
+
+        return Math.max(0, Math.min(4, tier));
+    }
+
+    private int resolveMinimumCompositePasses(int available) {
+        if (available <= 1) {
+            return available;
+        }
+        if (GlobalPerformanceGovernor.getGlobalPressure() >= 3
+                || (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.COMBAT
+                && DynamicResolutionController.getCurrentScale() <= 0.56D)) {
+            return 1;
+        }
+        return this.shaderPack.compositePassCount > 1 ? 2 : 1;
     }
 
     /**
@@ -420,7 +555,11 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
         String debug = "PAUC Shader: " + (shaderPack != null ? shaderPack.name : "?")
                 + " phase=" + currentPhase
                 + " programs=" + compiledPrograms.size()
-                + " shadow=" + (shadowTargets != null);
+                + " shadow=" + (shadowTargets != null)
+                + " deferredPasses=" + lastDeferredPassLimit + "/" + deferredPassPrograms.size()
+                + " compositePasses=" + lastCompositePassLimit + "/" + compositePassPrograms.size()
+                + " mode=" + (shaderPack != null ? shaderPack.compatibilityMode.getConfigKey() : "balanced")
+                + " warnings=" + (shaderPack != null ? shaderPack.warnings.size() : 0);
         if (shadowRenderer != null) {
             debug += " | " + shadowRenderer.getDebugString();
         }
@@ -437,6 +576,10 @@ public class DeferredWorldRenderingPipeline implements AutoCloseable {
             program.close();
         }
         this.compiledPrograms.clear();
+        this.deferredPassPrograms.clear();
+        this.compositePassPrograms.clear();
+        this.lastDeferredPassLimit = 0;
+        this.lastCompositePassLimit = 0;
 
         if (this.gbuffers != null) {
             this.gbuffers.close();

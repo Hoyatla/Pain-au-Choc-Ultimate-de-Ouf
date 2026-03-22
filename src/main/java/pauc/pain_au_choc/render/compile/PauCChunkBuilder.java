@@ -172,12 +172,14 @@ public class PauCChunkBuilder {
                     BlockState state = chunkSection.getBlockState(lx, ly, lz);
                     if (state.isAir()) continue;
 
-                    // Check for block entities
-                    BlockEntity be = chunk.getBlockEntity(pos);
-                    if (be != null) {
-                        // TODO: Classify as global vs culled based on renderer type
-                        culledEntities.add(be);
-                        flags |= RenderSectionFlags.HAS_BLOCK_ENTITIES;
+                    // Check for block entities only when required by state metadata.
+                    if (state.hasBlockEntity()) {
+                        BlockEntity be = chunk.getBlockEntity(pos);
+                        if (be != null) {
+                            // Final global-vs-culled classification is normalized on the render thread.
+                            culledEntities.add(be);
+                            flags |= RenderSectionFlags.HAS_BLOCK_ENTITIES;
+                        }
                     }
 
                     // Determine render pass

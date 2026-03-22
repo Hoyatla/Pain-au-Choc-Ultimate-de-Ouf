@@ -15,12 +15,17 @@ public final class GlobalPerformanceGovernor {
     private static final int COMBAT_HOLD_TICKS = 60;
     private static final int COMBAT_SAMPLE_INTERVAL_TICKS = 5;
     private static final int BASE_SAMPLE_INTERVAL_TICKS = 20;
+    private static final int SLOW_DECISION_INTERVAL_TICKS = 10;
+    private static final int MODE_SWITCH_COOLDOWN_TICKS = 40;
+    private static final float CRISIS_CHUNK_BACKLOG_THRESHOLD = 0.97F;
     private static final int BASE_SCAN_RADIUS_CHUNKS = 2;
     private static final int BASE_BLOCK_ENTITY_THRESHOLD = 20;
     private static final double COMBAT_ENEMY_RADIUS_BLOCKS = 36.0D;
     private static final double COMBAT_PROJECTILE_RADIUS_BLOCKS = 28.0D;
     private static final double COMBAT_KEEP_RADIUS_BLOCKS = 48.0D;
-    private static final double TRANSIT_SPEED_THRESHOLD_SQR = 0.18D * 0.18D;
+    private static final double TRANSIT_ENTER_SPEED_THRESHOLD_SQR = 0.26D * 0.26D;
+    private static final double TRANSIT_EXIT_SPEED_THRESHOLD_SQR = 0.14D * 0.14D;
+    private static final int TRANSIT_HOLD_TICKS = 24;
 
     private static GlobalPerformanceMode mode = GlobalPerformanceMode.EXPLORATION;
     private static int globalPressure;
@@ -29,7 +34,13 @@ public final class GlobalPerformanceGovernor {
     private static int sampledProjectileCount;
     private static int sampledNearbyBlockEntities;
     private static int tickCounter;
+    private static int decisionTickCounter;
+    private static int modeSwitchCooldownTicks;
     private static int trackedLevelIdentity;
+    private static GlobalPerformanceMode pendingMode = GlobalPerformanceMode.EXPLORATION;
+    private static int pendingModeTicks;
+    private static int modeTransitionCount;
+    private static int transitHoldTicks;
 
     private GlobalPerformanceGovernor() {
     }
@@ -55,6 +66,14 @@ public final class GlobalPerformanceGovernor {
         }
 
         tickCounter++;
+        decisionTickCounter++;
+        if (modeSwitchCooldownTicks > 0) {
+            modeSwitchCooldownTicks--;
+        }
+        if (transitHoldTicks > 0) {
+            transitHoldTicks--;
+        }
+
         if (tickCounter % COMBAT_SAMPLE_INTERVAL_TICKS == 0) {
             sampleCombatSignals(level, player);
         } else if (combatHoldTicks > 0) {
@@ -66,7 +85,8 @@ public final class GlobalPerformanceGovernor {
         }
 
         globalPressure = computeGlobalPressure();
-        mode = resolveMode(player);
+        GlobalPerformanceMode desiredMode = resolveMode(player);
+        updateModeWithHysteresis(desiredMode);
     }
 
     public static void reset() {
@@ -77,7 +97,13 @@ public final class GlobalPerformanceGovernor {
         sampledProjectileCount = 0;
         sampledNearbyBlockEntities = 0;
         tickCounter = 0;
+        decisionTickCounter = 0;
+        modeSwitchCooldownTicks = 0;
         trackedLevelIdentity = 0;
+        pendingMode = GlobalPerformanceMode.EXPLORATION;
+        pendingModeTicks = 0;
+        modeTransitionCount = 0;
+        transitHoldTicks = 0;
     }
 
     public static GlobalPerformanceMode getMode() {
@@ -86,6 +112,27 @@ public final class GlobalPerformanceGovernor {
 
     public static int getGlobalPressure() {
         return globalPressure;
+    }
+
+    public static int getModeSwitchCooldownTicks() {
+        return modeSwitchCooldownTicks;
+    }
+
+    public static int getModeTransitionCount() {
+        return modeTransitionCount;
+    }
+
+    /**
+     * Ordered visual degradation tier.
+     * 0 = no extra cuts, 4 = severe cuts.
+     */
+    public static int getRenderDegradeTier() {
+        return switch (mode) {
+            case EXPLORATION -> 0;
+            case TRANSIT -> 1;
+            case BASE, COMBAT -> 2;
+            case CRISIS -> 4;
+        };
     }
 
     public static boolean isReadabilityProtected() {
@@ -114,11 +161,43 @@ public final class GlobalPerformanceGovernor {
 
     public static double getEffectiveDynamicResolutionMinScale(double configuredMinScale) {
         double clampedScale = clampScale(configuredMinScale);
+        boolean gpuBound = BottleneckController.isGpuBound();
+        boolean cpuBound = BottleneckController.isCpuBound();
+        int latencyPressure = LatencyController.getPressureLevel();
+        int serverPressure = IntegratedServerLoadController.getPressureLevel();
+        boolean severePressure = globalPressure >= 3 || latencyPressure >= 2 || gpuBound;
+        boolean moderatePressure = globalPressure >= 2 || serverPressure >= 2 || (cpuBound && latencyPressure >= 1);
         return switch (mode) {
-            case COMBAT -> Math.max(clampedScale, 0.78D);
-            case TRANSIT -> Math.max(0.56D, clampedScale - 0.10D);
-            case BASE -> Math.max(0.60D, clampedScale - 0.04D);
-            case CRISIS -> Math.max(0.52D, clampedScale - 0.14D);
+            case COMBAT -> {
+                if (severePressure) {
+                    yield Math.max(0.38D, clampedScale - 0.32D);
+                }
+                if (moderatePressure) {
+                    yield Math.max(0.56D, clampedScale - 0.12D);
+                }
+                yield Math.max(0.72D, clampedScale);
+            }
+            case TRANSIT -> {
+                if (severePressure) {
+                    yield Math.max(0.40D, clampedScale - 0.30D);
+                }
+                if (moderatePressure) {
+                    yield Math.max(0.56D, clampedScale - 0.14D);
+                }
+                yield Math.max(0.58D, clampedScale - 0.10D);
+            }
+            case BASE -> {
+                if (severePressure) {
+                    yield Math.max(0.42D, clampedScale - 0.26D);
+                }
+                if (moderatePressure) {
+                    yield Math.max(0.58D, clampedScale - 0.08D);
+                }
+                yield Math.max(0.60D, clampedScale - 0.04D);
+            }
+            case CRISIS -> severePressure
+                    ? Math.max(0.35D, clampedScale - 0.38D)
+                    : Math.max(0.44D, clampedScale - 0.24D);
             default -> clampedScale;
         };
     }
@@ -139,6 +218,12 @@ public final class GlobalPerformanceGovernor {
      * BASE stays normal, TRANSIT and EXPLORATION are full.
      */
     public static double getShadowDistanceMultiplier() {
+        if (mode == GlobalPerformanceMode.COMBAT && globalPressure >= 3) {
+            return 0.55D;
+        }
+        if (mode == GlobalPerformanceMode.TRANSIT && globalPressure >= 3) {
+            return 0.70D;
+        }
         return switch (mode) {
             case CRISIS -> 0.50D;
             case COMBAT -> 0.75D;
@@ -153,7 +238,12 @@ public final class GlobalPerformanceGovernor {
      * Only in extreme crisis with high pressure.
      */
     public static boolean shouldSkipShadowPass() {
-        return mode == GlobalPerformanceMode.CRISIS && globalPressure >= 3;
+        if (mode == GlobalPerformanceMode.CRISIS && globalPressure >= 3) {
+            return true;
+        }
+        return mode == GlobalPerformanceMode.COMBAT
+                && globalPressure >= 3
+                && (BottleneckController.isGpuBound() || LatencyController.getPressureLevel() >= 1);
     }
 
     public static boolean shouldFavorPlayerAffectedChunkPriority() {
@@ -247,7 +337,13 @@ public final class GlobalPerformanceGovernor {
     }
 
     private static GlobalPerformanceMode resolveMode(LocalPlayer player) {
-        boolean crisis = globalPressure >= 3 || (LatencyController.getPressureLevel() >= 2 && IntegratedServerLoadController.getPressureLevel() >= 2);
+        int latencyPressure = LatencyController.getPressureLevel();
+        int serverPressure = IntegratedServerLoadController.getPressureLevel();
+        boolean chunkBacklogCritical = ChunkBuildQueueController.getBackPressureRatio() >= CRISIS_CHUNK_BACKLOG_THRESHOLD;
+        boolean hardServerCrisis = serverPressure >= 3;
+        boolean coupledPressureCrisis = serverPressure >= 2 && latencyPressure >= 2;
+        boolean chunkAndServerCrisis = chunkBacklogCritical && serverPressure >= 2;
+        boolean crisis = hardServerCrisis || coupledPressureCrisis || chunkAndServerCrisis;
         if (crisis) {
             return GlobalPerformanceMode.CRISIS;
         }
@@ -267,22 +363,116 @@ public final class GlobalPerformanceGovernor {
         return GlobalPerformanceMode.EXPLORATION;
     }
 
+    private static void updateModeWithHysteresis(GlobalPerformanceMode desiredMode) {
+        if (desiredMode == null) {
+            return;
+        }
+
+        if (desiredMode == mode) {
+            pendingMode = mode;
+            pendingModeTicks = 0;
+            return;
+        }
+
+        if (desiredMode == GlobalPerformanceMode.CRISIS && isImmediateCrisisRequired()) {
+            switchMode(GlobalPerformanceMode.CRISIS);
+            return;
+        }
+
+        if (desiredMode == GlobalPerformanceMode.COMBAT && mode != GlobalPerformanceMode.CRISIS) {
+            switchMode(GlobalPerformanceMode.COMBAT);
+            return;
+        }
+
+        if (desiredMode != pendingMode) {
+            pendingMode = desiredMode;
+            pendingModeTicks = 1;
+        } else {
+            pendingModeTicks = Math.min(200, pendingModeTicks + 1);
+        }
+
+        if (modeSwitchCooldownTicks > 0) {
+            return;
+        }
+
+        if (decisionTickCounter % SLOW_DECISION_INTERVAL_TICKS != 0) {
+            return;
+        }
+
+        if (pendingModeTicks < getRequiredPendingTicks(desiredMode)) {
+            return;
+        }
+
+        switchMode(desiredMode);
+    }
+
+    private static int getRequiredPendingTicks(GlobalPerformanceMode targetMode) {
+        return switch (targetMode) {
+            case EXPLORATION -> 6;
+            case TRANSIT -> 6;
+            case BASE -> 8;
+            case COMBAT -> 1;
+            case CRISIS -> 4;
+        };
+    }
+
+    private static boolean isImmediateCrisisRequired() {
+        return IntegratedServerLoadController.getPressureLevel() >= 3;
+    }
+
+    private static void switchMode(GlobalPerformanceMode newMode) {
+        if (newMode == mode) {
+            return;
+        }
+
+        GlobalPerformanceMode previousMode = mode;
+        mode = newMode;
+        pendingMode = newMode;
+        pendingModeTicks = 0;
+        modeSwitchCooldownTicks = getModeCooldownTicks(newMode);
+        modeTransitionCount++;
+        Pain_au_Choc.LOGGER.info(
+                "PauC governor mode {} -> {} (pressure={}, latency={}, server={}, cooldown={})",
+                previousMode,
+                newMode,
+                globalPressure,
+                LatencyController.getPressureLevel(),
+                IntegratedServerLoadController.getPressureLevel(),
+                modeSwitchCooldownTicks
+        );
+    }
+
+    private static int getModeCooldownTicks(GlobalPerformanceMode targetMode) {
+        return switch (targetMode) {
+            case CRISIS -> MODE_SWITCH_COOLDOWN_TICKS + 32;
+            case COMBAT -> MODE_SWITCH_COOLDOWN_TICKS + 20;
+            case TRANSIT, BASE -> MODE_SWITCH_COOLDOWN_TICKS + 24;
+            default -> MODE_SWITCH_COOLDOWN_TICKS + 8;
+        };
+    }
+
     private static boolean isPlayerInTransit(LocalPlayer player) {
         if (player == null) {
             return false;
         }
 
         if (player.isFallFlying() || player.isPassenger()) {
+            transitHoldTicks = TRANSIT_HOLD_TICKS;
             return true;
         }
 
         Vec3 delta = player.getDeltaMovement();
         double horizontalSpeedSqr = delta.x * delta.x + delta.z * delta.z;
-        return horizontalSpeedSqr >= TRANSIT_SPEED_THRESHOLD_SQR;
+        if (horizontalSpeedSqr >= TRANSIT_ENTER_SPEED_THRESHOLD_SQR) {
+            transitHoldTicks = TRANSIT_HOLD_TICKS;
+            return true;
+        }
+
+        return transitHoldTicks > 0 && horizontalSpeedSqr >= TRANSIT_EXIT_SPEED_THRESHOLD_SQR;
     }
 
     private static double clampScale(double value) {
-        return Math.max(0.50D, Math.min(1.00D, value));
+        return Math.max(0.35D, Math.min(1.00D, value));
     }
 
     private static double square(double value) {

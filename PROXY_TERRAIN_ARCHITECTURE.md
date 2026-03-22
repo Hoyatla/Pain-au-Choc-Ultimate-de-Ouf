@@ -26,6 +26,7 @@ Le proxy terrain actuel est un `far-field cache` ephemere:
 - il peut deplacer son centre de capture vers l'avant du joueur
 - il echantillonne maintenant `4x4` cellules par chunk proxy
 - il regroupe ces cellules a grande distance pour garder un cout stable
+- il applique un palier `ultra-loin` en stride `8` (impostor simplifie) sur la fin du rayon proxy
 
 Ce n'est pas encore:
 

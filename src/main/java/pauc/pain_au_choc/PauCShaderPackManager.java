@@ -443,7 +443,7 @@ public final class PauCShaderPackManager {
     private static ResourceProvider createGeneratedResourceProvider(String shaderPath, String fragmentSource) {
         Map<ResourceLocation, Resource> resources = new HashMap<>();
         PackResources packResources = new ShaderPackResources("pauc_shaderpack/" + shaderPath);
-        addTextResource(resources, packResources, shaderJsonLocation(shaderPath), buildShaderJson(shaderPath));
+        addTextResource(resources, packResources, shaderJsonLocation(shaderPath), buildShaderJson(shaderPath, fragmentSource));
         addTextResource(resources, packResources, vertexLocation(), PauCShaderManager.PASSTHROUGH_VERTEX_SOURCE);
         addTextResource(resources, packResources, fragmentLocation(shaderPath), fragmentSource);
         return ResourceProvider.fromMap(resources);
@@ -452,7 +452,8 @@ public final class PauCShaderPackManager {
     private static ResourceProvider createByteBackedResourceProvider(String shaderPath, byte[] fragmentBytes) {
         Map<ResourceLocation, Resource> resources = new HashMap<>();
         PackResources packResources = new ShaderPackResources("pauc_shaderpack/" + shaderPath);
-        addTextResource(resources, packResources, shaderJsonLocation(shaderPath), buildShaderJson(shaderPath));
+        String fragmentSource = new String(fragmentBytes, StandardCharsets.UTF_8);
+        addTextResource(resources, packResources, shaderJsonLocation(shaderPath), buildShaderJson(shaderPath, fragmentSource));
         addTextResource(resources, packResources, vertexLocation(), PauCShaderManager.PASSTHROUGH_VERTEX_SOURCE);
         addBinaryResource(resources, packResources, fragmentLocation(shaderPath), fragmentBytes);
         return ResourceProvider.fromMap(resources);
@@ -476,7 +477,8 @@ public final class PauCShaderPackManager {
         return zipFile.getInputStream(entry).readAllBytes();
     }
 
-    private static String buildShaderJson(String shaderPath) {
+    private static String buildShaderJson(String shaderPath, @Nullable String fragmentSource) {
+        String optionalUniforms = buildOptionalUniformJson(fragmentSource);
         return String.format(
                 Locale.ROOT,
                 """
@@ -494,19 +496,65 @@ public final class PauCShaderPackManager {
                           "uniforms": [
                             { "name": "ModelViewMat", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] },
                             { "name": "ProjMat", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] },
-                            { "name": "ColorModulator", "type": "float", "count": 4, "values": [ 1.0, 1.0, 1.0, 1.0 ] },
-                            { "name": "SourceSize", "type": "float", "count": 2, "values": [ 1.0, 1.0 ] },
-                            { "name": "RcasStrength", "type": "float", "count": 1, "values": [ 0.0 ] },
-                            { "name": "ShadowLift", "type": "float", "count": 1, "values": [ 0.42 ] },
-                            { "name": "LightContrast", "type": "float", "count": 1, "values": [ 0.16 ] },
-                            { "name": "LightGamma", "type": "float", "count": 1, "values": [ 0.92 ] }
+                            { "name": "ColorModulator", "type": "float", "count": 4, "values": [ 1.0, 1.0, 1.0, 1.0 ] }%s
                           ]
                         }
                         """,
                 PACK_NAMESPACE,
                 PACK_NAMESPACE,
-                shaderPath
+                shaderPath,
+                optionalUniforms
         );
+    }
+
+    private static String buildOptionalUniformJson(@Nullable String fragmentSource) {
+        StringBuilder optionalUniforms = new StringBuilder();
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "SourceSize",
+                "{ \"name\": \"SourceSize\", \"type\": \"float\", \"count\": 2, \"values\": [ 1.0, 1.0 ] }"
+        );
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "RcasStrength",
+                "{ \"name\": \"RcasStrength\", \"type\": \"float\", \"count\": 1, \"values\": [ 0.0 ] }"
+        );
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "ShadowLift",
+                "{ \"name\": \"ShadowLift\", \"type\": \"float\", \"count\": 1, \"values\": [ 0.42 ] }"
+        );
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "LightContrast",
+                "{ \"name\": \"LightContrast\", \"type\": \"float\", \"count\": 1, \"values\": [ 0.16 ] }"
+        );
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "LightGamma",
+                "{ \"name\": \"LightGamma\", \"type\": \"float\", \"count\": 1, \"values\": [ 0.92 ] }"
+        );
+        return optionalUniforms.toString();
+    }
+
+    private static void appendOptionalUniform(
+            StringBuilder target,
+            @Nullable String fragmentSource,
+            String uniformName,
+            String uniformJson
+    ) {
+        if (containsUniformReference(fragmentSource, uniformName)) {
+            target.append(",\n                            ").append(uniformJson);
+        }
+    }
+
+    private static boolean containsUniformReference(@Nullable String fragmentSource, String uniformName) {
+        return fragmentSource != null && fragmentSource.contains(uniformName);
     }
 
     private static void ensureTransientTargets(int width, int height) {

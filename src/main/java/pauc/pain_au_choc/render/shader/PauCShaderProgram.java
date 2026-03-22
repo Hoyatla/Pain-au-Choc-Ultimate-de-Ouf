@@ -2,6 +2,7 @@ package pauc.pain_au_choc.render.shader;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL20;
+import org.lwjgl.opengl.GL30;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -174,11 +175,17 @@ public class PauCShaderProgram implements AutoCloseable {
     private void bindStandardAttributes() {
         // Standard Minecraft/OptiFine attribute locations
         GL20.glBindAttribLocation(this.programId, 0, "Position");
+        GL20.glBindAttribLocation(this.programId, 0, "vaPosition");
         GL20.glBindAttribLocation(this.programId, 1, "Color");
+        GL20.glBindAttribLocation(this.programId, 1, "vaColor");
         GL20.glBindAttribLocation(this.programId, 2, "UV0");       // texture coords
+        GL20.glBindAttribLocation(this.programId, 2, "vaUV0");
         GL20.glBindAttribLocation(this.programId, 3, "UV1");       // overlay coords
+        GL20.glBindAttribLocation(this.programId, 3, "vaUV1");
         GL20.glBindAttribLocation(this.programId, 4, "UV2");       // lightmap coords
+        GL20.glBindAttribLocation(this.programId, 4, "vaUV2");
         GL20.glBindAttribLocation(this.programId, 5, "Normal");
+        GL20.glBindAttribLocation(this.programId, 5, "vaNormal");
 
         // OptiFine extended attributes
         GL20.glBindAttribLocation(this.programId, 10, "mc_Entity");
@@ -189,6 +196,11 @@ public class PauCShaderProgram implements AutoCloseable {
         GL20.glBindAttribLocation(this.programId, 6, "pauc_Position");
         GL20.glBindAttribLocation(this.programId, 7, "pauc_Color");
         GL20.glBindAttribLocation(this.programId, 8, "pauc_TexCoord");
+
+        // Bind explicit fragment outputs for legacy bridge shaders.
+        for (int i = 0; i < 8; i++) {
+            GL30.glBindFragDataLocation(this.programId, i, "pauc_FragData" + i);
+        }
     }
 
     private static int compileShader(int type, String source, String debugName) {

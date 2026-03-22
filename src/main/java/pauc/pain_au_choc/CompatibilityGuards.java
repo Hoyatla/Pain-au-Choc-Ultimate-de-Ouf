@@ -33,7 +33,9 @@ public final class CompatibilityGuards {
     }
 
     public static boolean shouldDisableDynamicResolution() {
-        return AuthoritativeRuntimeController.shouldYieldDynamicResolutionToExternalPipeline();
+        return AuthoritativeRuntimeController.shouldForceDisableDynamicResolution()
+                || AuthoritativeRuntimeController.shouldForceDisableDynamicResolutionForDeferredPipeline()
+                || AuthoritativeRuntimeController.shouldYieldDynamicResolutionToExternalPipeline();
     }
 
     public static boolean shouldDisableAdaptiveFrameCap() {

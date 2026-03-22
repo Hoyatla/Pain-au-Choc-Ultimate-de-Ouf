@@ -41,6 +41,12 @@ public final class StructureStreamingController {
     private static int scanCursor;
     private static int scanTicker;
     private static int sweepGeneration;
+    private static int predictiveBiasChunks;
+    private static int lastKnownChunkCount;
+    private static int lastActiveChunkCount;
+    private static int lastDeferredChunkCount;
+    private static int lastFullDetailRadiusChunks;
+    private static int lastStreamingRadiusChunks;
     private static boolean ready;
 
     private StructureStreamingController() {
@@ -66,15 +72,24 @@ public final class StructureStreamingController {
             trackedLevelIdentity = levelIdentity;
         }
 
-        int radiusChunks = ManagedChunkRadiusController.getFullDetailRadiusChunks();
-        int playerChunkX = Mth.floor(player.getX()) >> 4;
-        int playerChunkZ = Mth.floor(player.getZ()) >> 4;
-        if (playerChunkX != centerChunkX || playerChunkZ != centerChunkZ || radiusChunks != scanRadiusChunks) {
-            beginSweep(playerChunkX, playerChunkZ, radiusChunks);
+        int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
+        int radiusChunks = ManagedChunkRadiusController.getStreamingRadiusChunks();
+        ChunkAnchor scanAnchor = resolveScanAnchor(player);
+        if (scanAnchor.chunkX != centerChunkX || scanAnchor.chunkZ != centerChunkZ || radiusChunks != scanRadiusChunks) {
+            beginSweep(scanAnchor.chunkX, scanAnchor.chunkZ, radiusChunks);
         }
+        lastFullDetailRadiusChunks = fullDetailRadius;
+        lastStreamingRadiusChunks = radiusChunks;
 
         scanTicker++;
         int adaptiveInterval = LatencyController.getAdaptiveInterval(SCAN_INTERVAL_TICKS);
+        int mitigationTier = IntegratedServerLoadController.getMitigationTier();
+        if (mitigationTier >= 2) {
+            adaptiveInterval += 1;
+        }
+        if (mitigationTier >= 3) {
+            adaptiveInterval += 2;
+        }
         if (AuthoritativeRuntimeController.shouldThrottleChunkStreaming()) {
             adaptiveInterval += 2;
         }
@@ -98,6 +113,12 @@ public final class StructureStreamingController {
         scanCursor = 0;
         scanTicker = 0;
         sweepGeneration = 0;
+        predictiveBiasChunks = 0;
+        lastKnownChunkCount = 0;
+        lastActiveChunkCount = 0;
+        lastDeferredChunkCount = 0;
+        lastFullDetailRadiusChunks = 0;
+        lastStreamingRadiusChunks = 0;
         ready = false;
         if (knownChunks.size() > RESET_SHRINK_THRESHOLD) {
             knownChunks = new HashMap<>(WORKING_SET_SLACK * 8);
@@ -150,6 +171,41 @@ public final class StructureStreamingController {
         return knownChunks.containsKey(chunkKey) && !activeChunkKeys.contains(chunkKey);
     }
 
+    public static int getKnownChunkCount() {
+        return lastKnownChunkCount;
+    }
+
+    public static int getActiveChunkCount() {
+        return lastActiveChunkCount;
+    }
+
+    public static int getDeferredChunkCount() {
+        return lastDeferredChunkCount;
+    }
+
+    public static String getStatusLine() {
+        if (!PauCClient.isBudgetActive()) {
+            return "Streaming: off (budget inactive)";
+        }
+
+        if (!ready) {
+            return "Streaming: warmup scan=" + scanCursor + " radius=" + Math.max(0, scanRadiusChunks) + "c";
+        }
+
+        String throttleLabel = AuthoritativeRuntimeController.shouldThrottleChunkStreaming() ? " throttled" : "";
+        int mitigationTier = IntegratedServerLoadController.getMitigationTier();
+        int emergencyTicks = IntegratedServerLoadController.getEmergencyHoldTicks();
+        return "Streaming: known=" + lastKnownChunkCount
+                + " active=" + lastActiveChunkCount
+                + " deferred=" + lastDeferredChunkCount
+                + " full=" + lastFullDetailRadiusChunks
+                + "c stream=" + lastStreamingRadiusChunks
+                + "c bias=" + predictiveBiasChunks
+                + " tier=" + mitigationTier
+                + " emergency=" + emergencyTicks
+                + throttleLabel;
+    }
+
     private static void beginSweep(int newCenterChunkX, int newCenterChunkZ, int newRadiusChunks) {
         centerChunkX = newCenterChunkX;
         centerChunkZ = newCenterChunkZ;
@@ -166,9 +222,32 @@ public final class StructureStreamingController {
         int sideLength = scanRadiusChunks * 2 + 1;
         int totalCells = sideLength * sideLength;
         int batchSize = ready ? BASE_SCAN_BATCH : BASE_SCAN_BATCH * 2;
+        int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
+        int ringExpansion = Math.max(0, scanRadiusChunks - fullDetailRadius);
+        int mitigationTier = IntegratedServerLoadController.getMitigationTier();
+        batchSize += ringExpansion / 6;
+        if (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.TRANSIT) {
+            batchSize += 12;
+        }
+        if (LatencyController.getPressureLevel() >= 2 || IntegratedServerLoadController.getPressureLevel() >= 2) {
+            batchSize = Math.max(8, batchSize - 10);
+        }
+        if (mitigationTier >= 2) {
+            batchSize = Math.max(8, batchSize - 8);
+        }
+        if (mitigationTier >= 3) {
+            batchSize = Math.max(6, batchSize - 12);
+        }
+        if (IntegratedServerLoadController.isEmergencyMitigationActive()) {
+            batchSize = Math.min(batchSize, 10);
+        }
         if (AuthoritativeRuntimeController.shouldThrottleChunkStreaming()) {
             batchSize = Math.max(8, batchSize - 8);
         }
+        if (AuthoritativeRuntimeController.shouldDeferNonCriticalMutations()) {
+            batchSize = Math.min(batchSize, 6);
+        }
+        batchSize = Math.min(192, batchSize);
 
         for (int processed = 0; processed < batchSize && scanCursor < totalCells; processed++) {
             int linearIndex = scanCursor++;
@@ -216,12 +295,17 @@ public final class StructureStreamingController {
 
         if (knownChunks.isEmpty()) {
             CHUNK_OCTREE.clear();
+            lastKnownChunkCount = 0;
+            lastActiveChunkCount = 0;
+            lastDeferredChunkCount = 0;
             return;
         }
 
         int minBuildHeight = level.getMinBuildHeight();
         int maxBuildHeight = level.getMaxBuildHeight();
-        double rootHalfSize = Math.max(32.0D, DistanceBudgetController.getViewDistanceBlocks() + ROOT_PADDING_CHUNKS * CHUNK_SIZE);
+        int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
+        int streamingRadius = Math.max(fullDetailRadius, scanRadiusChunks);
+        double rootHalfSize = Math.max(32.0D, streamingRadius * CHUNK_SIZE + ROOT_PADDING_CHUNKS * CHUNK_SIZE);
         double centerY = minBuildHeight + (maxBuildHeight - minBuildHeight) * 0.5D;
 
         CHUNK_OCTREE.reset(player.getX(), centerY, player.getZ(), rootHalfSize);
@@ -229,7 +313,7 @@ public final class StructureStreamingController {
             CHUNK_OCTREE.insert(chunkInfo.minX(), minBuildHeight, chunkInfo.minZ(), chunkInfo.maxX(), maxBuildHeight, chunkInfo.maxZ(), chunkInfo);
         }
 
-        double queryRadius = Math.max(DistanceBudgetController.getAggressiveDetailDistanceBlocks(), DistanceBudgetController.getReducedDetailDistanceBlocks()) + CHUNK_SIZE;
+        double queryRadius = streamingRadius * CHUNK_SIZE + CHUNK_SIZE;
         CHUNK_OCTREE.query(
                 player.getX() - queryRadius,
                 minBuildHeight,
@@ -240,8 +324,9 @@ public final class StructureStreamingController {
                 queryBuffer
         );
 
-        double fullDetailDistanceSqr = DistanceBudgetController.getFullDetailDistanceSqr();
-        double aggressiveDistanceSqr = DistanceBudgetController.getAggressiveDetailDistanceSqr();
+        double fullDetailDistanceSqr = square(fullDetailRadius * CHUNK_SIZE + CHUNK_SIZE);
+        double reducedDistanceSqr = DistanceBudgetController.getReducedDetailDistanceSqr();
+        double streamingDistanceSqr = square(streamingRadius * CHUNK_SIZE + CHUNK_SIZE);
         for (StructureChunkInfo chunkInfo : queryBuffer) {
             double dx = chunkInfo.centerX() - player.getX();
             double dz = chunkInfo.centerZ() - player.getZ();
@@ -252,7 +337,12 @@ public final class StructureStreamingController {
                 continue;
             }
 
-            if (horizontalDistanceSqr > aggressiveDistanceSqr) {
+            if (horizontalDistanceSqr <= reducedDistanceSqr) {
+                activeChunkKeys.add(chunkInfo.chunkKey());
+                continue;
+            }
+
+            if (horizontalDistanceSqr > streamingDistanceSqr) {
                 continue;
             }
 
@@ -261,6 +351,12 @@ public final class StructureStreamingController {
                 activeChunkKeys.add(chunkInfo.chunkKey());
             }
         }
+
+        lastKnownChunkCount = knownChunks.size();
+        lastActiveChunkCount = activeChunkKeys.size();
+        lastDeferredChunkCount = Math.max(0, lastKnownChunkCount - lastActiveChunkCount);
+        lastFullDetailRadiusChunks = fullDetailRadius;
+        lastStreamingRadiusChunks = streamingRadius;
     }
 
     private static void trimKnownChunksToWindow() {
@@ -346,6 +442,45 @@ public final class StructureStreamingController {
 
     private static long toChunkKey(int blockX, int blockZ) {
         return ChunkPos.asLong(blockX >> 4, blockZ >> 4);
+    }
+
+    private static ChunkAnchor resolveScanAnchor(LocalPlayer player) {
+        int playerChunkX = Mth.floor(player.getX()) >> 4;
+        int playerChunkZ = Mth.floor(player.getZ()) >> 4;
+        int bias = Math.max(0, ManagedChunkRadiusController.getPredictiveBiasChunks() / 2);
+        predictiveBiasChunks = bias;
+        if (bias <= 0) {
+            return new ChunkAnchor(playerChunkX, playerChunkZ);
+        }
+
+        Vec3 forward = resolvePreferredForwardVector(player);
+        double horizontalLengthSqr = forward.x * forward.x + forward.z * forward.z;
+        if (horizontalLengthSqr < 1.0E-4D) {
+            return new ChunkAnchor(playerChunkX, playerChunkZ);
+        }
+
+        double inverseLength = 1.0D / Math.sqrt(horizontalLengthSqr);
+        int anchorX = playerChunkX + (int) Math.round(forward.x * inverseLength * bias);
+        int anchorZ = playerChunkZ + (int) Math.round(forward.z * inverseLength * bias);
+        return new ChunkAnchor(anchorX, anchorZ);
+    }
+
+    private static Vec3 resolvePreferredForwardVector(LocalPlayer player) {
+        Vec3 delta = player.getDeltaMovement();
+        double horizontalSpeedSqr = delta.x * delta.x + delta.z * delta.z;
+        if (horizontalSpeedSqr >= 1.0E-4D) {
+            return new Vec3(delta.x, 0.0D, delta.z);
+        }
+
+        Vec3 lookAngle = player.getLookAngle();
+        return new Vec3(lookAngle.x, 0.0D, lookAngle.z);
+    }
+
+    private static double square(double value) {
+        return value * value;
+    }
+
+    private record ChunkAnchor(int chunkX, int chunkZ) {
     }
 
     private static final class StructureChunkInfo {

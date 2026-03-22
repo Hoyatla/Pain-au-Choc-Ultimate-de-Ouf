@@ -10,13 +10,18 @@ public final class IntegratedServerLoadController {
     private static final float SOFT_PRESSURE_MSPT = 40.0F;
     private static final float HARD_PRESSURE_MSPT = 50.0F;
     private static final float EXTREME_PRESSURE_MSPT = 58.0F;
+    private static final float SPIKE_MSPT_THRESHOLD = 62.0F;
     private static final float RECOVERY_MSPT = 35.0F;
     private static final int RECOVERY_SAMPLES_REQUIRED = 25;
+    private static final int SPIKE_STREAK_FOR_EMERGENCY = 4;
+    private static final int EMERGENCY_HOLD_TICKS = 120;
 
     private static int pressureLevel;
     private static int recoverySamples;
     private static int serverTick;
     private static int integratedServerIdentity;
+    private static int spikeStreak;
+    private static int emergencyHoldTicks;
     private static float smoothedMspt;
 
     private IntegratedServerLoadController() {
@@ -58,6 +63,7 @@ public final class IntegratedServerLoadController {
         }
 
         updatePressure(smoothedMspt);
+        updateEmergencyMitigation(averageTickTimeMs);
     }
 
     public static int getPressureLevel() {
@@ -66,6 +72,35 @@ public final class IntegratedServerLoadController {
 
     public static int getServerTick() {
         return serverTick;
+    }
+
+    public static float getSmoothedMspt() {
+        return smoothedMspt;
+    }
+
+    public static int getMitigationTier() {
+        if (emergencyHoldTicks > 0) {
+            return 3;
+        }
+        if (pressureLevel >= 2 && smoothedMspt >= HARD_PRESSURE_MSPT - 2.0F) {
+            return 2;
+        }
+        return pressureLevel;
+    }
+
+    public static boolean isEmergencyMitigationActive() {
+        return emergencyHoldTicks > 0;
+    }
+
+    public static int getEmergencyHoldTicks() {
+        return emergencyHoldTicks;
+    }
+
+    public static String getStatusLine() {
+        return "MSPT=" + String.format("%.1f", smoothedMspt)
+                + " pressure=" + pressureLevel
+                + " tier=" + getMitigationTier()
+                + " emergency=" + emergencyHoldTicks;
     }
 
     public static boolean isActiveFor(ServerLevel level) {
@@ -83,6 +118,8 @@ public final class IntegratedServerLoadController {
         recoverySamples = 0;
         serverTick = 0;
         integratedServerIdentity = 0;
+        spikeStreak = 0;
+        emergencyHoldTicks = 0;
         smoothedMspt = 0.0F;
     }
 
@@ -119,5 +156,25 @@ public final class IntegratedServerLoadController {
             pressureLevel = Math.max(targetPressure, pressureLevel - 1);
             recoverySamples = 0;
         }
+    }
+
+    private static void updateEmergencyMitigation(float currentMspt) {
+        if (currentMspt >= SPIKE_MSPT_THRESHOLD) {
+            spikeStreak = Math.min(64, spikeStreak + 1);
+        } else if (spikeStreak > 0) {
+            spikeStreak--;
+        }
+
+        if (spikeStreak >= SPIKE_STREAK_FOR_EMERGENCY) {
+            emergencyHoldTicks = EMERGENCY_HOLD_TICKS;
+            spikeStreak = SPIKE_STREAK_FOR_EMERGENCY;
+        }
+
+        if (emergencyHoldTicks <= 0) {
+            return;
+        }
+
+        int recoveryRate = (smoothedMspt <= RECOVERY_MSPT && pressureLevel <= 0) ? 2 : 1;
+        emergencyHoldTicks = Math.max(0, emergencyHoldTicks - recoveryRate);
     }
 }

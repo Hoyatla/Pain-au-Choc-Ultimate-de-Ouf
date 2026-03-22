@@ -8,6 +8,7 @@
   "option.pauc.enabled": "Pain au Choc ultimate de Ouf : %s",
   "option.pauc.quality": "Niveau de qualite : %s",
   "option.pauc.cpu_involvement": "Implication CPU (taches) : %s",
+  "option.pauc.adaptive_quality": "Qualite adaptive : %s",
   "option.pauc.frame_time_stabilizer": "Stabilisateur frametime : %s",
   "option.pauc.gpu_bottleneck": "Detecteur GPU bottleneck : %s",
   "option.pauc.advanced_sharpening": "Sharpening avance (RCAS) : %s",

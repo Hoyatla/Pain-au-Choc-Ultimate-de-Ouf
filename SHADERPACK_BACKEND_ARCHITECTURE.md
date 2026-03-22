@@ -160,13 +160,26 @@ Ce flag reste subordonne a PauC:
 - PauC garde le droit de reprendre la main
 - le runtime autoritaire reste la source de verite
 
+### Optimisations de rendu (Phase 3.1-3.3)
+- `src/main/java/pauc/pain_au_choc/render/compile/PauCBlockRenderOptimizer.java`
+  - culling intelligent des feuilles, detection sections single-value, priorites de rendu
+- `src/main/java/pauc/pain_au_choc/render/compile/PauCSpriteAnimationTracker.java`
+  - throttling d'animations de sprites par mode gouverneur et qualite
+- `src/main/java/pauc/pain_au_choc/render/entity/PauCEntityRenderOptimizer.java`
+  - LOD model parts, multiplicateur particules, billboard adaptatif, simplification items
+- `src/main/java/pauc/pain_au_choc/render/shader/PauCPBRTextureManager.java`
+  - detection auto textures normal (`_n`) et specular (`_s`), bind GL_TEXTURE4/5, fallback 1x1
+
+### Mixins Phase 3.1-3.3
+- `src/main/java/pauc/pain_au_choc/mixin/LeavesBlockMixin.java` — culling faces feuilles
+- `src/main/java/pauc/pain_au_choc/mixin/PalettedContainerMixin.java` — hook optimisation palette
+- `src/main/java/pauc/pain_au_choc/mixin/ModelPartMixin.java` — skip model parts invisibles
+- `src/main/java/pauc/pain_au_choc/mixin/BillboardParticleMixin.java` — distance particules adaptative
+
 ## Limites actuelles
 
 Le pipeline deferred Oculus-like ne fait pas encore:
 
-- PBR (normal maps, specular maps) — prevu Phase 3.3
-- optimisations avancees de rendu de blocs (feuilles, modeles bakes) — prevu Phase 3.1
-- optimisations avancees de rendu d'entites (fast model rendering) — prevu Phase 3.2
 - compatibilite universelle avec tous les shaderpacks OptiFine (certains uniforms/features manquants)
 
 Le backend multi-pass PauC ne fait toujours pas:
@@ -198,9 +211,7 @@ Si ce chantier est interrompu, repartir de:
 
 Phases restantes du plan d'integration:
 
-- **Phase 3.1**: optimisations de rendu de blocs (feuilles, modeles bakes, palette, sprites)
-- **Phase 3.2**: optimisations de rendu d'entites (fast model rendering, particles)
-- **Phase 3.3**: support PBR (normal maps, specular maps, detection auto)
+- **Phase 3.1-3.3**: FAIT — optimisations blocs, entites, PBR integres
 - **Phase 3.4**: mise a jour des policies AuthoritativeRuntime (detection si Embeddium/Oculus installes en plus)
 
 Pour le backend multi-pass PauC:

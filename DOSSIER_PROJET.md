@@ -23,6 +23,24 @@ Document de reprise proxy a relire en priorite en cas de plantage:
 
 Obtenir en solo un pilotage unifie client + serveur integre, en priorisant stabilite, frametime, `MSPT`, lisibilite camera et maintien d'un haut framerate sous charge.
 
+## Roadmap strategique active (2026-2027)
+
+Roadmap officielle du chantier "governor autonome + compatibilite OptiFine maximale":
+
+- Document de reference: `ROADMAP_GOUVERNEUR_ULTIMATE_2026_2027.md`
+- Journal de suivi obligatoire: `SUIVI_SESSIONS_ROADMAP.md`
+- Date de depart roadmap: `2026-03-16`
+- Cible de fin (scenario solo): `2027-01-24`
+- Scope: client + serveur integre, stabilite frametime, rayon gere jusqu'a `256` chunks, compatibilite shaderpacks OptiFine tres elevee, UI in-game complete.
+- Mode execution: automatisation `Codex-first` avec 3 validations humaines obligatoires uniquement.
+
+Objectifs de resultat (non contractuels mais cibles de pilotage):
+
+- Stabilisaton frametime prioritaire sur FPS moyen.
+- Mode competitif cible `240 FPS` quand le materiel le permet.
+- Governance autonome des budgets GPU/CPU/RAM/MSPT.
+- Compatibilite OptiFine au taux le plus eleve possible, validee par matrice de packs/tests.
+
 ## Contraintes de conception
 
 - Pas de cache persistant proxy.
@@ -76,6 +94,23 @@ Obtenir en solo un pilotage unifie client + serveur integre, en priorisant stabi
   - suivi des domaines `render_backend`, `shader_pipeline`, `chunk_streaming`, `server_simulation`, `capture_pipeline`, `worldgen`, `entity_rendering`
   - statut runtime `sovereign` / `contested` / `degraded`
   - reconnaissance du pipeline deferred interne (pas de yield a soi-meme)
+
+### Optimisations de rendu de blocs
+- Culling intelligent des feuilles entre blocs de meme type (`LeavesBlockMixin`).
+- Detection de sections single-value pour skip de rendu.
+- Throttling d'animations de sprites par mode gouverneur (`PauCSpriteAnimationTracker`).
+- Hook d'optimisation palette (`PalettedContainerMixin`).
+
+### Optimisations de rendu d'entites
+- LOD-aware model parts: skip des parties non essentielles a distance (`ModelPartMixin`).
+- Multiplicateur de spawn de particules par mode gouverneur.
+- Distance de rendu billboard adaptative par qualite (`BillboardParticleMixin`).
+- Simplification `ItemEntity` en billboard a distance.
+
+### Support PBR
+- Detection automatique des textures normal (`_n`) et specular (`_s`).
+- Bind sur texture units GL_TEXTURE4 (normals) et GL_TEXTURE5 (specular).
+- Fallback 1x1 par defaut (flat normal + zero specular).
 
 ### Debug overlay F3
 - Etat PauC, mode gouverneur, pression, autorite, chunks visible/total, shader, pipeline deferred.
@@ -163,6 +198,9 @@ Artefact:
   - UI shaderpack deferred dans F10 + persistance config.
   - Debug overlay F3.
   - Runtime autoritaire: PauC possede nativement `render_backend` et `shader_pipeline`.
+  - Optimisations blocs: culling feuilles, throttle animations sprites, hook palette.
+  - Optimisations entites: LOD model parts, multiplicateur particules, billboard adaptatif.
+  - Support PBR: normal maps (`_n`), specular maps (`_s`), detection auto, fallback 1x1.
 - Suppression LOD terrain/proxy distant.
 - Ajout Entity LOD local.
 - Ajout queue compile chunks priorisee + back-pressure.
@@ -175,6 +213,31 @@ Artefact:
 - Ajout d'une premiere logique predictive au proxy terrain.
 - Ajout du backend shaderpack externe multi-pass PauC.
 - Correction du runtime pour garder PauC actif a `qualityLevel=10`.
+
+## Discipline documentaire obligatoire (fin de session)
+
+Regle de maintenance projet:
+
+- Ordre permanent: toute session longue doit mettre a jour la documentation au moins une fois par heure pour proteger la reprise en cas de crash, plantage, freeze ou autre interruption non propre.
+- Toute fin de session DOIT produire une entree dans `SUIVI_SESSIONS_ROADMAP.md`.
+- Toute modification de planning, scope, risques ou hypotheses DOIT mettre a jour `ROADMAP_GOUVERNEUR_ULTIMATE_2026_2027.md`.
+- Toute evolution de blocage de reprise DOIT mettre a jour `TRANSFERT_PROJET.md`.
+- Le dossier present (`DOSSIER_PROJET.md`) reste le resume strategique; il doit rester coherent avec les deux documents ci-dessus.
+
+Checklist de cloture session (obligatoire):
+
+1. Mettre a jour l'avancement par phase dans `SUIVI_SESSIONS_ROADMAP.md`.
+2. Ajouter un log de session complet (travail, tests, ecarts, risques, prochaines actions).
+3. Synchroniser les deltas roadmap (si changements de cap).
+4. Synchroniser les deltas transfert (si nouveaux blocages ou levee de blocages).
+5. Verifier la coherence des dates/versions entre `README.md`, `DOSSIER_PROJET.md`, `TRANSFERT_PROJET.md`.
+6. Si la session depasse une heure, effectuer au moins une mise a jour documentaire intermediaire avant la cloture.
+
+Validations humaines minimales (obligatoires, uniquement ces 3):
+
+1. Validation produit/priorites en fin de jalon majeur.
+2. Validation QA en jeu reel sur builds candidates.
+3. Validation compatibilite hardware/drivers sur release candidates.
 
 ## Etat transfert 2026-03-12
 

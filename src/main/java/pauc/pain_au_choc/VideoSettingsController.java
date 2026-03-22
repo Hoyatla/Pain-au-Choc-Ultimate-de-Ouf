@@ -12,6 +12,7 @@ public final class VideoSettingsController {
     private static CloudStatus baselineClouds;
     private static ParticleStatus baselineParticles;
     private static Object baselineSmoothLighting;
+    private static Integer baselineRenderDistance;
     private static Integer baselineSimulationDistance;
     private static Object baselineEntityDistanceScaling;
     private static Integer baselineMipmapLevels;
@@ -36,17 +37,33 @@ public final class VideoSettingsController {
             captureBaseline(minecraft);
         }
 
+        if (AuthoritativeRuntimeController.shouldDeferNonCriticalMutations()) {
+            return;
+        }
+
         QualityBudgetProfile profile = QualityBudgetProfile.forLevel(qualityLevel);
+        int stressTier = resolveRuntimeStressTier();
+
+        GraphicsStatus graphicsTarget = resolveGraphicsTarget(profile.graphicsStatus(), stressTier);
+        CloudStatus cloudsTarget = resolveCloudTarget(profile.cloudStatus(), stressTier);
+        ParticleStatus particlesTarget = resolveParticlesTarget(profile.particleStatus(), stressTier);
+        boolean smoothLightingTarget = resolveSmoothLightingTarget(profile.smoothLighting(), stressTier);
+        double entityDistanceScalingTarget = resolveEntityDistanceScalingTarget(profile.entityDistanceScaling(), stressTier);
+        int mipmapLevelsTarget = resolveMipmapLevelsTarget(profile.mipmapLevels(), stressTier);
+        boolean entityShadowsTarget = resolveEntityShadowsTarget(profile.entityShadows(), stressTier);
+
         boolean changed = false;
 
-        changed |= applyGraphics(minecraft, profile.graphicsStatus());
-        changed |= applyClouds(minecraft, profile.cloudStatus());
-        changed |= applyParticles(minecraft, profile.particleStatus());
-        changed |= applySmoothLighting(minecraft, profile.smoothLighting());
-        changed |= applySimulationDistance(minecraft, profile.simulationDistance());
-        changed |= applyEntityDistanceScaling(minecraft, profile.entityDistanceScaling());
-        changed |= applyMipmapLevels(minecraft, profile.mipmapLevels());
-        changed |= applyEntityShadows(minecraft, profile.entityShadows());
+        changed |= applyGraphics(minecraft, graphicsTarget);
+        changed |= applyClouds(minecraft, cloudsTarget);
+        changed |= applyParticles(minecraft, particlesTarget);
+        changed |= applySmoothLighting(minecraft, smoothLightingTarget);
+        // Avoid runtime chunk reload loops: render/simulation distance are not
+        // auto-mutated here anymore. Simulation distance remains governed by
+        // AdaptiveSimulationDistanceController and render distance stays user-driven.
+        changed |= applyEntityDistanceScaling(minecraft, entityDistanceScalingTarget);
+        changed |= applyMipmapLevels(minecraft, mipmapLevelsTarget);
+        changed |= applyEntityShadows(minecraft, entityShadowsTarget);
 
         if (changed && minecraft.levelRenderer != null) {
             minecraft.levelRenderer.allChanged();
@@ -60,6 +77,7 @@ public final class VideoSettingsController {
         baselineClouds = minecraft.options.cloudStatus().get();
         baselineParticles = minecraft.options.particles().get();
         baselineSmoothLighting = minecraft.options.ambientOcclusion().get();
+        baselineRenderDistance = minecraft.options.renderDistance().get();
         baselineSimulationDistance = minecraft.options.simulationDistance().get();
         baselineEntityDistanceScaling = minecraft.options.entityDistanceScaling().get();
         baselineMipmapLevels = minecraft.options.mipmapLevels().get();
@@ -85,6 +103,9 @@ public final class VideoSettingsController {
         if (baselineSmoothLighting != null) {
             changed |= applyOptionRaw(minecraft.options.ambientOcclusion(), baselineSmoothLighting);
         }
+        if (baselineRenderDistance != null) {
+            changed |= applyRenderDistance(minecraft, baselineRenderDistance);
+        }
         if (baselineSimulationDistance != null) {
             changed |= applySimulationDistance(minecraft, baselineSimulationDistance);
         }
@@ -106,6 +127,7 @@ public final class VideoSettingsController {
         baselineClouds = null;
         baselineParticles = null;
         baselineSmoothLighting = null;
+        baselineRenderDistance = null;
         baselineSimulationDistance = null;
         baselineEntityDistanceScaling = null;
         baselineMipmapLevels = null;
@@ -143,12 +165,149 @@ public final class VideoSettingsController {
         return applyOptionRaw(minecraft.options.ambientOcclusion(), resolvedTarget);
     }
 
-    private static boolean applySimulationDistance(Minecraft minecraft, int target) {
-        if (minecraft.options.simulationDistance().get() == target) {
+    private static boolean applyRenderDistance(Minecraft minecraft, int target) {
+        int clampedTarget = Math.max(2, Math.min(32, target));
+        if (minecraft.options.renderDistance().get() == clampedTarget) {
             return false;
         }
-        minecraft.options.simulationDistance().set(target);
+        minecraft.options.renderDistance().set(clampedTarget);
         return true;
+    }
+
+    private static boolean applySimulationDistance(Minecraft minecraft, int target) {
+        int clampedTarget = Math.max(5, Math.min(32, target));
+        if (minecraft.options.simulationDistance().get() == clampedTarget) {
+            return false;
+        }
+        minecraft.options.simulationDistance().set(clampedTarget);
+        return true;
+    }
+
+    private static int resolveTargetRenderDistance(int qualityLevel, int stressTier) {
+        int qualityTarget = switch (Math.max(1, Math.min(10, qualityLevel))) {
+            case 1, 2 -> 7;
+            case 3 -> 9;
+            case 4 -> 11;
+            case 5 -> 13;
+            case 6 -> 15;
+            case 7 -> 16;
+            case 8 -> 18;
+            case 9 -> 20;
+            case 10 -> 22;
+            default -> 16;
+        };
+
+        int pressurePenalty = LatencyController.getPressureLevel() * 3
+                + IntegratedServerLoadController.getPressureLevel() * 3
+                + GlobalPerformanceGovernor.getGlobalPressure() * 2;
+        GlobalPerformanceMode mode = GlobalPerformanceGovernor.getMode();
+        if (mode == GlobalPerformanceMode.CRISIS) {
+            pressurePenalty += 6;
+        } else if (mode == GlobalPerformanceMode.COMBAT) {
+            pressurePenalty += 2;
+        } else if (mode == GlobalPerformanceMode.TRANSIT) {
+            pressurePenalty += 1;
+        }
+
+        int resolved = qualityTarget - pressurePenalty;
+        if (baselineRenderDistance != null) {
+            resolved = Math.min(baselineRenderDistance, resolved);
+        }
+
+        int minRenderDistance = stressTier >= 3 ? 4 : 6;
+        return Math.max(minRenderDistance, Math.min(32, resolved));
+    }
+
+    private static int resolveRuntimeStressTier() {
+        int maxPressure = Math.max(
+                GlobalPerformanceGovernor.getGlobalPressure(),
+                Math.max(LatencyController.getPressureLevel(), IntegratedServerLoadController.getPressureLevel())
+        );
+        GlobalPerformanceMode mode = GlobalPerformanceGovernor.getMode();
+        if (mode == GlobalPerformanceMode.CRISIS || maxPressure >= 3) {
+            return 3;
+        }
+        if (mode == GlobalPerformanceMode.COMBAT || maxPressure >= 2) {
+            return 2;
+        }
+        if (mode == GlobalPerformanceMode.BASE || mode == GlobalPerformanceMode.TRANSIT || maxPressure >= 1) {
+            return 1;
+        }
+        return 0;
+    }
+
+    private static GraphicsStatus resolveGraphicsTarget(GraphicsStatus base, int stressTier) {
+        if (stressTier >= 3) {
+            return GraphicsStatus.FAST;
+        }
+        if (stressTier == 2 && base == GraphicsStatus.FABULOUS) {
+            return GraphicsStatus.FANCY;
+        }
+        return base;
+    }
+
+    private static CloudStatus resolveCloudTarget(CloudStatus base, int stressTier) {
+        if (stressTier >= 3) {
+            return CloudStatus.OFF;
+        }
+        if (stressTier == 2 && base == CloudStatus.FANCY) {
+            return CloudStatus.FAST;
+        }
+        return base;
+    }
+
+    private static ParticleStatus resolveParticlesTarget(ParticleStatus base, int stressTier) {
+        if (stressTier >= 3) {
+            return ParticleStatus.MINIMAL;
+        }
+        if (stressTier == 2 && base == ParticleStatus.ALL) {
+            return ParticleStatus.DECREASED;
+        }
+        return base;
+    }
+
+    private static boolean resolveSmoothLightingTarget(boolean base, int stressTier) {
+        if (stressTier >= 3) {
+            return false;
+        }
+        return base;
+    }
+
+    private static int resolveSimulationDistanceTarget(int base, int stressTier) {
+        if (stressTier >= 3) {
+            return Math.min(base, 7);
+        }
+        if (stressTier == 2) {
+            return Math.min(base, 9);
+        }
+        return base;
+    }
+
+    private static double resolveEntityDistanceScalingTarget(double base, int stressTier) {
+        if (stressTier >= 3) {
+            return Math.min(base, 0.80D);
+        }
+        if (stressTier == 2) {
+            return Math.min(base, 0.90D);
+        }
+        return base;
+    }
+
+    private static int resolveMipmapLevelsTarget(int base, int stressTier) {
+        if (stressTier >= 3) {
+            return Math.min(base, 2);
+        }
+        if (stressTier == 2) {
+            return Math.min(base, 3);
+        }
+        return base;
+    }
+
+    private static boolean resolveEntityShadowsTarget(boolean base, int stressTier) {
+        if (stressTier >= 2) {
+            return false;
+        }
+        return base;
     }
 
     private static boolean applyEntityDistanceScaling(Minecraft minecraft, double target) {

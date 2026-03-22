@@ -7,16 +7,17 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
-import org.joml.Vector3f;
-import org.joml.Vector4f;
 import org.lwjgl.opengl.GL11;
 import pauc.pain_au_choc.render.PauCWorldRenderer;
 import pauc.pain_au_choc.render.chunk.PauCRenderSection;
 import pauc.pain_au_choc.render.chunk.PauCRenderSectionManager;
 import pauc.pain_au_choc.render.terrain.DefaultTerrainRenderPasses;
-import pauc.pain_au_choc.render.terrain.PauCTerrainRenderPass;
 
+import pauc.pain_au_choc.BottleneckController;
 import pauc.pain_au_choc.GlobalPerformanceGovernor;
+import pauc.pain_au_choc.GlobalPerformanceMode;
+import pauc.pain_au_choc.LatencyController;
+import pauc.pain_au_choc.ShadowDistanceGovernor;
 
 import java.util.List;
 
@@ -49,6 +50,9 @@ public class ShadowRenderer {
     private int lastShadowChunksRendered;
     private int lastShadowEntitiesRendered;
     private float lastShadowPassTimeMs;
+    private int shadowFrameCounter;
+    private int shadowPassInterval = 1;
+    private boolean hasRenderedShadowFrame;
 
     public ShadowRenderer(DeferredWorldRenderingPipeline pipeline) {
         this.pipeline = pipeline;
@@ -63,6 +67,14 @@ public class ShadowRenderer {
     public void renderShadowPass(Camera camera, float partialTick) {
         ShadowRenderTargets targets = this.pipeline.getShadowTargets();
         if (targets == null || !targets.isInitialized()) return;
+
+        this.shadowFrameCounter++;
+        this.shadowPassInterval = resolveShadowPassInterval();
+        if (this.shadowPassInterval > 1
+                && this.hasRenderedShadowFrame
+                && (this.shadowFrameCounter % this.shadowPassInterval) != 0) {
+            return;
+        }
 
         long startTime = System.nanoTime();
         this.lastShadowChunksRendered = 0;
@@ -113,6 +125,7 @@ public class ShadowRenderer {
         Minecraft mc = Minecraft.getInstance();
         GL11.glViewport(0, 0, mc.getWindow().getWidth(), mc.getWindow().getHeight());
 
+        this.hasRenderedShadowFrame = true;
         this.lastShadowPassTimeMs = (System.nanoTime() - startTime) / 1_000_000f;
     }
 
@@ -246,8 +259,38 @@ public class ShadowRenderer {
      * COMBAT reduces slightly, BASE increases slightly.
      */
     private int getGovernorAdjustedShadowDistance() {
-        double multiplier = GlobalPerformanceGovernor.getShadowDistanceMultiplier();
+        double multiplier = GlobalPerformanceGovernor.getShadowDistanceMultiplier()
+                * ShadowDistanceGovernor.getShadowDistanceScale();
         return Math.max(2, Math.min(32, (int) Math.round(this.shadowDistanceChunks * multiplier)));
+    }
+
+    private int resolveShadowPassInterval() {
+        int tier = 0;
+        if (BottleneckController.isGpuBound()) {
+            tier++;
+        }
+        if (GlobalPerformanceGovernor.getGlobalPressure() >= 2) {
+            tier++;
+        }
+
+        float frameMillis = LatencyController.getStabilizedFrameMillis();
+        if (frameMillis >= 45.0F) {
+            tier++;
+        }
+        if (frameMillis >= 65.0F) {
+            tier++;
+        }
+        if (GlobalPerformanceGovernor.getMode() == GlobalPerformanceMode.CRISIS) {
+            tier++;
+        }
+
+        return switch (Math.min(4, tier)) {
+            case 0 -> 1;
+            case 1 -> 2;
+            case 2 -> 3;
+            case 3 -> 4;
+            default -> 5;
+        };
     }
 
     // ---- Configuration ----
@@ -262,7 +305,11 @@ public class ShadowRenderer {
 
     public String getDebugString() {
         int effectiveDist = getGovernorAdjustedShadowDistance();
-        return String.format("Shadow: %d/%d chunks, %d entities, %.1fms",
-                lastShadowChunksRendered, effectiveDist, lastShadowEntitiesRendered, lastShadowPassTimeMs);
+        return String.format("Shadow: %d/%d chunks, %d entities, %.1fms, interval=%d",
+                lastShadowChunksRendered,
+                effectiveDist,
+                lastShadowEntitiesRendered,
+                lastShadowPassTimeMs,
+                shadowPassInterval);
     }
 }

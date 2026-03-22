@@ -56,6 +56,7 @@ public final class ParticleBudgetController {
 
         float estimatedGpuLoad = estimateGpuLoad(minecraft, smoothedFps);
         int targetBudget = mapGpuLoadToParticleBudget(estimatedGpuLoad);
+        targetBudget = applyModeBudgetMultiplier(targetBudget);
         smoothedBudget += (targetBudget - smoothedBudget) * BUDGET_SMOOTHING;
         currentBudget = clampBudget(Math.round(smoothedBudget));
     }
@@ -90,6 +91,10 @@ public final class ParticleBudgetController {
         tickCounter = 0;
     }
 
+    public static int getCurrentBudget() {
+        return currentBudget;
+    }
+
     private static float estimateGpuLoad(Minecraft minecraft, float observedFps) {
         float targetFps = resolveTargetFps(minecraft);
         float baselineLoad = GpuHeadroomController.getTargetGpuLoad();
@@ -117,6 +122,22 @@ public final class ParticleBudgetController {
         float normalized = (LOAD_MAX - clampedLoad) / (LOAD_MAX - LOAD_MIN);
         double curved = Math.pow(Math.max(0.0F, Math.min(1.0F, normalized)), CURVE_EXPONENT);
         return clampBudget(MIN_PARTICLE_BUDGET + (int) Math.round((MAX_PARTICLE_BUDGET - MIN_PARTICLE_BUDGET) * curved));
+    }
+
+    private static int applyModeBudgetMultiplier(int baseBudget) {
+        double modeMultiplier = switch (GlobalPerformanceGovernor.getMode()) {
+            case EXPLORATION -> 1.00D;
+            case TRANSIT -> 0.92D;
+            case BASE -> 0.82D;
+            case COMBAT -> 0.90D;
+            case CRISIS -> 0.55D;
+        };
+
+        if (GlobalPerformanceGovernor.getGlobalPressure() >= 3) {
+            modeMultiplier *= 0.80D;
+        }
+
+        return clampBudget((int) Math.round(baseBudget * modeMultiplier));
     }
 
     private static int countParticles(ParticleEngine engine) {

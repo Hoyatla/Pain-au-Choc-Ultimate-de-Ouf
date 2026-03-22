@@ -37,7 +37,25 @@ public abstract class LevelRendererMixin {
     @Shadow private int ticks;
 
     @Unique
+    private static final boolean PAUC_EXPERIMENTAL_CHUNK_PIPELINE = Boolean.getBoolean("pauc.experimentalChunkPipeline");
+
+    @Unique
+    private static boolean pauc$chunkPipelineFallbackLogged;
+
+    @Unique
     private boolean pauc$lastChunkScheduled;
+
+    @Unique
+    private static boolean pauc$shouldUseExperimentalChunkPipeline() {
+        if (!PAUC_EXPERIMENTAL_CHUNK_PIPELINE) {
+            if (!pauc$chunkPipelineFallbackLogged) {
+                pauc$chunkPipelineFallbackLogged = true;
+                System.out.println("[PAUC] Chunk pipeline fallback active: using vanilla chunk rendering. Set -Dpauc.experimentalChunkPipeline=true to re-enable the experimental renderer.");
+            }
+            return false;
+        }
+        return true;
+    }
 
     // ================================================================
     // PAUC Embeddium-like pipeline hooks (Phase 1.6)
@@ -59,6 +77,10 @@ public abstract class LevelRendererMixin {
      */
     @Inject(method = "setLevel", at = @At("RETURN"))
     private void pauc$onSetLevel(ClientLevel world, CallbackInfo ci) {
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            return;
+        }
+
         PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
         if (renderer != null) {
             renderer.setWorld(world);
@@ -71,9 +93,11 @@ public abstract class LevelRendererMixin {
      */
     @Inject(method = "allChanged", at = @At("RETURN"))
     private void pauc$onAllChanged(CallbackInfo ci) {
-        PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
-        if (renderer != null) {
-            renderer.reload();
+        if (pauc$shouldUseExperimentalChunkPipeline()) {
+            PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
+            if (renderer != null) {
+                renderer.reload();
+            }
         }
         // GL context is ready — activate saved deferred shaderpack from config
         PauCDeferredShaderController.activateFromConfig();
@@ -90,6 +114,10 @@ public abstract class LevelRendererMixin {
     )
     private void pauc$onSetupRender(Camera camera, Frustum frustum, boolean hasForcedFrustum,
                                      boolean isSpectator, CallbackInfo ci) {
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            return;
+        }
+
         PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
         if (renderer != null) {
             renderer.setupTerrain(camera, frustum, this.ticks, isSpectator, false);
@@ -111,6 +139,7 @@ public abstract class LevelRendererMixin {
     private void pauc$beginDeferredPipeline(PoseStack poseStack, float partialTick, long finishNanoTime,
                                              boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
                                              LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
+        PauCDeferredShaderController.ensureSelectedPackActivated();
         DeferredWorldRenderingPipeline pipeline = DeferredWorldRenderingPipeline.getActivePipeline();
         if (pipeline != null && pipeline.isInitialized()) {
             pipeline.beginWorldRendering(camera, poseStack.last().pose(), projectionMatrix, partialTick);
@@ -327,6 +356,10 @@ public abstract class LevelRendererMixin {
             return;
         }
 
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            return;
+        }
+
         // Second check: redirect through PAUC's Embeddium-like GPU renderer
         PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
         if (renderer != null && renderer.getSectionManager() != null) {
@@ -396,6 +429,10 @@ public abstract class LevelRendererMixin {
             at = @At("HEAD")
     )
     private void pauc$beginChunkCompileBudget(Camera camera, CallbackInfo callbackInfo) {
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            return;
+        }
+
         ChunkBuildQueueController.beginCompilePass();
         this.pauc$lastChunkScheduled = false;
     }
@@ -408,6 +445,11 @@ public abstract class LevelRendererMixin {
             )
     )
     private void pauc$applyChunkCompileBackPressure(ChunkRenderDispatcher.RenderChunk renderChunk, ChunkRenderDispatcher chunkRenderDispatcher, RenderRegionCache renderRegionCache) {
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            renderChunk.rebuildChunkAsync(chunkRenderDispatcher, renderRegionCache);
+            return;
+        }
+
         if (ChunkBuildQueueController.consumeBuildSlot()) {
             renderChunk.rebuildChunkAsync(chunkRenderDispatcher, renderRegionCache);
             this.pauc$lastChunkScheduled = true;
@@ -426,6 +468,11 @@ public abstract class LevelRendererMixin {
             )
     )
     private void pauc$preserveDirtyFlagWhenDeferred(ChunkRenderDispatcher.RenderChunk renderChunk) {
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            renderChunk.setNotDirty();
+            return;
+        }
+
         if (this.pauc$lastChunkScheduled) {
             renderChunk.setNotDirty();
         }
@@ -437,7 +484,10 @@ public abstract class LevelRendererMixin {
             at = @At("RETURN")
     )
     private void pauc$endChunkCompileBudget(Camera camera, CallbackInfo callbackInfo) {
+        if (!pauc$shouldUseExperimentalChunkPipeline()) {
+            return;
+        }
+
         ChunkBuildQueueController.endCompilePass();
     }
 }
-

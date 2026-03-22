@@ -636,8 +636,9 @@ public final class PauCShaderManager {
     private static ResourceProvider createExternalResourceProvider(String shaderPath, Path fragmentPath) {
         Map<ResourceLocation, Resource> resources = new HashMap<>();
         PackResources packResources = new ExternalPackResources("pauc_external/" + shaderPath);
+        String fragmentSourceForUniformScan = tryReadUtf8(fragmentPath);
 
-        addGeneratedResources(resources, packResources, shaderPath, null);
+        addGeneratedResources(resources, packResources, shaderPath, null, fragmentSourceForUniformScan);
         addFileResource(
                 resources,
                 packResources,
@@ -651,16 +652,22 @@ public final class PauCShaderManager {
     private static ResourceProvider createGeneratedExternalResourceProvider(String shaderPath, String fragmentSource) {
         Map<ResourceLocation, Resource> resources = new HashMap<>();
         PackResources packResources = new ExternalPackResources("pauc_external/" + shaderPath);
-        addGeneratedResources(resources, packResources, shaderPath, fragmentSource);
+        addGeneratedResources(resources, packResources, shaderPath, fragmentSource, fragmentSource);
         return ResourceProvider.fromMap(resources);
     }
 
-    private static void addGeneratedResources(Map<ResourceLocation, Resource> resources, PackResources packResources, String shaderPath, @Nullable String fragmentSource) {
+    private static void addGeneratedResources(
+            Map<ResourceLocation, Resource> resources,
+            PackResources packResources,
+            String shaderPath,
+            @Nullable String fragmentSource,
+            @Nullable String fragmentSourceForUniformScan
+    ) {
         addTextResource(
                 resources,
                 packResources,
                 ResourceLocation.fromNamespaceAndPath(EXTERNAL_NAMESPACE, "shaders/core/" + shaderPath + ".json"),
-                buildExternalShaderJson(shaderPath)
+                buildExternalShaderJson(shaderPath, fragmentSourceForUniformScan)
         );
         addTextResource(
                 resources,
@@ -678,7 +685,8 @@ public final class PauCShaderManager {
         }
     }
 
-    private static String buildExternalShaderJson(String shaderPath) {
+    private static String buildExternalShaderJson(String shaderPath, @Nullable String fragmentSource) {
+        String optionalUniforms = buildOptionalUniformJson(fragmentSource);
         return String.format(
                 Locale.ROOT,
                 """
@@ -696,15 +704,56 @@ public final class PauCShaderManager {
                           "uniforms": [
                             { "name": "ModelViewMat", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] },
                             { "name": "ProjMat", "type": "matrix4x4", "count": 16, "values": [ 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 ] },
-                            { "name": "ColorModulator", "type": "float", "count": 4, "values": [ 1.0, 1.0, 1.0, 1.0 ] },
-                            { "name": "SourceSize", "type": "float", "count": 2, "values": [ 1.0, 1.0 ] }
+                            { "name": "ColorModulator", "type": "float", "count": 4, "values": [ 1.0, 1.0, 1.0, 1.0 ] }%s
                           ]
                         }
                         """,
                 EXTERNAL_NAMESPACE,
                 EXTERNAL_NAMESPACE,
-                shaderPath
+                shaderPath,
+                optionalUniforms
         );
+    }
+
+    private static String buildOptionalUniformJson(@Nullable String fragmentSource) {
+        StringBuilder optionalUniforms = new StringBuilder();
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "SourceSize",
+                "{ \"name\": \"SourceSize\", \"type\": \"float\", \"count\": 2, \"values\": [ 1.0, 1.0 ] }"
+        );
+        appendOptionalUniform(
+                optionalUniforms,
+                fragmentSource,
+                "RcasStrength",
+                "{ \"name\": \"RcasStrength\", \"type\": \"float\", \"count\": 1, \"values\": [ 0.0 ] }"
+        );
+        return optionalUniforms.toString();
+    }
+
+    private static void appendOptionalUniform(
+            StringBuilder target,
+            @Nullable String fragmentSource,
+            String uniformName,
+            String uniformJson
+    ) {
+        if (containsUniformReference(fragmentSource, uniformName)) {
+            target.append(",\n                            ").append(uniformJson);
+        }
+    }
+
+    private static boolean containsUniformReference(@Nullable String fragmentSource, String uniformName) {
+        return fragmentSource != null && fragmentSource.contains(uniformName);
+    }
+
+    @Nullable
+    private static String tryReadUtf8(Path path) {
+        try {
+            return Files.readString(path, StandardCharsets.UTF_8);
+        } catch (IOException ignored) {
+            return null;
+        }
     }
 
     private static void addTextResource(Map<ResourceLocation, Resource> resources, PackResources packResources, ResourceLocation location, String contents) {

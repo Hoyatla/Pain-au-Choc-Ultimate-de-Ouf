@@ -8,7 +8,6 @@
     "MobServerAiMixin"
   ],
   "client": [
-    "BillboardParticleMixin",
     "BlockEntityRenderDispatcherMixin",
     "ClientLevelMixin",
     "DebugScreenOverlayMixin",
@@ -24,6 +23,7 @@
     "MinecraftMixin",
     "ModelPartMixin",
     "PalettedContainerMixin",
+    "PatchouliBookCrashHandlerMixin",
     "ParticleEngineAccessor",
     "ParticleEngineMixin"
   ],
@@ -31,4 +31,3 @@
     "defaultRequire": 1
   }
 }
-

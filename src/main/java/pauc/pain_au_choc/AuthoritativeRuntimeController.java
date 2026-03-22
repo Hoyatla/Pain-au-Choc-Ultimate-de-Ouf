@@ -13,6 +13,7 @@ import java.util.Map;
 
 public final class AuthoritativeRuntimeController {
     private static final Map<String, ModAuthorityPolicy> KNOWN_POLICIES = createKnownPolicies();
+    private static final int NON_CRITICAL_DEFERRAL_TICKS = 20 * 20;
 
     private static final EnumSet<AuthorityDomain> contestedDomains = EnumSet.noneOf(AuthorityDomain.class);
     private static final EnumSet<AuthorityDomain> highRiskDomains = EnumSet.noneOf(AuthorityDomain.class);
@@ -29,6 +30,7 @@ public final class AuthoritativeRuntimeController {
     private static boolean capturePipelineContested;
     private static boolean worldgenRiskPresent;
     private static int runtimePressureBias;
+    private static int nonCriticalDeferralTicks;
     private static AuthoritativeRuntimeStatus status = AuthoritativeRuntimeStatus.SOVEREIGN;
 
     private AuthoritativeRuntimeController() {
@@ -60,6 +62,7 @@ public final class AuthoritativeRuntimeController {
 
     public static void resetRuntimeState() {
         runtimePressureBias = 0;
+        nonCriticalDeferralTicks = 0;
         status = contestedMods.isEmpty() && highRiskMods.isEmpty()
                 ? AuthoritativeRuntimeStatus.SOVEREIGN
                 : AuthoritativeRuntimeStatus.CONTESTED;
@@ -91,6 +94,14 @@ public final class AuthoritativeRuntimeController {
         return runtimePressureBias;
     }
 
+    public static boolean shouldDeferNonCriticalMutations() {
+        return nonCriticalDeferralTicks > 0;
+    }
+
+    public static int getNonCriticalDeferralTicks() {
+        return nonCriticalDeferralTicks;
+    }
+
     /**
      * Check if PAUC's own internal shader pipeline is active.
      * When active, PAUC owns the shader domain natively and external
@@ -107,6 +118,22 @@ public final class AuthoritativeRuntimeController {
      */
     public static boolean shouldYieldDynamicResolutionToExternalPipeline() {
         return shaderPipelineContested && !isInternalShaderPipelineActive();
+    }
+
+    /**
+     * Hard safety gate for DRS when capture/replay stack contests the domain.
+     * Keeping native resolution avoids framebuffer ownership conflicts.
+     */
+    public static boolean shouldForceDisableDynamicResolution() {
+        return capturePipelineContested;
+    }
+
+    /**
+     * Deferred pipeline now renders final output to the active main target,
+     * so DRS can run without a blanket deferred-specific kill switch.
+     */
+    public static boolean shouldForceDisableDynamicResolutionForDeferredPipeline() {
+        return false;
     }
 
     public static boolean shouldYieldAdaptiveFrameCapToExternalPipeline() {
@@ -264,6 +291,7 @@ public final class AuthoritativeRuntimeController {
         }
 
         runtimePressureBias = computeRuntimePressureBias();
+        updateNonCriticalDeferralState();
     }
 
     private static int computeRuntimePressureBias() {
@@ -280,6 +308,26 @@ public final class AuthoritativeRuntimeController {
 
         int maxBias = status == AuthoritativeRuntimeStatus.DEGRADED ? 2 : 1;
         return Math.max(0, Math.min(maxBias, bias));
+    }
+
+    private static void updateNonCriticalDeferralState() {
+        boolean highPriorityPressure = status == AuthoritativeRuntimeStatus.DEGRADED
+                || IntegratedServerLoadController.isEmergencyMitigationActive()
+                || IntegratedServerLoadController.getMitigationTier() >= 2
+                || IntegratedServerLoadController.getPressureLevel() >= 2
+                || LatencyController.getPressureLevel() >= 2
+                || GlobalPerformanceGovernor.getGlobalPressure() >= 3
+                || ChunkBuildQueueController.getBackPressureRatio() >= 0.70F
+                || (worldgenRiskPresent && IntegratedServerLoadController.getPressureLevel() >= 1);
+
+        if (highPriorityPressure) {
+            nonCriticalDeferralTicks = NON_CRITICAL_DEFERRAL_TICKS;
+            return;
+        }
+
+        if (nonCriticalDeferralTicks > 0) {
+            nonCriticalDeferralTicks--;
+        }
     }
 
     private static void logAuthorityReport() {

@@ -7,12 +7,29 @@ import net.minecraft.world.entity.boss.wither.WitherBoss;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.player.Player;
 
+import java.util.Locale;
+
 public final class ServerMobCadenceController {
     private static final double CRITICAL_DISTANCE_BLOCKS = 24.0D;
     private static final double COMBAT_DISTANCE_BLOCKS = 40.0D;
     private static final double MID_DISTANCE_BLOCKS = 56.0D;
     private static final double FAR_DISTANCE_BLOCKS = 96.0D;
     private static final double MAX_PLAYER_QUERY_BLOCKS = 192.0D;
+    private static final double STATS_SMOOTHING = 0.20D;
+
+    private static int lastSelectorCadence = 1;
+    private static int lastNavigationCadence = 1;
+    private static int lastMitigationTier;
+    private static int statsTick;
+    private static int targetChecksThisTick;
+    private static int targetRunsThisTick;
+    private static int goalChecksThisTick;
+    private static int goalRunsThisTick;
+    private static int navigationChecksThisTick;
+    private static int navigationRunsThisTick;
+    private static double smoothedTargetRunRatio = 1.0D;
+    private static double smoothedGoalRunRatio = 1.0D;
+    private static double smoothedNavigationRunRatio = 1.0D;
 
     private ServerMobCadenceController() {
     }
@@ -22,7 +39,11 @@ public final class ServerMobCadenceController {
         if (runningOnlyPass && cadence > 1) {
             cadence = Math.max(1, cadence - 1);
         }
-        return shouldRunThisTick(mob, cadence);
+        boolean shouldRun = shouldRunThisTick(mob, cadence);
+        if (isBudgetApplicable(mob)) {
+            recordSelectorDecision(mob, cadence, shouldRun, true);
+        }
+        return shouldRun;
     }
 
     public static boolean shouldRunGoalSelectorTick(Mob mob, boolean runningOnlyPass) {
@@ -30,12 +51,77 @@ public final class ServerMobCadenceController {
         if (runningOnlyPass && cadence > 1) {
             cadence = Math.max(1, cadence - 1);
         }
-        return shouldRunThisTick(mob, cadence);
+        boolean shouldRun = shouldRunThisTick(mob, cadence);
+        if (isBudgetApplicable(mob)) {
+            recordSelectorDecision(mob, cadence, shouldRun, false);
+        }
+        return shouldRun;
     }
 
     public static boolean shouldRunNavigationTick(Mob mob) {
         int cadence = getNavigationCadence(mob);
-        return shouldRunThisTick(mob, cadence);
+        boolean shouldRun = shouldRunThisTick(mob, cadence);
+        if (isBudgetApplicable(mob)) {
+            recordNavigationDecision(mob, cadence, shouldRun);
+        }
+        return shouldRun;
+    }
+
+    public static void reset() {
+        lastSelectorCadence = 1;
+        lastNavigationCadence = 1;
+        lastMitigationTier = 0;
+        statsTick = 0;
+        targetChecksThisTick = 0;
+        targetRunsThisTick = 0;
+        goalChecksThisTick = 0;
+        goalRunsThisTick = 0;
+        navigationChecksThisTick = 0;
+        navigationRunsThisTick = 0;
+        smoothedTargetRunRatio = 1.0D;
+        smoothedGoalRunRatio = 1.0D;
+        smoothedNavigationRunRatio = 1.0D;
+    }
+
+    public static int getLastSelectorCadence() {
+        return lastSelectorCadence;
+    }
+
+    public static int getLastNavigationCadence() {
+        return lastNavigationCadence;
+    }
+
+    public static int getLastMitigationTier() {
+        return lastMitigationTier;
+    }
+
+    public static double getSmoothedTargetRunRatio() {
+        return smoothedTargetRunRatio;
+    }
+
+    public static double getSmoothedGoalRunRatio() {
+        return smoothedGoalRunRatio;
+    }
+
+    public static double getSmoothedNavigationRunRatio() {
+        return smoothedNavigationRunRatio;
+    }
+
+    public static String getStatusLine() {
+        return "mobCadence sel="
+                + lastSelectorCadence
+                + " nav="
+                + lastNavigationCadence
+                + " tier="
+                + lastMitigationTier
+                + " run="
+                + String.format(
+                        Locale.ROOT,
+                        "%.2f/%.2f/%.2f",
+                        smoothedTargetRunRatio,
+                        smoothedGoalRunRatio,
+                        smoothedNavigationRunRatio
+                );
     }
 
     private static int getSelectorCadence(Mob mob) {
@@ -44,6 +130,9 @@ public final class ServerMobCadenceController {
         }
 
         int pressure = IntegratedServerLoadController.getPressureLevel();
+        int mitigationTier = IntegratedServerLoadController.getMitigationTier();
+        lastMitigationTier = mitigationTier;
+        pressure = Math.max(pressure, mitigationTier);
         if (pressure <= 0) {
             return 1;
         }
@@ -54,18 +143,26 @@ public final class ServerMobCadenceController {
         }
 
         if (distanceSqr <= FAR_DISTANCE_BLOCKS * FAR_DISTANCE_BLOCKS) {
-            return GlobalPerformanceGovernor.adjustMobCadence(switch (pressure) {
+            int cadence = GlobalPerformanceGovernor.adjustMobCadence(switch (pressure) {
                 case 1 -> 2;
                 case 2 -> 3;
                 default -> 4;
             }, false);
+            if (mitigationTier >= 3) {
+                cadence = GlobalPerformanceGovernor.adjustMobCadence(cadence + 1, false);
+            }
+            return cadence;
         }
 
-        return GlobalPerformanceGovernor.adjustMobCadence(switch (pressure) {
+        int cadence = GlobalPerformanceGovernor.adjustMobCadence(switch (pressure) {
             case 1 -> 3;
             case 2 -> 4;
             default -> 5;
         }, false);
+        if (mitigationTier >= 2) {
+            cadence = GlobalPerformanceGovernor.adjustMobCadence(cadence + 1, false);
+        }
+        return cadence;
     }
 
     private static int getNavigationCadence(Mob mob) {
@@ -75,11 +172,21 @@ public final class ServerMobCadenceController {
         }
 
         double distanceSqr = getNearestPlayerDistanceSqr(mob);
+        int mitigationTier = IntegratedServerLoadController.getMitigationTier();
+        lastMitigationTier = mitigationTier;
         if (distanceSqr > FAR_DISTANCE_BLOCKS * FAR_DISTANCE_BLOCKS) {
-            return GlobalPerformanceGovernor.adjustMobCadence(Math.min(6, selectorCadence + 1), true);
+            int cadence = GlobalPerformanceGovernor.adjustMobCadence(Math.min(6, selectorCadence + 1), true);
+            if (mitigationTier >= 2) {
+                cadence = GlobalPerformanceGovernor.adjustMobCadence(Math.min(8, cadence + 1), true);
+            }
+            return cadence;
         }
 
-        return GlobalPerformanceGovernor.adjustMobCadence(selectorCadence, true);
+        int cadence = GlobalPerformanceGovernor.adjustMobCadence(selectorCadence, true);
+        if (mitigationTier >= 3 && distanceSqr > MID_DISTANCE_BLOCKS * MID_DISTANCE_BLOCKS) {
+            cadence = GlobalPerformanceGovernor.adjustMobCadence(Math.min(7, cadence + 1), true);
+        }
+        return cadence;
     }
 
     private static boolean shouldRunThisTick(Mob mob, int cadence) {
@@ -105,6 +212,78 @@ public final class ServerMobCadenceController {
         }
 
         return IntegratedServerLoadController.isActiveFor(serverLevel);
+    }
+
+    private static void recordSelectorDecision(Mob mob, int cadence, boolean shouldRun, boolean targetSelector) {
+        rollStatsIfNeeded(mob);
+        lastSelectorCadence = Math.max(1, cadence);
+        if (targetSelector) {
+            targetChecksThisTick++;
+            if (shouldRun) {
+                targetRunsThisTick++;
+            }
+            return;
+        }
+
+        goalChecksThisTick++;
+        if (shouldRun) {
+            goalRunsThisTick++;
+        }
+    }
+
+    private static void recordNavigationDecision(Mob mob, int cadence, boolean shouldRun) {
+        rollStatsIfNeeded(mob);
+        lastNavigationCadence = Math.max(1, cadence);
+        navigationChecksThisTick++;
+        if (shouldRun) {
+            navigationRunsThisTick++;
+        }
+    }
+
+    private static void rollStatsIfNeeded(Mob mob) {
+        int currentTick = resolveBaseTick(mob);
+        if (currentTick <= 0) {
+            return;
+        }
+
+        if (statsTick <= 0) {
+            statsTick = currentTick;
+            return;
+        }
+
+        if (currentTick == statsTick) {
+            return;
+        }
+
+        smoothedTargetRunRatio = smoothRatio(smoothedTargetRunRatio, targetRunsThisTick, targetChecksThisTick);
+        smoothedGoalRunRatio = smoothRatio(smoothedGoalRunRatio, goalRunsThisTick, goalChecksThisTick);
+        smoothedNavigationRunRatio = smoothRatio(smoothedNavigationRunRatio, navigationRunsThisTick, navigationChecksThisTick);
+        targetChecksThisTick = 0;
+        targetRunsThisTick = 0;
+        goalChecksThisTick = 0;
+        goalRunsThisTick = 0;
+        navigationChecksThisTick = 0;
+        navigationRunsThisTick = 0;
+        statsTick = currentTick;
+    }
+
+    private static int resolveBaseTick(Mob mob) {
+        int baseTick = IntegratedServerLoadController.getServerTick();
+        if (baseTick > 0) {
+            return baseTick;
+        }
+        if (mob == null || mob.level() == null) {
+            return 0;
+        }
+        return (int) (mob.level().getGameTime() & Integer.MAX_VALUE);
+    }
+
+    private static double smoothRatio(double previous, int runs, int checks) {
+        if (checks <= 0) {
+            return previous;
+        }
+        double ratio = Math.max(0.0D, Math.min(1.0D, runs / (double) checks));
+        return previous + ((ratio - previous) * STATS_SMOOTHING);
     }
 
     private static boolean isCriticalMobState(Mob mob) {

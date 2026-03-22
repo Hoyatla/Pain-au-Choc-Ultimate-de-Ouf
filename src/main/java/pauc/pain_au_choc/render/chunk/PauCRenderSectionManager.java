@@ -5,14 +5,19 @@ import it.unimi.dsi.fastutil.longs.Long2ReferenceOpenHashMap;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderDispatcher;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.Vec3;
+import pauc.pain_au_choc.AuthoritativeRuntimeController;
 import pauc.pain_au_choc.ChunkBuildQueueController;
 import pauc.pain_au_choc.GlobalPerformanceGovernor;
+import pauc.pain_au_choc.GlobalPerformanceMode;
 import pauc.pain_au_choc.ManagedChunkRadiusController;
 import pauc.pain_au_choc.PauCClient;
+import pauc.pain_au_choc.StructureStreamingController;
 import pauc.pain_au_choc.render.occlusion.GraphDirection;
 import pauc.pain_au_choc.render.occlusion.PauCOcclusionCuller;
 import pauc.pain_au_choc.render.region.PauCRenderRegion;
@@ -74,6 +79,12 @@ public class PauCRenderSectionManager {
     /** Frame tracking. */
     private int currentFrame = 0;
     private boolean needsUpdate = true;
+    private int lastFullDetailVisibleSections = 0;
+    private int lastStreamingVisibleSections = 0;
+    private int lastDeferredVisibleSections = 0;
+    private int lastBudgetCulledVisibleSections = 0;
+    private int lastVisibleCulledBlockEntities = 0;
+    private int lastGlobalBlockEntities = 0;
 
     /** PAUC integration: reference to governor for quality-driven decisions. */
     private GlobalPerformanceGovernor governor;
@@ -230,6 +241,7 @@ public class PauCRenderSectionManager {
             float db = b.getSquaredDistance(cx, cy, cz);
             return Float.compare(da, db);
         });
+        applyManagedRingFlags(cameraBlockPos);
 
         this.needsUpdate = false;
     }
@@ -272,9 +284,16 @@ public class PauCRenderSectionManager {
     public void uploadChunks() {
         // Drain completed build results from the worker threads
         List<PauCChunkBuildOutput> results = this.chunkBuilder.drainResults();
-        if (results.isEmpty()) return;
-
-        // Upload all results to GPU via the upload manager
+        if (!results.isEmpty()) {
+            List<PauCChunkBuildOutput> normalizedResults = new ArrayList<>(results.size());
+            for (PauCChunkBuildOutput output : results) {
+                PauCChunkBuildOutput normalized = normalizeBlockEntityClassification(output);
+                normalizedResults.add(normalized);
+                syncGlobalBlockEntityTracking(normalized);
+            }
+            results = normalizedResults;
+        }
+        // Upload results plus any backlog pending in the upload manager.
         this.uploadManager.upload(results);
     }
 
@@ -372,6 +391,12 @@ public class PauCRenderSectionManager {
 
     public int getTotalSections() { return this.sectionByPosition.size(); }
     public int getVisibleChunkCount() { return this.visibleSections.size(); }
+    public int getLastFullDetailVisibleSections() { return this.lastFullDetailVisibleSections; }
+    public int getLastStreamingVisibleSections() { return this.lastStreamingVisibleSections; }
+    public int getLastDeferredVisibleSections() { return this.lastDeferredVisibleSections; }
+    public int getLastBudgetCulledVisibleSections() { return this.lastBudgetCulledVisibleSections; }
+    public int getLastVisibleCulledBlockEntityCount() { return this.lastVisibleCulledBlockEntities; }
+    public int getLastGlobalBlockEntityCount() { return this.lastGlobalBlockEntities; }
 
     public boolean isSectionVisible(int chunkX, int chunkY, int chunkZ) {
         long key = sectionKey(chunkX, chunkY, chunkZ);
@@ -448,6 +473,17 @@ public class PauCRenderSectionManager {
             pending += q.size();
         }
         lines.add("Pending builds: " + pending + ", Builder: " + this.chunkBuilder.toString());
+        lines.add("Upload: " + this.uploadManager.getLastUploadPassSections() + "/" + this.uploadManager.getLastUploadSectionBudget()
+                + " sections, "
+                + formatMegabytes(this.uploadManager.getLastUploadPassBytes()) + "/"
+                + formatMegabytes(this.uploadManager.getLastUploadByteBudget())
+                + " MB, backlog=" + this.uploadManager.getPendingUploadCount());
+        lines.add("Rings: full=" + this.lastFullDetailVisibleSections
+                + " stream=" + this.lastStreamingVisibleSections
+                + " deferred=" + this.lastDeferredVisibleSections
+                + " culled=" + this.lastBudgetCulledVisibleSections);
+        lines.add("Block entities: visibleCulled=" + this.lastVisibleCulledBlockEntities
+                + " global=" + this.lastGlobalBlockEntities);
         lines.add(this.chunkRenderer.getDebugString());
 
         // Governor integration info
@@ -491,22 +527,94 @@ public class PauCRenderSectionManager {
         }
     }
 
+    private PauCChunkBuildOutput normalizeBlockEntityClassification(PauCChunkBuildOutput output) {
+        BlockEntity[] inputGlobal = output.getGlobalBlockEntities();
+        BlockEntity[] inputCulled = output.getCulledBlockEntities();
+        int totalEntities = inputGlobal.length + inputCulled.length;
+        if (totalEntities == 0) {
+            return output;
+        }
+
+        BlockEntityRenderDispatcher dispatcher = this.client.getBlockEntityRenderDispatcher();
+        if (dispatcher == null) {
+            return output;
+        }
+
+        List<BlockEntity> global = new ArrayList<>(totalEntities);
+        List<BlockEntity> culled = new ArrayList<>(totalEntities);
+        for (BlockEntity entity : inputGlobal) {
+            if (entity == null) {
+                continue;
+            }
+            if (shouldRenderBlockEntityOffScreen(entity, dispatcher)) {
+                global.add(entity);
+            } else {
+                culled.add(entity);
+            }
+        }
+        for (BlockEntity entity : inputCulled) {
+            if (entity == null) {
+                continue;
+            }
+            if (shouldRenderBlockEntityOffScreen(entity, dispatcher)) {
+                global.add(entity);
+            } else {
+                culled.add(entity);
+            }
+        }
+
+        int flags = output.getFlags();
+        boolean hasAnyBlockEntity = !global.isEmpty() || !culled.isEmpty();
+        flags = RenderSectionFlags.setFlag(flags, RenderSectionFlags.HAS_BLOCK_ENTITIES, hasAnyBlockEntity);
+
+        return new PauCChunkBuildOutput(
+                output.getSection(),
+                output.getBuildFrame(),
+                output.getMeshes(),
+                flags,
+                global.toArray(new BlockEntity[0]),
+                culled.toArray(new BlockEntity[0]),
+                output.getAnimatedSprites()
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean shouldRenderBlockEntityOffScreen(BlockEntity entity, BlockEntityRenderDispatcher dispatcher) {
+        try {
+            BlockEntityRenderer<BlockEntity> renderer = (BlockEntityRenderer<BlockEntity>) dispatcher.getRenderer(entity);
+            return renderer != null && renderer.shouldRenderOffScreen(entity);
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    private void syncGlobalBlockEntityTracking(PauCChunkBuildOutput output) {
+        PauCRenderSection section = output.getSection();
+        if (section == null || section.isDisposed()) {
+            return;
+        }
+        if (output.getGlobalBlockEntities().length > 0) {
+            this.sectionsWithGlobalEntities.add(section);
+        } else {
+            this.sectionsWithGlobalEntities.remove(section);
+        }
+    }
+
     private int getFrameBuildBudget() {
         // If PAUC budget system is not active, use generous default
         if (!PauCClient.isBudgetActive()) {
             return 12;
         }
 
-        // Use ChunkBuildQueueController's computed budget (factors in CPU level,
-        // quality ratio, latency, bottleneck, back-pressure, authority, and governor mode)
-        int controllerBudget = ChunkBuildQueueController.beginCompilePass();
+        // Use a non-mutating budget preview, so we don't interfere with
+        // vanilla compile pass accounting in LevelRendererMixin.
+        int controllerBudget = ChunkBuildQueueController.previewCompileBudget();
         if (controllerBudget == Integer.MAX_VALUE) {
             return 16; // Uncapped
         }
 
-        // Scale based on governor mode multiplier
-        double modeMultiplier = GlobalPerformanceGovernor.getChunkCompileBudgetMultiplier();
-        int budget = (int) Math.round(controllerBudget * modeMultiplier);
+        // controllerBudget already includes governor mode multiplier in ChunkBuildQueueController.
+        int budget = controllerBudget;
 
         // Also factor in the ChunkBuilder's own back-pressure
         float builderPressure = this.chunkBuilder.getBackPressureRatio();
@@ -535,7 +643,98 @@ public class PauCRenderSectionManager {
         return Math.max(0.5f, Math.min(1.0f, multiplier));
     }
 
+    private void applyManagedRingFlags(BlockPos cameraBlockPos) {
+        int visibleCulledEntities = 0;
+        int globalEntities = 0;
+        for (PauCRenderSection section : this.sectionsWithGlobalEntities) {
+            if (section != null && !section.isDisposed()) {
+                globalEntities += section.getGlobalBlockEntities().length;
+            }
+        }
+        this.lastGlobalBlockEntities = globalEntities;
+
+        if (this.visibleSections.isEmpty()) {
+            this.lastFullDetailVisibleSections = 0;
+            this.lastStreamingVisibleSections = 0;
+            this.lastDeferredVisibleSections = 0;
+            this.lastBudgetCulledVisibleSections = 0;
+            this.lastVisibleCulledBlockEntities = 0;
+            return;
+        }
+
+        int playerChunkX = cameraBlockPos.getX() >> 4;
+        int playerChunkZ = cameraBlockPos.getZ() >> 4;
+        int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
+        int streamingRadius = ManagedChunkRadiusController.getStreamingRadiusChunks();
+        boolean throttled = AuthoritativeRuntimeController.shouldThrottleChunkStreaming();
+        int pressure = GlobalPerformanceGovernor.getGlobalPressure();
+        GlobalPerformanceMode mode = GlobalPerformanceGovernor.getMode();
+
+        int fullCount = 0;
+        int streamingCount = 0;
+        int deferredCount = 0;
+        int culledCount = 0;
+
+        for (PauCRenderSection section : this.visibleSections) {
+            visibleCulledEntities += section.getCulledBlockEntities().length;
+            int distanceChunks = Math.max(
+                    Math.abs(section.getChunkX() - playerChunkX),
+                    Math.abs(section.getChunkZ() - playerChunkZ)
+            );
+            boolean inFullDetailRing = distanceChunks <= fullDetailRadius;
+            boolean inStreamingRing = distanceChunks <= streamingRadius;
+            boolean deferred = !inFullDetailRing && StructureStreamingController.isChunkDeferred(section.getOriginX(), section.getOriginZ());
+            boolean budgetCulled = !inStreamingRing || shouldCullDeferredSection(mode, throttled, pressure, deferred);
+
+            section.setFlag(RenderSectionFlags.IN_FULL_DETAIL_RING, inFullDetailRing);
+            section.setFlag(RenderSectionFlags.IN_STREAMING_RING, inStreamingRing);
+            section.setFlag(RenderSectionFlags.BUDGET_CULLED, budgetCulled);
+
+            if (inFullDetailRing) {
+                fullCount++;
+            }
+            if (inStreamingRing) {
+                streamingCount++;
+            }
+            if (deferred) {
+                deferredCount++;
+            }
+            if (budgetCulled) {
+                culledCount++;
+            }
+        }
+
+        this.lastFullDetailVisibleSections = fullCount;
+        this.lastStreamingVisibleSections = streamingCount;
+        this.lastDeferredVisibleSections = deferredCount;
+        this.lastBudgetCulledVisibleSections = culledCount;
+        this.lastVisibleCulledBlockEntities = visibleCulledEntities;
+    }
+
+    private static boolean shouldCullDeferredSection(
+            GlobalPerformanceMode mode,
+            boolean throttled,
+            int pressure,
+            boolean deferred
+    ) {
+        if (!deferred) {
+            return false;
+        }
+
+        return switch (mode) {
+            case CRISIS -> true;
+            case BASE -> throttled || pressure >= 2;
+            case COMBAT -> throttled && pressure >= 2;
+            case TRANSIT -> throttled && pressure >= 3;
+            case EXPLORATION -> throttled && pressure >= 3;
+        };
+    }
+
     private static long sectionKey(int x, int y, int z) {
         return ((long) x & 0x3FFFFF) | (((long) y & 0xFFFFF) << 22) | (((long) z & 0x3FFFFF) << 42);
+    }
+
+    private static String formatMegabytes(long bytes) {
+        return String.format("%.2f", bytes / (1024.0D * 1024.0D));
     }
 }

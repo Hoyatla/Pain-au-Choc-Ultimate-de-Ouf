@@ -8,6 +8,21 @@ public final class PauCPipeline {
     }
 
     public static void dispose() {
+        resetControllers();
+        PauCShaderManager.releaseTransientTargets();
+        PerformanceTelemetryRecorder.flushNow();
+    }
+
+    /**
+     * Runtime reset used for hot setting changes (quality/preset) while in-world.
+     * Keep transient post-process targets alive to avoid mid-frame GL invalidation.
+     */
+    public static void resetForHotSettingsChange() {
+        resetControllers();
+        PerformanceTelemetryRecorder.flushNow();
+    }
+
+    private static void resetControllers() {
         LatencyController.reset();
         BottleneckController.reset();
         StructureStreamingController.reset();
@@ -19,7 +34,6 @@ public final class PauCPipeline {
         AuthoritativeRuntimeController.resetRuntimeState();
         ShadowDistanceGovernor.reset();
         TerrainProxyController.reset();
-        PauCShaderManager.releaseTransientTargets();
     }
 
     public static boolean shouldRenderSkyMesh() {

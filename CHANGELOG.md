@@ -1,5 +1,107 @@
 # Changelog
 
+## 2.0.5-ultimate - 2026-03-20
+
+- Autopilot decision projection ajoutee pour automation:
+  - `tools/run_roadmap_autopilot.ps1` exporte maintenant:
+    - `decision_source` (`fresh_candidate|cached_candidate|none`)
+    - `effective_decision`
+    - `effective_readiness_percent`
+    - `decision_freshness`
+  - but: conserver `final_decision=pending_metrics` quand les metrics sont stale, tout en exposant une decision exploitable (`effective_*`) basee sur le dernier candidat cache.
+- Validation:
+  - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` -> `final_decision=pending_metrics`, `effective_decision=ready_for_beta`, `effective_readiness_percent=100`, `decision_source=cached_candidate`.
+
+## 2.0.4-ultimate - 2026-03-20
+
+- Autopilot stale-state clarifie:
+  - `tools/run_roadmap_autopilot.ps1` conserve et expose un cache du dernier candidat valide (`cached_candidate_*`) dans le resume final.
+  - en cas de `waiting_candidate_metrics_new`, le script affiche explicitement le dernier candidat `ready_for_beta` au lieu d'un statut ambigu sans contexte.
+- Compatibilite de schema etat autopilot:
+  - lecture `roadmap_autopilot_state.json` rendue backward-compatible quand les nouvelles cles de cache candidat sont absentes (ancien schema).
+- Validation:
+  - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` -> `last_action=waiting_candidate_metrics_new`, `final_decision=pending_metrics`, avec `cached_candidate_decision=ready_for_beta` et `cached_candidate_readiness_percent=100`.
+
+## 2.0.3-ultimate - 2026-03-20
+
+- Stabilisation A/B contre les echantillons telemetry invalides:
+  - `tools/append_ab_result_from_metrics.ps1` calcule maintenant un FPS effectif avec fallback `1000/frame_ms` quand `fps_raw<=0` ou invalide.
+  - objectif: eviter les faux `1% low` dus a des lignes incoherentes (`fps_raw=0` alors que `frame_ms` est nominal).
+- Recalcul des lignes `scene_1_village` a partir des segments bruts:
+  - `A_baseline` conserve (`fps_avg=71.289`, `fps_1pct_low=20`).
+  - `B1_stable` corrige (`fps_avg=80.074`, `fps_1pct_low=16.01`, avant `0.79`).
+  - `B2_aggressive` conserve (`fps_avg=80.189`, `fps_1pct_low=20`).
+- Validation pipeline strict:
+  - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` -> `final_decision=ready_for_beta`, `final_readiness_percent=100`.
+  - candidate autopilot: `run/beta_candidates/beta_candidate_20260320_175838_523`.
+  - revalidation stricte post-correction A/B: `run/beta_candidates/beta_candidate_20260320_180506_057`.
+
+## 2.0.2-ultimate - 2026-03-20
+
+- Gate `chunk_compile_health` rendu context-aware:
+  - `tools/evaluate_chunk_compile_health.ps1` ne penalise plus un `budget_preview_avg` bas quand aucune pression compile n'est detectee (`compile_backpressure`, `builder_backpressure`, `builder_pending`).
+  - nouveau signal exporte: `compile_pressure_detected`.
+- Pipeline strict candidate plus robuste aux phases de chauffe:
+  - `tools/build_beta_candidate.ps1`: en `-StrictPreflight`, si aucune fenetre n'est fournie, applique automatiquement `MetricsTailSeconds=600` (10 min recentes).
+  - objectif: eviter qu'un debut de session non representatif domine la decision.
+- Validation:
+  - `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -StrictPreflight -StrictReadiness` -> `ready_for_beta (95%)`.
+  - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` -> `final_decision=ready_for_beta`, `final_readiness_percent=95`.
+  - candidate valide: `run/beta_candidates/beta_candidate_20260320_131029_157`.
+
+## 2.0.1-ultimate - 2026-03-20
+
+- Stabilisation `stream_radius`:
+  - verrou de croissance apres pic de pression pour casser l'oscillation 14<->20 en soak.
+  - resultat telemetry observe: `stream_radius_transitions_per_min = 0` sur session longue.
+- Fiabilite pipeline candidate strict:
+  - `tools/build_beta_candidate.ps1`: `-StrictPreflight` aligne sur les gates bloquantes (les checks advisory restent informatifs).
+  - `tools/run_phase6_preflight.ps1`: drift de freshness metrics base sur sources runtime (pas sur `tools/`) pour eviter les faux stale.
+- Validation fin de session:
+  - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` -> `final_decision=ready_for_beta`, `final_readiness_percent=92`.
+  - candidate genere et verifie: `run/beta_candidates/beta_candidate_20260320_020037_882`.
+
+## 2.0.0-ultimate - 2026-03-20 (stream radius stability + preflight robustness)
+
+- **Stabilisation du rayon streaming/proxy face aux spikes de pression:**
+  - `ManagedChunkRadiusController` utilise maintenant une pression client/serveur amortie (attack/release) au lieu du signal instantane brut.
+  - echantillonnage borne a 1 fois par tick de jeu pour eviter les reactions multiples intra-tick.
+  - application de cette pression amortie aux calculs de rayon `streaming/proxy`, du `predictive bias` et du rayon de capture proxy.
+- **Fiabilite preflight compile:**
+  - `tools/run_phase6_preflight.ps1` n'echoue plus a tort sur des `Note:` Gradle emis sur stderr (`NativeCommandError`), tout en conservant le controle de `LASTEXITCODE`.
+- **Etat QA apres patch:**
+  - build `compileJava` OK.
+  - preflight non strict OK (outillage valide), mais KPI et soak restent inchanges tant qu'aucune nouvelle capture gameplay n'est produite.
+  - autopilot `-OneShot` retourne `pending_metrics` (`waiting_candidate_metrics_new`) en attendant une telemetrie plus recente.
+
+## 2.0.0-ultimate - 2026-03-19 (adaptive quality deferred)
+
+- **Adaptive quality active aussi en pipeline deferred (mode urgence):**
+  - `AdaptiveQualityController` ne bloque plus completement en `deferred`.
+  - en pression haute/critique, baisse automatique du `qualityLevel` avec cooldown conserve.
+  - nouvelles raisons telemetrie:
+    - `deferred_pressure_high`
+    - `deferred_pressure_critical`
+    - `deferred_hold_low_quality`
+    - `deferred_pressure_observe`
+- **Objectif du patch:**
+  - eviter les sessions bloquees a `qualityLevel=10` sous `CPU_BOUND` quand un shaderpack deferred est actif.
+  - preparer une nouvelle capture in-game representative avant re-evaluation KPI.
+
+## 2.0.0-ultimate - 2026-03-18 (roadmap ops)
+
+- **DRS floor harmonise a `0.35`** pour les cas GPU severes:
+  - `DynamicResolutionController.clampScale`
+  - `PauCClient.clampDynamicResolutionScale`
+  - `BottleneckController` (scale pressure floor)
+- **Autopilot roadmap durci contre la telemetrie stale**:
+  - etat persistant: `run/pauc_telemetry/roadmap_autopilot_state.json`
+  - signature de session metrics pour eviter les faux re-runs
+  - statut explicite `waiting_candidate_metrics_new`
+  - resume enrichi avec `latest_metrics_timestamp_utc`
+- **Handoff session renforce**:
+  - documentation de reprise immediatement exploitable apres redemarrage de session
+
 ## 2.0.0-ultimate - 2026-03-13
 
 - **Pipeline de rendu de chunks Embeddium-like integre nativement dans PauC:**
@@ -29,6 +131,26 @@
 - **Config persistence** du shaderpack deferred selectionne.
 - **Activation automatique** du shaderpack sauvegarde au demarrage (apres GL context ready).
 - **Debug overlay F3**: etat PauC, mode gouverneur, pression, autorite, chunks visible/total, shader actif, pipeline deferred.
+- **Optimisations de rendu de blocs (Phase 3.1):**
+  - culling intelligent des feuilles: skip des faces internes entre blocs de meme type (`LeavesBlockMixin`)
+  - detection de sections single-value pour skip de rendu
+  - throttling d'animations de sprites par mode gouverneur et qualite (`PauCSpriteAnimationTracker`)
+  - hook d'optimisation palette (`PalettedContainerMixin`)
+- **Optimisations de rendu d'entites (Phase 3.2):**
+  - LOD-aware model parts: skip des parties non essentielles a distance (`ModelPartMixin`)
+  - multiplicateur de spawn de particules par mode gouverneur (CRISIS=0.15, BASE=1.0)
+  - distance de rendu billboard adaptative par qualite (`BillboardParticleMixin`)
+  - simplification `ItemEntity` en billboard a distance
+- **Support PBR (Phase 3.3):**
+  - detection automatique des textures normal (`_n`) et specular (`_s`)
+  - bind sur les texture units GL_TEXTURE4 (normals) et GL_TEXTURE5 (specular)
+  - fallback 1x1 par defaut (flat normal + zero specular)
+- **Corrections de compilation:**
+  - `FrustumAccessor`: champ corrige de `frustumIntersection` a `intersection`
+  - `PauCChunkRenderer`: `pushMatrix()`/`popMatrix()` corriges en `pushPose()`/`popPose()`
+  - `PauCGlBuffer`: `GL30.GL_UNIFORM_BUFFER` corrige en `GL31.GL_UNIFORM_BUFFER`
+  - `PauCChunkBuildContext`: acces champ prive `animatedTexture` remplace
+  - `PauCWorldRenderer`: appel `PauCClient.getGovernor()` inexistant retire
 
 ## 1.4.1-ultimate - 2026-03-12
 

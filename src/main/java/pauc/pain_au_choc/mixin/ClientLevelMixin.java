@@ -1,6 +1,7 @@
 package pauc.pain_au_choc.mixin;
 
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
 import pauc.pain_au_choc.render.PauCWorldRenderer;
 import org.spongepowered.asm.mixin.Mixin;
@@ -26,10 +27,10 @@ public abstract class ClientLevelMixin {
             method = "onChunkLoaded",
             at = @At("RETURN")
     )
-    private void pauc$onChunkLoaded(int chunkX, int chunkZ, CallbackInfo ci) {
+    private void pauc$onChunkLoaded(ChunkPos chunkPos, CallbackInfo ci) {
         PauCWorldRenderer renderer = PauCWorldRenderer.instanceNullable();
         if (renderer != null) {
-            renderer.onChunkAdded(chunkX, chunkZ);
+            renderer.onChunkAdded(chunkPos.x, chunkPos.z);
         }
     }
 

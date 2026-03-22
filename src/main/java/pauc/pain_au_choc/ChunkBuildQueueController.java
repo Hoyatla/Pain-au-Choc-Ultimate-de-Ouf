@@ -37,36 +37,22 @@ public final class ChunkBuildQueueController {
             return compileBudget;
         }
 
-        int cpuLevel = PauCClient.getCpuInvolvementLevel();
-        int baseBudget = switch (cpuLevel) {
-            case 1 -> 6;
-            case 3 -> 14;
-            default -> 10;
-        };
-
-        double qualityRatio = ChunkBudgetController.getChunkRebuildBudgetRatio();
-        double cpuMultiplier = 0.80D + cpuLevel * 0.20D;
-        double pressurePenalty = 1.0D - Math.min(0.55D, LatencyController.getPressureLevel() * 0.16D);
-        double bottleneckPenalty = BottleneckController.isCpuBound() ? 0.75D : 1.00D;
-        double bottleneckBoost = BottleneckController.isGpuBound() ? 1.08D : 1.00D;
-        double backlogPenalty = 1.0D - Math.min(0.35D, backPressureTicks / 36.0D);
-        double authorityPenalty = AuthoritativeRuntimeController.getChunkBudgetPenaltyMultiplier();
-        double modeMultiplier = GlobalPerformanceGovernor.getChunkCompileBudgetMultiplier();
-        int computedBudget = (int) Math.round(
-                baseBudget
-                        * qualityRatio
-                        * cpuMultiplier
-                        * pressurePenalty
-                        * bottleneckPenalty
-                        * bottleneckBoost
-                        * backlogPenalty
-                        * authorityPenalty
-                        * modeMultiplier
-        );
-        compileBudget = Math.max(MIN_BUILD_BUDGET, Math.min(MAX_BUILD_BUDGET, computedBudget));
+        compileBudget = computeBudgetValue();
         scheduledCount = 0;
         deferredCount = 0;
         return compileBudget;
+    }
+
+    /**
+     * Compute a budget preview without mutating compile-pass counters/state.
+     * This is used by PAUC-side builders that need a budget hint but do not
+     * participate in vanilla's consumeBuildSlot() accounting.
+     */
+    public static int previewCompileBudget() {
+        if (!PauCClient.isBudgetActive()) {
+            return Integer.MAX_VALUE;
+        }
+        return computeBudgetValue();
     }
 
     public static boolean consumeBuildSlot() {
@@ -150,6 +136,47 @@ public final class ChunkBuildQueueController {
 
         managingPriority = false;
         baselinePriority = null;
+    }
+
+    private static int computeBudgetValue() {
+        int cpuLevel = PauCClient.getCpuInvolvementLevel();
+        int baseBudget = switch (cpuLevel) {
+            case 1 -> 6;
+            case 3 -> 14;
+            default -> 10;
+        };
+
+        double qualityRatio = ChunkBudgetController.getChunkRebuildBudgetRatio();
+        double cpuMultiplier = 0.80D + cpuLevel * 0.20D;
+        double pressurePenalty = 1.0D - Math.min(0.55D, LatencyController.getPressureLevel() * 0.16D);
+        double serverPressurePenalty = 1.0D - Math.min(0.45D, IntegratedServerLoadController.getPressureLevel() * 0.12D);
+        int mitigationTier = IntegratedServerLoadController.getMitigationTier();
+        double mitigationTierPenalty = switch (mitigationTier) {
+            case 1 -> 0.94D;
+            case 2 -> 0.82D;
+            default -> mitigationTier >= 3 ? 0.68D : 1.00D;
+        };
+        double emergencyPenalty = IntegratedServerLoadController.isEmergencyMitigationActive() ? 0.75D : 1.00D;
+        double bottleneckPenalty = BottleneckController.isCpuBound() ? 0.75D : 1.00D;
+        double bottleneckBoost = BottleneckController.isGpuBound() ? 1.08D : 1.00D;
+        double backlogPenalty = 1.0D - Math.min(0.35D, backPressureTicks / 36.0D);
+        double authorityPenalty = AuthoritativeRuntimeController.getChunkBudgetPenaltyMultiplier();
+        double modeMultiplier = GlobalPerformanceGovernor.getChunkCompileBudgetMultiplier();
+        int computedBudget = (int) Math.round(
+                baseBudget
+                        * qualityRatio
+                        * cpuMultiplier
+                        * pressurePenalty
+                        * serverPressurePenalty
+                        * mitigationTierPenalty
+                        * emergencyPenalty
+                        * bottleneckPenalty
+                        * bottleneckBoost
+                        * backlogPenalty
+                        * authorityPenalty
+                        * modeMultiplier
+        );
+        return Math.max(MIN_BUILD_BUDGET, Math.min(MAX_BUILD_BUDGET, computedBudget));
     }
 }
 
