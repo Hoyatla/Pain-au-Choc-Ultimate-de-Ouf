@@ -3781,3 +3781,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: ready_for_beta
 - Note: Freeze Git effectue: commit abdc08e + tag v2.0.0-ultimate. Smoke post-release auto passe (candidate verify pass, recettes/loot invalides=0, triage regenere).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-22 16:01:55 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Ajout run_error_sorting_pass (triage + blocking patterns + quarantine). Validation sur test: overall_status=pass, blocking_hits_total=0, known_noise_hits_total=446.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

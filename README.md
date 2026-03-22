@@ -504,3 +504,10 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1
 .\tools\run_roadmap_autopilot.ps1 -OneShot
 ```
+
+Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
+
+```powershell
+.\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings
+.\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings -FailOnBlocking
+```
