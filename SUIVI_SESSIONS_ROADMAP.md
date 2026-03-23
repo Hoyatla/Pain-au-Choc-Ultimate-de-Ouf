@@ -4054,6 +4054,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Projection decision autopilot durcie: en cas de `final_decision=candidate_build_failed`, fallback operationnel optionnel sur candidate cachee active (`decision_source=cached_candidate_fallback`, `decision_override_reason` explicite). Validation run reel OK; desactivation possible via `-PreferCachedDecisionOnBuildFailure:$false`.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 19:52:25 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Resume autopilot enrichi avec telemetrie de configuration candidate active (`target_frame_ms_*`, `target_mspt_p95_max`, `candidate_metrics_*`) pour rendre chaque run strictement reproductible; validation one-shot OK.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 19:32:39 (UTC) - Codex
 
 - Statut: in_progress
