@@ -4263,3 +4263,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Ecriture JSON resume durcie en mode atomique (`summary_output_write_mode=atomic`, temp+replace) + correction de normalisation `SummaryOutputPath` invalide (plus de crash precoce sur `IsPathRooted`, passage propre par `summary_output_write_error`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary_atomic_test.json -SummaryOutputCompress` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\bad<path>\summary.json -FailOnSummaryOutputWriteError` (KO attendu avec reason `summary_output_write_error`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:57:59 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Mode strict CI ajuste pour compresser le resume JSON par defaut (`StrictCiForceSummaryOutputCompress=$true`) avec trace explicite `strict_ci_summary_output_compress_forced`. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, `summary_output_compressed=true`, forced=true) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates -StrictCiForceSummaryOutputCompress:$false -SummaryOutputCompress:$false` (KO attendu, `summary_output_compressed=false`, forced=false).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
