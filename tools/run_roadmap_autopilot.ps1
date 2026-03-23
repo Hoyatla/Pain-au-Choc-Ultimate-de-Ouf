@@ -920,6 +920,10 @@ $errorSortingTriageEvents = 0
 $errorSortingTriageUniqueSignatures = 0
 $errorSortingReportMdPath = ""
 $errorSortingReportJsonPath = ""
+$prismJarSyncStatus = if ($AutoSyncModJarToPrism) { "not_run" } else { "disabled" }
+$prismJarSyncSource = ""
+$prismJarSyncPath = ""
+$prismJarSyncSha256 = ""
 
 Push-Location $repoRoot
 try {
@@ -946,6 +950,12 @@ try {
                 -PrismRootPath $PrismRoot `
                 -PrismInstanceName $InstanceName `
                 -BuildJar:$BuildJarBeforeSync
+        }
+        if ($null -ne $startupSyncResult) {
+            $prismJarSyncStatus = if ([bool]$startupSyncResult.synced) { "synced" } else { "skipped" }
+            $prismJarSyncSource = [string]$startupSyncResult.source
+            $prismJarSyncPath = [string]$startupSyncResult.jar_path
+            $prismJarSyncSha256 = [string]$startupSyncResult.jar_sha256
         }
     }
 
@@ -1224,8 +1234,18 @@ try {
                                     -PrismInstanceName $InstanceName `
                                     -BuildJar:$false
                             }
+                            if ($null -ne $candidateSyncResult) {
+                                $prismJarSyncStatus = if ([bool]$candidateSyncResult.synced) { "synced" } else { "skipped" }
+                                $prismJarSyncSource = [string]$candidateSyncResult.source
+                                $prismJarSyncPath = [string]$candidateSyncResult.jar_path
+                                $prismJarSyncSha256 = [string]$candidateSyncResult.jar_sha256
+                            }
                         } catch {
                             Write-Warning ("[Autopilot] Post-build Prism sync failed: {0}" -f $_.Exception.Message)
+                            $prismJarSyncStatus = "error"
+                            $prismJarSyncSource = ""
+                            $prismJarSyncPath = ""
+                            $prismJarSyncSha256 = ""
                         }
                     }
 
@@ -1401,6 +1421,10 @@ $result = [PSCustomObject]@{
         cached_candidate_timestamp_utc = $cachedCandidateTimestampUtc
         cached_candidate_server_governor_health = $cachedCandidateServerGovernorHealth
         cached_candidate_server_governor_skipped_for_insufficient_pressure = $cachedCandidateServerGovernorInsufficientPressure
+        prism_jar_sync_status = $prismJarSyncStatus
+        prism_jar_sync_source = $prismJarSyncSource
+        prism_jar_sync_path = $prismJarSyncPath
+        prism_jar_sync_sha256 = $prismJarSyncSha256
         decision_source = "none"
         effective_decision = ""
         effective_readiness_percent = ""

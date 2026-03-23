@@ -4035,3 +4035,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Durcissement sync autopilot: fonctions de sync renvoient des objets explicites (`synced/source/hash/path`) et le fallback candidate->build/libs repose desormais sur `result.synced` (plus de dependance a la conversion implicite PowerShell). Validation one-shot OK.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 19:30:38 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Observabilite sync autopilot etendue: resume one-shot expose maintenant `prism_jar_sync_status/source/path/sha256`; validation sur run reel (`status=synced`, `source=candidate`, hash explicitement trace).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

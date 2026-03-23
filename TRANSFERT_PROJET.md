@@ -207,6 +207,7 @@ Regle de reprise:
 - Autopilot roadmap (v5 server-coverage): resume one-shot enrichi avec `cached_candidate_server_governor_*` + message explicite quand la couverture serveur est partielle (pression insuffisante).
 - Autopilot roadmap (v6 candidate-jar-sync): post-build sync Prism alignee d'abord sur le jar de la `candidateForDecision` (fallback `build/libs` si indisponible) pour eviter les derives binaire entre candidate retenue et instance.
 - Autopilot roadmap (v7 startup-candidate-sync): au demarrage, si la candidate cachee est `ready_for_beta` et qu'aucun build force n'est demande, sync Prism prioritaire depuis cette candidate (fallback `build/libs`).
+- Autopilot roadmap (v8 jar-sync-telemetry): resume one-shot enrichi avec `prism_jar_sync_status/source/path/sha256` pour tracer exactement quel jar a ete pousse vers Prism.
 - Workflow capture A/B segmente: `ab_mark_start.ps1` / `ab_mark_finish.ps1` pour extraire exactement les nouvelles lignes telemetrie d'une scene avant ecriture matrice.
 - Suivi de progression A/B: `ab_campaign_status.ps1` + integration preflight (`-CheckAbProgress`) pour afficher completion `%` et prochaine case a remplir.
 - Orchestration campagne A/B: `ab_campaign_next.ps1` (prochaine case manquante + mapping profil launcher + start capture optionnel) + mode `ab_mark_finish.ps1 -AutoPrepareNext`.
