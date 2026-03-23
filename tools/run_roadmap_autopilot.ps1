@@ -50,6 +50,7 @@ param(
     [switch]$FailOnCachedDecisionSource,
     [switch]$FailOnPrismJarSyncNotSynced,
     [switch]$FailOnSummaryOutputWriteError,
+    [switch]$FailOnMissingSummaryOutput,
     [switch]$EnableStrictCiFailGates,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
@@ -126,6 +127,7 @@ if ($EnableStrictCiFailGates) {
     $FailOnCachedDecisionSource = $true
     $FailOnPrismJarSyncNotSynced = $true
     $FailOnSummaryOutputWriteError = $true
+    $FailOnMissingSummaryOutput = $true
     $FailOnErrorSortingStatusNotPass = $true
     $FailOnErrorSortingNoiseWarn = $true
     $RunErrorSortingPass = $true
@@ -1874,6 +1876,7 @@ if ([bool]$FailOnNonFreshEffectiveDecision) { [void]$activeFailGates.Add("effect
 if ([bool]$FailOnCachedDecisionSource) { [void]$activeFailGates.Add("cached_decision_source_used") }
 if ([bool]$FailOnPrismJarSyncNotSynced) { [void]$activeFailGates.Add("prism_jar_sync_not_synced") }
 if ([bool]$FailOnSummaryOutputWriteError) { [void]$activeFailGates.Add("summary_output_write_error") }
+if ([bool]$FailOnMissingSummaryOutput) { [void]$activeFailGates.Add("missing_summary_output") }
 if ([bool]$FailOnStartupSyncStaleCacheBlock) { [void]$activeFailGates.Add("startup_sync_stale_cache_blocked") }
 if ([bool]$FailOnErrorSortingStatusNotPass) { [void]$activeFailGates.Add("error_sorting_status_not_pass") }
 if ([bool]$FailOnErrorSortingNoiseWarn) { [void]$activeFailGates.Add("error_sorting_noise_warn_or_worse") }
@@ -1948,6 +1951,7 @@ $result = [PSCustomObject]@{
         fail_on_cached_decision_source = [bool]$FailOnCachedDecisionSource
         fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
+        fail_on_missing_summary_output = [bool]$FailOnMissingSummaryOutput
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
         fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
@@ -2146,10 +2150,27 @@ $result = [PSCustomObject]@{
         $result.autopilot_failure_reason = "summary_output_write_error"
         $result.autopilot_failed = $true
     }
+    if ([bool]$FailOnMissingSummaryOutput -and `
+            [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
+            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        $result.autopilot_failure_reason = "missing_summary_output"
+        $result.autopilot_failed = $true
+    } elseif ([bool]$FailOnMissingSummaryOutput -and `
+            -not [bool]$result.summary_output_written -and `
+            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        $result.autopilot_failure_reason = "missing_summary_output"
+        $result.autopilot_failed = $true
+    }
     if ([bool]$FailOnSummaryOutputWriteError -and `
             -not [string]::IsNullOrWhiteSpace($result.summary_output_error) -and `
             -not ($result.triggered_fail_gates -contains "summary_output_write_error")) {
         $result.triggered_fail_gates = @($result.triggered_fail_gates + @("summary_output_write_error"))
+        $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
+    }
+    if ([bool]$FailOnMissingSummaryOutput -and `
+            ([string]::IsNullOrWhiteSpace($result.summary_output_path) -or -not [bool]$result.summary_output_written) -and `
+            -not ($result.triggered_fail_gates -contains "missing_summary_output")) {
+        $result.triggered_fail_gates = @($result.triggered_fail_gates + @("missing_summary_output"))
         $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
     }
 
@@ -2204,6 +2225,9 @@ $result = [PSCustomObject]@{
             }
             "summary_output_write_error" {
                 throw ("Summary output write failed ({0}) while FailOnSummaryOutputWriteError is enabled." -f $result.summary_output_error)
+            }
+            "missing_summary_output" {
+                throw "Summary output was not produced while FailOnMissingSummaryOutput is enabled."
             }
             "effective_decision_not_ready_for_beta" {
                 throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)
