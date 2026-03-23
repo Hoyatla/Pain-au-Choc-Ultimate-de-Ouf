@@ -57,6 +57,7 @@ param(
     [int]$ErrorSortingTopN = 25,
     [int]$ErrorSortingNoiseWarnHitsTotal = 500,
     [int]$ErrorSortingNoiseFailHitsTotal = 2000,
+    [switch]$FailOnErrorSortingReportMissing,
     [switch]$FailOnErrorSortingStatusNotPass,
     [switch]$FailOnErrorSortingNoiseWarn,
     [switch]$FailOnErrorSortingBlockingPatterns,
@@ -128,6 +129,7 @@ if ($EnableStrictCiFailGates) {
     $FailOnPrismJarSyncNotSynced = $true
     $FailOnSummaryOutputWriteError = $true
     $FailOnMissingSummaryOutput = $true
+    $FailOnErrorSortingReportMissing = $true
     $FailOnErrorSortingStatusNotPass = $true
     $FailOnErrorSortingNoiseWarn = $true
     $RunErrorSortingPass = $true
@@ -1867,6 +1869,9 @@ $latestMetricsFreshness = Get-CachedCandidateFreshness `
 $latestMetricsIsFresh = [bool]$latestMetricsFreshness.is_fresh
 $latestMetricsAgeMinutes = $latestMetricsFreshness.age_minutes
 $latestMetricsFreshnessStatus = [string]$latestMetricsFreshness.status
+$errorSortingReportMdExists = -not [string]::IsNullOrWhiteSpace($errorSortingReportMdPath) -and (Test-Path -LiteralPath $errorSortingReportMdPath -PathType Leaf)
+$errorSortingReportJsonExists = -not [string]::IsNullOrWhiteSpace($errorSortingReportJsonPath) -and (Test-Path -LiteralPath $errorSortingReportJsonPath -PathType Leaf)
+$errorSortingReportsPresent = ($errorSortingReportMdExists -and $errorSortingReportJsonExists)
 $activeFailGates = New-Object System.Collections.Generic.List[string]
 if ([bool]$FailOnPendingMetricsDecision) { [void]$activeFailGates.Add("pending_metrics_decision") }
 if ([bool]$FailOnLatestMetricsNotFresh) { [void]$activeFailGates.Add("latest_metrics_not_fresh") }
@@ -1878,6 +1883,7 @@ if ([bool]$FailOnPrismJarSyncNotSynced) { [void]$activeFailGates.Add("prism_jar_
 if ([bool]$FailOnSummaryOutputWriteError) { [void]$activeFailGates.Add("summary_output_write_error") }
 if ([bool]$FailOnMissingSummaryOutput) { [void]$activeFailGates.Add("missing_summary_output") }
 if ([bool]$FailOnStartupSyncStaleCacheBlock) { [void]$activeFailGates.Add("startup_sync_stale_cache_blocked") }
+if ([bool]$FailOnErrorSortingReportMissing) { [void]$activeFailGates.Add("error_sorting_report_missing") }
 if ([bool]$FailOnErrorSortingStatusNotPass) { [void]$activeFailGates.Add("error_sorting_status_not_pass") }
 if ([bool]$FailOnErrorSortingNoiseWarn) { [void]$activeFailGates.Add("error_sorting_noise_warn_or_worse") }
 
@@ -1926,6 +1932,9 @@ $result = [PSCustomObject]@{
         error_sorting_triage_unique_signatures = $errorSortingTriageUniqueSignatures
         error_sorting_report_md_path = $errorSortingReportMdPath
         error_sorting_report_json_path = $errorSortingReportJsonPath
+        error_sorting_report_md_exists = [bool]$errorSortingReportMdExists
+        error_sorting_report_json_exists = [bool]$errorSortingReportJsonExists
+        error_sorting_reports_present = [bool]$errorSortingReportsPresent
         cached_candidate_decision = $cachedCandidateDecision
         cached_candidate_readiness_percent = $cachedCandidateReadiness
         cached_candidate_dir = $cachedCandidateDir
@@ -1953,6 +1962,7 @@ $result = [PSCustomObject]@{
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
         fail_on_missing_summary_output = [bool]$FailOnMissingSummaryOutput
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
+        fail_on_error_sorting_report_missing = [bool]$FailOnErrorSortingReportMissing
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
         fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
         strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
@@ -2049,6 +2059,9 @@ $result = [PSCustomObject]@{
             ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
         [void]$triggeredFailGates.Add("cached_decision_source_used")
     }
+    if ([bool]$FailOnErrorSortingReportMissing -and -not [bool]$result.error_sorting_reports_present) {
+        [void]$triggeredFailGates.Add("error_sorting_report_missing")
+    }
     if ([bool]$FailOnErrorSortingStatusNotPass -and $result.error_sorting_status -ne "pass") {
         [void]$triggeredFailGates.Add("error_sorting_status_not_pass")
     }
@@ -2089,6 +2102,9 @@ $result = [PSCustomObject]@{
     } elseif ([bool]$FailOnCachedDecisionSource -and `
             ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
         $result.autopilot_failure_reason = "cached_decision_source_used"
+    } elseif ([bool]$FailOnErrorSortingReportMissing -and `
+            -not [bool]$result.error_sorting_reports_present) {
+        $result.autopilot_failure_reason = "error_sorting_report_missing"
     } elseif ([bool]$FailOnErrorSortingStatusNotPass -and `
             $result.error_sorting_status -ne "pass") {
         $result.autopilot_failure_reason = "error_sorting_status_not_pass"
@@ -2201,6 +2217,12 @@ $result = [PSCustomObject]@{
             }
             "cached_decision_source_used" {
                 throw ("Decision source is '{0}' while FailOnCachedDecisionSource is enabled." -f $result.decision_source)
+            }
+            "error_sorting_report_missing" {
+                throw ("Error sorting reports are missing (md_exists={0}, json_exists={1}, status={2}) while FailOnErrorSortingReportMissing is enabled." -f `
+                        $result.error_sorting_report_md_exists,
+                        $result.error_sorting_report_json_exists,
+                        $result.error_sorting_status)
             }
             "error_sorting_status_not_pass" {
                 throw ("Error sorting status is '{0}' (blocking_hits={1}, known_noise_status={2}) while FailOnErrorSortingStatusNotPass is enabled." -f `
