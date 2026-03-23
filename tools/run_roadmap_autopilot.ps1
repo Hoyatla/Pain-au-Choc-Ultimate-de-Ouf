@@ -42,6 +42,7 @@ param(
     [bool]$EnforceFreshCachedCandidateForStartupSync = $true,
     [switch]$FailOnStartupSyncStaleCacheBlock,
     [switch]$FailOnPendingMetricsDecision,
+    [switch]$FailOnLatestMetricsNotFresh,
     [switch]$FailOnNoEffectiveDecision,
     [switch]$FailOnEffectiveDecisionNotReadyForBeta,
     [switch]$FailOnNonFreshEffectiveDecision,
@@ -116,6 +117,7 @@ $strictCiSummaryOutputDefaulted = $false
 if ($EnableStrictCiFailGates) {
     $FailOnStartupSyncStaleCacheBlock = $true
     $FailOnPendingMetricsDecision = $true
+    $FailOnLatestMetricsNotFresh = $true
     $FailOnNoEffectiveDecision = $true
     $FailOnEffectiveDecisionNotReadyForBeta = $true
     $FailOnNonFreshEffectiveDecision = $true
@@ -1845,6 +1847,12 @@ $cachedCandidateIsFresh = [bool]$cachedCandidateFreshness.is_fresh
 $cachedCandidateAgeMinutes = $cachedCandidateFreshness.age_minutes
 $cachedCandidateFreshnessStatus = [string]$cachedCandidateFreshness.status
 $cachedCandidateEligibleForUse = ($cachedCandidateIsFresh -and -not [string]::IsNullOrWhiteSpace($cachedCandidateDecision))
+$latestMetricsFreshness = Get-CachedCandidateFreshness `
+    -TimestampUtc $latestMetricsTimestampUtc `
+    -MaxAgeMinutes $MaxMetricsAgeMinutes
+$latestMetricsIsFresh = [bool]$latestMetricsFreshness.is_fresh
+$latestMetricsAgeMinutes = $latestMetricsFreshness.age_minutes
+$latestMetricsFreshnessStatus = [string]$latestMetricsFreshness.status
 
 $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -1857,6 +1865,10 @@ $result = [PSCustomObject]@{
         latest_metrics_rows = $latestMetricsRows
         latest_metrics_duration_seconds = [Math]::Round($latestMetricsDurationSeconds, 3)
         latest_metrics_timestamp_utc = $latestMetricsTimestampUtc
+        latest_metrics_is_fresh = $latestMetricsIsFresh
+        latest_metrics_age_minutes = $latestMetricsAgeMinutes
+        latest_metrics_freshness_status = $latestMetricsFreshnessStatus
+        max_metrics_age_minutes = $MaxMetricsAgeMinutes
         latest_metrics_path = $latestMetricsPath
         target_frame_ms_p95_max = $FrameMsP95Max
         target_frame_ms_p99_max = $FrameMsP99Max
@@ -1905,6 +1917,7 @@ $result = [PSCustomObject]@{
         prism_jar_sync_skip_reason = $prismJarSyncSkipReason
         prism_startup_sync_blocked_by_stale_cache = $prismStartupSyncBlockedByStaleCache
         fail_on_pending_metrics_decision = [bool]$FailOnPendingMetricsDecision
+        fail_on_latest_metrics_not_fresh = [bool]$FailOnLatestMetricsNotFresh
         fail_on_no_effective_decision = [bool]$FailOnNoEffectiveDecision
         fail_on_effective_decision_not_ready_for_beta = [bool]$FailOnEffectiveDecisionNotReadyForBeta
         fail_on_non_fresh_effective_decision = [bool]$FailOnNonFreshEffectiveDecision
@@ -1987,6 +2000,8 @@ $result = [PSCustomObject]@{
 
     if ([bool]$FailOnPendingMetricsDecision -and $result.final_decision -eq "pending_metrics") {
         $result.autopilot_failure_reason = "pending_metrics_decision"
+    } elseif ([bool]$FailOnLatestMetricsNotFresh -and -not [bool]$result.latest_metrics_is_fresh) {
+        $result.autopilot_failure_reason = "latest_metrics_not_fresh"
     } elseif ([bool]$FailOnNoEffectiveDecision -and [string]::IsNullOrWhiteSpace($result.effective_decision)) {
         $result.autopilot_failure_reason = "missing_effective_decision"
     } elseif ([bool]$FailOnNonFreshEffectiveDecision -and `
@@ -2060,6 +2075,12 @@ $result = [PSCustomObject]@{
         switch ($result.autopilot_failure_reason) {
             "pending_metrics_decision" {
                 throw "Final decision is pending_metrics while FailOnPendingMetricsDecision is enabled."
+            }
+            "latest_metrics_not_fresh" {
+                throw ("Latest metrics freshness is '{0}' (age_minutes={1}, max_age_minutes={2}) while FailOnLatestMetricsNotFresh is enabled." -f `
+                        $result.latest_metrics_freshness_status,
+                        $result.latest_metrics_age_minutes,
+                        $result.max_metrics_age_minutes)
             }
             "missing_effective_decision" {
                 throw "Effective decision is empty while FailOnNoEffectiveDecision is enabled."
