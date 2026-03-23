@@ -42,6 +42,7 @@ param(
     [switch]$FailOnNoEffectiveDecision,
     [switch]$FailOnEffectiveDecisionNotReadyForBeta,
     [switch]$FailOnCachedDecisionSource,
+    [switch]$FailOnPrismJarSyncNotSynced,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1866,6 +1867,7 @@ $result = [PSCustomObject]@{
         fail_on_no_effective_decision = [bool]$FailOnNoEffectiveDecision
         fail_on_effective_decision_not_ready_for_beta = [bool]$FailOnEffectiveDecisionNotReadyForBeta
         fail_on_cached_decision_source = [bool]$FailOnCachedDecisionSource
+        fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
@@ -1937,6 +1939,10 @@ $result = [PSCustomObject]@{
     } elseif ([bool]$FailOnCachedDecisionSource -and `
             ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
         $result.autopilot_failure_reason = "cached_decision_source_used"
+    } elseif ([bool]$FailOnPrismJarSyncNotSynced -and `
+            [bool]$AutoSyncModJarToPrism -and `
+            $result.prism_jar_sync_status -ne "synced") {
+        $result.autopilot_failure_reason = "prism_jar_sync_not_synced"
     } elseif ([bool]$FailOnEffectiveDecisionNotReadyForBeta -and `
             -not [string]::IsNullOrWhiteSpace($result.effective_decision) -and `
             $result.effective_decision.Trim().ToLowerInvariant() -ne "ready_for_beta") {
@@ -1964,6 +1970,12 @@ $result = [PSCustomObject]@{
             }
             "cached_decision_source_used" {
                 throw ("Decision source is '{0}' while FailOnCachedDecisionSource is enabled." -f $result.decision_source)
+            }
+            "prism_jar_sync_not_synced" {
+                throw ("Prism jar sync status is '{0}' (source='{1}', reason='{2}') while FailOnPrismJarSyncNotSynced is enabled." -f `
+                        $result.prism_jar_sync_status,
+                        $result.prism_jar_sync_source,
+                        $result.prism_jar_sync_skip_reason)
             }
             "effective_decision_not_ready_for_beta" {
                 throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)
