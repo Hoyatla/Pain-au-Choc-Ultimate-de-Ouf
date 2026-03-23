@@ -4,6 +4,7 @@ param(
     [string]$StatePath = ".\run\pauc_telemetry\ab_capture_state.json",
     [string]$AutopilotStatePath = ".\run\pauc_telemetry\roadmap_autopilot_state.json",
     [string]$SummaryOutputPath = "",
+    [string]$StrictCiSummaryOutputPath = ".\run\pauc_reports\autopilot_summary_ci_strict.json",
     [switch]$SummaryOutputCompress,
     [string]$CandidateRoot = ".\run\beta_candidates",
     [string]$ReportsDir = ".\run\pauc_reports",
@@ -110,6 +111,7 @@ if ($ErrorSortingNoiseFailHitsTotal -lt $ErrorSortingNoiseWarnHitsTotal) {
     throw "ErrorSortingNoiseFailHitsTotal must be >= ErrorSortingNoiseWarnHitsTotal"
 }
 
+$strictCiSummaryOutputDefaulted = $false
 if ($EnableStrictCiFailGates) {
     $FailOnStartupSyncStaleCacheBlock = $true
     $FailOnPendingMetricsDecision = $true
@@ -121,6 +123,10 @@ if ($EnableStrictCiFailGates) {
     $FailOnErrorSortingStatusNotPass = $true
     $FailOnErrorSortingNoiseWarn = $true
     $RunErrorSortingPass = $true
+    if ([string]::IsNullOrWhiteSpace($SummaryOutputPath) -and -not [string]::IsNullOrWhiteSpace($StrictCiSummaryOutputPath)) {
+        $SummaryOutputPath = $StrictCiSummaryOutputPath
+        $strictCiSummaryOutputDefaulted = $true
+    }
 }
 
 function Get-LastExitCodeOrZero {
@@ -1906,6 +1912,8 @@ $result = [PSCustomObject]@{
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
         fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
         strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
+        strict_ci_summary_output_defaulted = [bool]$strictCiSummaryOutputDefaulted
+        strict_ci_summary_output_path = $StrictCiSummaryOutputPath
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
