@@ -44,6 +44,7 @@ param(
     [switch]$FailOnEffectiveDecisionNotReadyForBeta,
     [switch]$FailOnCachedDecisionSource,
     [switch]$FailOnPrismJarSyncNotSynced,
+    [switch]$FailOnSummaryOutputWriteError,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1063,10 +1064,17 @@ $autopilotStatePathResolved = if ([System.IO.Path]::IsPathRooted($AutopilotState
 }
 $summaryOutputPathResolved = if ([string]::IsNullOrWhiteSpace($SummaryOutputPath)) {
     ""
-} elseif ([System.IO.Path]::IsPathRooted($SummaryOutputPath)) {
-    [System.IO.Path]::GetFullPath($SummaryOutputPath)
 } else {
-    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SummaryOutputPath))
+    $summaryPathCandidate = if ([System.IO.Path]::IsPathRooted($SummaryOutputPath)) {
+        $SummaryOutputPath
+    } else {
+        Join-Path $repoRoot $SummaryOutputPath
+    }
+    try {
+        [System.IO.Path]::GetFullPath($summaryPathCandidate)
+    } catch {
+        $summaryPathCandidate
+    }
 }
 $autopilotState = Read-AutopilotState -FilePath $autopilotStatePathResolved
 $lastProcessedMetricsSignature = [string]$autopilotState.last_processed_metrics_signature
@@ -1876,6 +1884,7 @@ $result = [PSCustomObject]@{
         fail_on_effective_decision_not_ready_for_beta = [bool]$FailOnEffectiveDecisionNotReadyForBeta
         fail_on_cached_decision_source = [bool]$FailOnCachedDecisionSource
         fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
+        fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
@@ -1983,6 +1992,12 @@ $result = [PSCustomObject]@{
             Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
         }
     }
+    if ([bool]$FailOnSummaryOutputWriteError -and `
+            -not [string]::IsNullOrWhiteSpace($result.summary_output_error) -and `
+            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        $result.autopilot_failure_reason = "summary_output_write_error"
+        $result.autopilot_failed = $true
+    }
 
     Reset-LastExitCode
     Write-Host ""
@@ -2006,6 +2021,9 @@ $result = [PSCustomObject]@{
                         $result.prism_jar_sync_status,
                         $result.prism_jar_sync_source,
                         $result.prism_jar_sync_skip_reason)
+            }
+            "summary_output_write_error" {
+                throw ("Summary output write failed ({0}) while FailOnSummaryOutputWriteError is enabled." -f $result.summary_output_error)
             }
             "effective_decision_not_ready_for_beta" {
                 throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)
