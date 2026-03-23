@@ -4156,6 +4156,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Nouvelles gates CI decision autopilot validees en run reel (`FailOnPendingMetricsDecision`, `FailOnNoEffectiveDecision`, `FailOnEffectiveDecisionNotReadyForBeta`) avec cause normalisee via `autopilot_failure_reason`.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 21:44:52 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Telemetrie agregat CI ajoutee dans le resume autopilot (`autopilot_failed`) et docs/handover alignes.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 21:39:17 (UTC) - Codex
 
 - Statut: in_progress
