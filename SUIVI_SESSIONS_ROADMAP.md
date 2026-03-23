@@ -4180,6 +4180,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Export JSON du resume autopilot ajoute (`SummaryOutputPath` + `summary_output_path/written/error`) pour exploitation CI/automation.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 22:06:53 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI de fiabilite export ajoute (`FailOnSummaryOutputWriteError`) + timestamp d'ecriture (`summary_output_written_utc`) et normalisation robuste du chemin de sortie.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 21:39:17 (UTC) - Codex
 
 - Statut: in_progress
