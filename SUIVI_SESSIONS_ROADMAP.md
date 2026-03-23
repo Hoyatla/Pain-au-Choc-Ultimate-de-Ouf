@@ -4221,3 +4221,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Durcissement `FailOnErrorSortingNoiseWarn` complete: echec explicite quand le statut bruit connu est indisponible (`autopilot_failure_reason=error_sorting_noise_status_unavailable`) au lieu d'un passage silencieux. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingNoiseWarn` (KO attendu, `warn`) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingNoiseWarn` (KO attendu, `not_run`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:21:37 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Switch bundle CI `EnableStrictCiFailGates` ajoute pour activer automatiquement l'ensemble des gates strictes + forcer `RunErrorSortingPass` (`strict_ci_fail_gates_enabled=true` dans le resume). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, `autopilot_failure_reason=pending_metrics_decision`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
