@@ -38,6 +38,8 @@ param(
     [switch]$BuildJarBeforeSync,
     [bool]$EnforceFreshCachedCandidateForStartupSync = $true,
     [switch]$FailOnStartupSyncStaleCacheBlock,
+    [switch]$FailOnPendingMetricsDecision,
+    [switch]$FailOnNoEffectiveDecision,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1858,6 +1860,8 @@ $result = [PSCustomObject]@{
         prism_jar_sync_sha256 = $prismJarSyncSha256
         prism_jar_sync_skip_reason = $prismJarSyncSkipReason
         prism_startup_sync_blocked_by_stale_cache = $prismStartupSyncBlockedByStaleCache
+        fail_on_pending_metrics_decision = [bool]$FailOnPendingMetricsDecision
+        fail_on_no_effective_decision = [bool]$FailOnNoEffectiveDecision
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
@@ -1866,6 +1870,7 @@ $result = [PSCustomObject]@{
         effective_readiness_percent = ""
         decision_freshness = "unknown"
         decision_override_reason = ""
+        autopilot_failure_reason = ""
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
         results_path = $ResultsPath
@@ -1920,14 +1925,37 @@ $result = [PSCustomObject]@{
         $result.decision_freshness = "no_candidate"
     }
 
+    if ([bool]$FailOnPendingMetricsDecision -and $result.final_decision -eq "pending_metrics") {
+        $result.autopilot_failure_reason = "pending_metrics_decision"
+    } elseif ([bool]$FailOnNoEffectiveDecision -and [string]::IsNullOrWhiteSpace($result.effective_decision)) {
+        $result.autopilot_failure_reason = "missing_effective_decision"
+    } elseif ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
+        $result.autopilot_failure_reason = "startup_sync_stale_cache_blocked"
+    } else {
+        $result.autopilot_failure_reason = ""
+    }
+
     Reset-LastExitCode
     Write-Host ""
     Write-Host "Roadmap autopilot summary"
     Write-Host "-------------------------"
     $result | Format-List
 
-    if ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
-        throw "Startup Prism sync was blocked because cached candidate is stale."
+    if (-not [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        switch ($result.autopilot_failure_reason) {
+            "pending_metrics_decision" {
+                throw "Final decision is pending_metrics while FailOnPendingMetricsDecision is enabled."
+            }
+            "missing_effective_decision" {
+                throw "Effective decision is empty while FailOnNoEffectiveDecision is enabled."
+            }
+            "startup_sync_stale_cache_blocked" {
+                throw "Startup Prism sync was blocked because cached candidate is stale."
+            }
+            default {
+                throw ("Autopilot failed because {0}" -f $result.autopilot_failure_reason)
+            }
+        }
     }
 } finally {
     Pop-Location
