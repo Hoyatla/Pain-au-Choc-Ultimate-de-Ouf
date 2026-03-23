@@ -4275,3 +4275,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Gate CI `FailOnMissingSummaryOutput` ajoutee pour exiger un artefact resume ecrit (raison `autopilot_failure_reason=missing_summary_output` sinon). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnMissingSummaryOutput` (KO attendu, aucun `SummaryOutputPath`) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnMissingSummaryOutput -SummaryOutputPath .\run\pauc_reports\autopilot_summary_required.json` (OK attendu).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 23:23:25 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI `FailOnErrorSortingReportMissing` ajoutee pour exiger les artefacts error sorting (`error_sorting_report_md_path/json_path` existants) avec reason `autopilot_failure_reason=error_sorting_report_missing` en cas d'absence. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingReportMissing` (OK attendu, rapports presents) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingReportMissing` (KO attendu, `error_sorting_reports_present=false`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
