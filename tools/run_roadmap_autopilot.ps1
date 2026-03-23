@@ -585,6 +585,28 @@ function Get-LatestPreflightKpiStatus {
     }
 }
 
+function Test-IsKpiFailStatus {
+    param(
+        [string]$StatusLabel
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StatusLabel)) {
+        return $false
+    }
+
+    $normalized = $StatusLabel.Trim().ToLowerInvariant()
+    if ($normalized -eq "fail" -or $normalized.StartsWith("fail ")) {
+        return $true
+    }
+    if ($normalized.StartsWith("status=fail")) {
+        return $true
+    }
+    if ($normalized -match "(^|[\s,;])status=fail($|[\s,;])") {
+        return $true
+    }
+    return $false
+}
+
 function Resolve-MetricsPath {
     param(
         [string]$PreferredPath,
@@ -1450,7 +1472,7 @@ try {
                                     } else {
                                         $kpiStatusLabel.Trim().ToLowerInvariant()
                                     }
-                                    if ($kpiStatusNormalized -ne "fail") {
+                                    if (-not (Test-IsKpiFailStatus -StatusLabel $kpiStatusLabel)) {
                                         $shouldRetry = $false
                                         $strictCandidateRetrySuppressedReason = if ([string]::IsNullOrWhiteSpace($kpiStatusLabel)) {
                                             "kpi_status_unavailable"
