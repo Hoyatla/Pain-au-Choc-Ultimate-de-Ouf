@@ -4209,3 +4209,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Nouvelle gate CI autopilot validee pour le bruit connu error sorting (`FailOnErrorSortingNoiseWarn`) avec rejection `autopilot_failure_reason=error_sorting_noise_warn_or_worse` quand `error_sorting_known_noise_status=warn`. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingNoiseWarn` (KO attendu).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:17:10 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI additionnelle `FailOnErrorSortingStatusNotPass` ajoutee et validee pour exiger `error_sorting_status=pass` (`autopilot_failure_reason=error_sorting_status_not_pass` sinon). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingStatusNotPass` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingStatusNotPass` (KO attendu).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
