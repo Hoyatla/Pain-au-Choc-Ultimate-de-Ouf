@@ -529,6 +529,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json -SummaryOutputCompress
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -StrictCiSummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_custom.json
+.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -StrictCiForceSummaryOutputCompress:$false
 ```
 
 Notes autopilot cache/retry:
@@ -549,6 +550,7 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
 - `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/prism/error sorting/summary write/startup stale-cache) et force `RunErrorSortingPass`.
 - En mode `EnableStrictCiFailGates`, si `SummaryOutputPath` n'est pas fourni, un export est force automatiquement vers `StrictCiSummaryOutputPath` (defaut: `.\run\pauc_reports\autopilot_summary_ci_strict.json`).
+- En mode `EnableStrictCiFailGates`, la compression du JSON resume est activee par defaut (`StrictCiForceSummaryOutputCompress=$true`, desactivable).
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
@@ -556,6 +558,7 @@ Notes autopilot cache/retry:
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
 - `strict_ci_fail_gates_enabled` indique si le bundle strict a ete active (`EnableStrictCiFailGates`).
 - `strict_ci_summary_output_defaulted` indique si `SummaryOutputPath` a ete injecte automatiquement par le mode strict (chemin source dans `strict_ci_summary_output_path`).
+- `strict_ci_summary_output_compress_forced` indique si `SummaryOutputCompress` a ete active automatiquement par le mode strict.
 - `active_fail_gate_count` et `active_fail_gates` listent les gates CI actives effectivement evaluees sur le run.
 - `triggered_fail_gate_count` et `triggered_fail_gates` listent les gates qui auraient echoue sur ce run (utile quand plusieurs gates sont en echec mais qu'une seule devient `autopilot_failure_reason`).
 - `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_write_mode`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
