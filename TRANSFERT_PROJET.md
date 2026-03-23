@@ -17,6 +17,8 @@ Ce document donne un etat de passation exploitable immediatement pour un nouveau
 - Durcissements autopilot (maj 2026-03-23):
   - retry strict multi-fenetre conditionne au statut `KPI gate=fail` (desactivable via `-RetryStrictCandidateOnlyOnKpiFailure:$false`).
   - usage du candidate cache (sync Prism + fallback decision) bornable via `-MaxCachedCandidateAgeMinutes` (`0` = desactive).
+  - sync startup Prism bloque quand le cache `ready_for_beta` est stale (desactivable via `-EnforceFreshCachedCandidateForStartupSync:$false`), avec raison explicite `prism_jar_sync_skip_reason=stale_cached_candidate_startup_sync_blocked`.
+  - mode CI strict disponible: `-FailOnStartupSyncStaleCacheBlock` (echec du run si ce blocage stale-cache survient).
   - resume autopilot enrichi: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`, `decision_freshness` detaille en cas de `candidate_build_failed`.
 - Lecture du resultat:
   - utiliser `effective_decision` / `effective_readiness_percent` comme verdict exploitable.
