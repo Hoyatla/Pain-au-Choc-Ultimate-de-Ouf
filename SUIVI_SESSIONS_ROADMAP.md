@@ -4281,3 +4281,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Gate CI `FailOnErrorSortingReportMissing` ajoutee pour exiger les artefacts error sorting (`error_sorting_report_md_path/json_path` existants) avec reason `autopilot_failure_reason=error_sorting_report_missing` en cas d'absence. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingReportMissing` (OK attendu, rapports presents) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingReportMissing` (KO attendu, `error_sorting_reports_present=false`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 23:25:14 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Integrite artefact resume enrichie avec `summary_output_size_bytes` + `summary_output_sha256` (SHA-256 calcule apres ecriture atomique). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary_integrity.json -SummaryOutputCompress` (OK attendu, size/hash renseignes) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\bad<path>\summary.json -FailOnSummaryOutputWriteError` (KO attendu, size=0/hash vide).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
