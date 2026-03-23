@@ -1974,6 +1974,9 @@ $result = [PSCustomObject]@{
                 $result.error_sorting_known_noise_status -eq "fail" -or `
                 $result.error_sorting_known_noise_status -eq "error")) {
         $result.autopilot_failure_reason = "error_sorting_noise_warn_or_worse"
+    } elseif ([bool]$FailOnErrorSortingNoiseWarn -and `
+            $result.error_sorting_known_noise_status -ne "pass") {
+        $result.autopilot_failure_reason = "error_sorting_noise_status_unavailable"
     } elseif ([bool]$FailOnPrismJarSyncNotSynced -and `
             [bool]$AutoSyncModJarToPrism -and `
             $result.prism_jar_sync_status -ne "synced") {
@@ -2045,6 +2048,10 @@ $result = [PSCustomObject]@{
                 throw ("Error sorting known noise status is '{0}' (hits={1}) while FailOnErrorSortingNoiseWarn is enabled." -f `
                         $result.error_sorting_known_noise_status,
                         $result.error_sorting_known_noise_hits)
+            }
+            "error_sorting_noise_status_unavailable" {
+                throw ("Error sorting known noise status is '{0}' while FailOnErrorSortingNoiseWarn is enabled. Ensure RunErrorSortingPass is active and summary output is available." -f `
+                        $result.error_sorting_known_noise_status)
             }
             "prism_jar_sync_not_synced" {
                 throw ("Prism jar sync status is '{0}' (source='{1}', reason='{2}') while FailOnPrismJarSyncNotSynced is enabled." -f `
