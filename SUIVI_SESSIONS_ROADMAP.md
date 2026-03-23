@@ -4287,3 +4287,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Integrite artefact resume enrichie avec `summary_output_size_bytes` + `summary_output_sha256` (SHA-256 calcule apres ecriture atomique). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary_integrity.json -SummaryOutputCompress` (OK attendu, size/hash renseignes) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\bad<path>\summary.json -FailOnSummaryOutputWriteError` (KO attendu, size=0/hash vide).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 23:27:36 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI `FailOnSummaryIntegrityMissing` ajoutee pour exiger un resume complet quand `SummaryOutputPath` est renseigne (`written=true`, `size_bytes>0`, `sha256` non vide), avec reason `autopilot_failure_reason=summary_integrity_missing` sinon. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnSummaryIntegrityMissing -SummaryOutputPath .\run\pauc_reports\autopilot_summary_integrity_gate.json -SummaryOutputCompress` (OK attendu) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnSummaryIntegrityMissing -SummaryOutputPath .\run\pauc_reports\bad<path>\summary.json` (KO attendu).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
