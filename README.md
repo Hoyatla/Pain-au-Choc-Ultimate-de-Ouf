@@ -526,6 +526,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -FailOnPrismJarSyncNotSynced
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json -FailOnSummaryOutputWriteError
+.\tools\run_roadmap_autopilot.ps1 -OneShot -FailOnMissingSummaryOutput -SummaryOutputPath .\run\pauc_reports\autopilot_summary_required.json
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json -SummaryOutputCompress
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -StrictCiSummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_custom.json
@@ -548,13 +549,14 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnErrorSortingStatusNotPass` force un `exit` en erreur si `error_sorting_status` n'est pas `pass` (`not_run`, `missing_output`, `error`, `fail`).
 - Pour CI stricte, `-FailOnErrorSortingNoiseWarn` force un `exit` en erreur si `error_sorting_known_noise_status` vaut `warn`, `fail` ou `error`, et echoue aussi si ce statut n'est pas disponible (`not_run`, `missing_output`).
 - Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
-- `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/prism/error sorting/summary write/startup stale-cache) et force `RunErrorSortingPass`.
+- Pour CI stricte, `-FailOnMissingSummaryOutput` force un `exit` en erreur si aucun JSON resume n'est produit (`summary_output_path` vide ou `summary_output_written=false`).
+- `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/prism/error sorting/summary write/summary required/startup stale-cache) et force `RunErrorSortingPass`.
 - En mode `EnableStrictCiFailGates`, si `SummaryOutputPath` n'est pas fourni, un export est force automatiquement vers `StrictCiSummaryOutputPath` (defaut: `.\run\pauc_reports\autopilot_summary_ci_strict.json`).
 - En mode `EnableStrictCiFailGates`, la compression du JSON resume est activee par defaut (`StrictCiForceSummaryOutputCompress=$true`, desactivable).
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
-- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `latest_metrics_not_fresh`, `missing_effective_decision`, `effective_decision_not_fresh`, `cached_decision_source_used`, `error_sorting_status_not_pass`, `error_sorting_noise_warn_or_worse`, `error_sorting_noise_status_unavailable`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
+- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `latest_metrics_not_fresh`, `missing_effective_decision`, `effective_decision_not_fresh`, `cached_decision_source_used`, `error_sorting_status_not_pass`, `error_sorting_noise_warn_or_worse`, `error_sorting_noise_status_unavailable`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `missing_summary_output`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
 - `strict_ci_fail_gates_enabled` indique si le bundle strict a ete active (`EnableStrictCiFailGates`).
 - `strict_ci_summary_output_defaulted` indique si `SummaryOutputPath` a ete injecte automatiquement par le mode strict (chemin source dans `strict_ci_summary_output_path`).
