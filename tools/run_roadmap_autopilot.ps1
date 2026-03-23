@@ -1094,6 +1094,9 @@ $strictCandidateSuccessAttempt = ""
 $strictCandidateAttemptsSummary = ""
 $strictCandidateLastError = ""
 $strictCandidateRetrySuppressedReason = ""
+$strictCandidateRetryKpiStatus = ""
+$strictCandidateRetryKpiReportPath = ""
+$strictCandidateRetryKpiEvaluated = $false
 
 Push-Location $repoRoot
 try {
@@ -1360,6 +1363,9 @@ try {
                     $strictCandidateLastError = ""
                     $strictCandidateAttemptsSummary = ""
                     $strictCandidateRetrySuppressedReason = ""
+                    $strictCandidateRetryKpiStatus = ""
+                    $strictCandidateRetryKpiReportPath = ""
+                    $strictCandidateRetryKpiEvaluated = $false
                     $attemptSummaryItems = New-Object 'System.Collections.Generic.List[string]'
 
                     $buildExitCode = 1
@@ -1435,6 +1441,9 @@ try {
                                 $shouldRetry = $true
                                 if ($RetryStrictCandidateOnlyOnKpiFailure) {
                                     $kpiProbe = Get-LatestPreflightKpiStatus -ReportsDirPath $ReportsDir
+                                    $strictCandidateRetryKpiEvaluated = $true
+                                    $strictCandidateRetryKpiStatus = [string]$kpiProbe.kpi_status
+                                    $strictCandidateRetryKpiReportPath = [string]$kpiProbe.report_path
                                     $kpiStatusLabel = [string]$kpiProbe.kpi_status
                                     $kpiStatusNormalized = if ([string]::IsNullOrWhiteSpace($kpiStatusLabel)) {
                                         ""
@@ -1731,6 +1740,9 @@ $result = [PSCustomObject]@{
         strict_candidate_attempts_summary = $strictCandidateAttemptsSummary
         strict_candidate_last_error = $strictCandidateLastError
         strict_candidate_retry_suppressed_reason = $strictCandidateRetrySuppressedReason
+        strict_candidate_retry_kpi_evaluated = $strictCandidateRetryKpiEvaluated
+        strict_candidate_retry_kpi_status = $strictCandidateRetryKpiStatus
+        strict_candidate_retry_kpi_report_path = $strictCandidateRetryKpiReportPath
         error_sorting_status = $errorSortingStatus
         error_sorting_blocking_hits = $errorSortingBlockingHits
         error_sorting_known_noise_hits = $errorSortingKnownNoiseHits
