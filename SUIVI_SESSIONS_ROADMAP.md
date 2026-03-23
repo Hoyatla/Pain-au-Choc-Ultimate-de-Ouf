@@ -4203,3 +4203,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:14:48 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Nouvelle gate CI autopilot validee pour le bruit connu error sorting (`FailOnErrorSortingNoiseWarn`) avec rejection `autopilot_failure_reason=error_sorting_noise_warn_or_worse` quand `error_sorting_known_noise_status=warn`. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingNoiseWarn` (KO attendu).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
