@@ -1064,9 +1064,9 @@ $autopilotStatePathResolved = if ([System.IO.Path]::IsPathRooted($AutopilotState
 $summaryOutputPathResolved = if ([string]::IsNullOrWhiteSpace($SummaryOutputPath)) {
     ""
 } elseif ([System.IO.Path]::IsPathRooted($SummaryOutputPath)) {
-    $SummaryOutputPath
+    [System.IO.Path]::GetFullPath($SummaryOutputPath)
 } else {
-    Join-Path $repoRoot $SummaryOutputPath
+    [System.IO.Path]::GetFullPath((Join-Path $repoRoot $SummaryOutputPath))
 }
 $autopilotState = Read-AutopilotState -FilePath $autopilotStatePathResolved
 $lastProcessedMetricsSignature = [string]$autopilotState.last_processed_metrics_signature
@@ -1888,6 +1888,7 @@ $result = [PSCustomObject]@{
         autopilot_failed = $false
         summary_output_path = $summaryOutputPathResolved
         summary_output_written = $false
+        summary_output_written_utc = ""
         summary_output_error = ""
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
@@ -1973,9 +1974,11 @@ $result = [PSCustomObject]@{
             }
             $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $summaryOutputPathResolved -Encoding utf8
             $result.summary_output_written = $true
+            $result.summary_output_written_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             $result.summary_output_error = ""
         } catch {
             $result.summary_output_written = $false
+            $result.summary_output_written_utc = ""
             $result.summary_output_error = $_.Exception.Message
             Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
         }
