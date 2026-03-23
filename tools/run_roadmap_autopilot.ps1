@@ -41,6 +41,7 @@ param(
     [switch]$FailOnPendingMetricsDecision,
     [switch]$FailOnNoEffectiveDecision,
     [switch]$FailOnEffectiveDecisionNotReadyForBeta,
+    [switch]$FailOnCachedDecisionSource,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1864,6 +1865,7 @@ $result = [PSCustomObject]@{
         fail_on_pending_metrics_decision = [bool]$FailOnPendingMetricsDecision
         fail_on_no_effective_decision = [bool]$FailOnNoEffectiveDecision
         fail_on_effective_decision_not_ready_for_beta = [bool]$FailOnEffectiveDecisionNotReadyForBeta
+        fail_on_cached_decision_source = [bool]$FailOnCachedDecisionSource
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
@@ -1932,6 +1934,9 @@ $result = [PSCustomObject]@{
         $result.autopilot_failure_reason = "pending_metrics_decision"
     } elseif ([bool]$FailOnNoEffectiveDecision -and [string]::IsNullOrWhiteSpace($result.effective_decision)) {
         $result.autopilot_failure_reason = "missing_effective_decision"
+    } elseif ([bool]$FailOnCachedDecisionSource -and `
+            ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
+        $result.autopilot_failure_reason = "cached_decision_source_used"
     } elseif ([bool]$FailOnEffectiveDecisionNotReadyForBeta -and `
             -not [string]::IsNullOrWhiteSpace($result.effective_decision) -and `
             $result.effective_decision.Trim().ToLowerInvariant() -ne "ready_for_beta") {
@@ -1956,6 +1961,9 @@ $result = [PSCustomObject]@{
             }
             "missing_effective_decision" {
                 throw "Effective decision is empty while FailOnNoEffectiveDecision is enabled."
+            }
+            "cached_decision_source_used" {
+                throw ("Decision source is '{0}' while FailOnCachedDecisionSource is enabled." -f $result.decision_source)
             }
             "effective_decision_not_ready_for_beta" {
                 throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)
