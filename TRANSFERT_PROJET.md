@@ -8,12 +8,16 @@ Ce document donne un etat de passation exploitable immediatement pour un nouveau
 ## Reprise immediate (ici)
 
 - Candidat strict le plus recent: `run/beta_candidates/beta_candidate_20260323_182403_611` (`not_ready`, `90%`, gate bloquant unique `kpi_gate=fail`).
-- Candidat operationnel courant: `run/beta_candidates/beta_candidate_20260323_183020_036` (`ready_for_beta`, `100%`, verification `pass`).
+- Candidat operationnel courant: `run/beta_candidates/beta_candidate_20260323_185611_951` (`ready_for_beta`, `100%`, verification `pass`).
 - Jar repo + Prism `test` actuellement sync: `sha256=2532F87A3C9C8F08D4FFCF5626F88A96F9C4DA66726BD4C0F32EBA98EF72CDE2`.
 - Commandes de reprise immediates:
   - mode operationnel (recommande): `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns`
   - mode strict complet (exige capture >=240 samples et >=480s): `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -StrictPreflight -StrictReadiness`
   - mode exploratoire KPI assoupli (etat courant): `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -FrameMsP95Max 60 -FrameMsP99Max 400`
+- Durcissements autopilot (maj 2026-03-23):
+  - retry strict multi-fenetre conditionne au statut `KPI gate=fail` (desactivable via `-RetryStrictCandidateOnlyOnKpiFailure:$false`).
+  - usage du candidate cache (sync Prism + fallback decision) bornable via `-MaxCachedCandidateAgeMinutes` (`0` = desactive).
+  - resume autopilot enrichi: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`, `decision_freshness` detaille en cas de `candidate_build_failed`.
 - Lecture du resultat:
   - utiliser `effective_decision` / `effective_readiness_percent` comme verdict exploitable.
   - `final_decision` peut etre `pending_metrics` si session trop courte/stale.

@@ -4113,3 +4113,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 20:43:09 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Autopilot durci sur l'usage du cache candidate (TTL via `MaxCachedCandidateAgeMinutes`) avec telemetrie explicite (`cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`) et reasons de fallback `candidate_build_failed` (`decision_freshness` detaille).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
