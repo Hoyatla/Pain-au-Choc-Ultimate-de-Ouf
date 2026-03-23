@@ -519,6 +519,8 @@ Notes autopilot cache/retry:
 
 - Le retry strict multi-fenetre peut etre force meme hors echec KPI via `-RetryStrictCandidateOnlyOnKpiFailure:$false`.
 - Le fallback/usage du candidate cache peut etre borne dans le temps via `-MaxCachedCandidateAgeMinutes <n>` (`0` = desactive, valeur par defaut).
+- Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
+- En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 
 Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
 
