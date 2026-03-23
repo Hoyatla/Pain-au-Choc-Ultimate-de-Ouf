@@ -533,6 +533,7 @@ Notes autopilot cache/retry:
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
 - `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
+- `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
 
