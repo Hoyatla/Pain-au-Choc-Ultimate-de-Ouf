@@ -4041,3 +4041,15 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Observabilite sync autopilot etendue: resume one-shot expose maintenant `prism_jar_sync_status/source/path/sha256`; validation sur run reel (`status=synced`, `source=candidate`, hash explicitement trace).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 19:33:10 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Autopilot enrichi avec options de fenetre metrics pour build candidate (`-CandidateMetricsWarmupTrimSeconds`, `-CandidateMetricsTailSeconds`, `-CandidateMetricsTailSamples`, `-CandidateUseFullMetricsHistory`) et forwarding valide vers `build_beta_candidate.ps1` (run de validation execute avec state temporaire).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 19:32:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

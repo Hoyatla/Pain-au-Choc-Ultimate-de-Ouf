@@ -22,6 +22,10 @@ param(
     [double]$FrameMsP95Max = 20.0,
     [double]$FrameMsP99Max = 60.0,
     [double]$MsptP95Max = 60.0,
+    [int]$CandidateMetricsWarmupTrimSeconds = 60,
+    [int]$CandidateMetricsTailSeconds = 0,
+    [int]$CandidateMetricsTailSamples = 0,
+    [switch]$CandidateUseFullMetricsHistory,
     [int]$MaxMetricsAgeMinutes = 240,
     [int]$MetricsCodeDriftToleranceMinutes = 2,
     [string]$RequiredTelemetrySchemaVersion = "20260318_shadowv2",
@@ -53,6 +57,15 @@ if ($MinMetricsRowsForCandidatePreflight -lt 1) {
 }
 if ($MinMetricsDurationSecondsForCandidatePreflight -lt 0) {
     throw "MinMetricsDurationSecondsForCandidatePreflight must be >= 0"
+}
+if ($CandidateMetricsWarmupTrimSeconds -lt 0) {
+    throw "CandidateMetricsWarmupTrimSeconds must be >= 0"
+}
+if ($CandidateMetricsTailSeconds -lt 0) {
+    throw "CandidateMetricsTailSeconds must be >= 0"
+}
+if ($CandidateMetricsTailSamples -lt 0) {
+    throw "CandidateMetricsTailSamples must be >= 0"
 }
 if ($MaxMetricsAgeMinutes -lt 0) {
     throw "MaxMetricsAgeMinutes must be >= 0"
@@ -1131,9 +1144,19 @@ try {
                         MaxMetricsAgeMinutes = $MaxMetricsAgeMinutes
                         MetricsCodeDriftToleranceMinutes = $MetricsCodeDriftToleranceMinutes
                         RequiredTelemetrySchemaVersion = $RequiredTelemetrySchemaVersion
+                        MetricsWarmupTrimSeconds = $CandidateMetricsWarmupTrimSeconds
                         FrameMsP95Max = $FrameMsP95Max
                         FrameMsP99Max = $FrameMsP99Max
                         MsptP95Max = $MsptP95Max
+                    }
+                    if ($CandidateUseFullMetricsHistory) {
+                        $candidateArgs.UseFullMetricsHistory = $true
+                    }
+                    if ($CandidateMetricsTailSeconds -gt 0) {
+                        $candidateArgs.MetricsTailSeconds = $CandidateMetricsTailSeconds
+                    }
+                    if ($CandidateMetricsTailSamples -gt 0) {
+                        $candidateArgs.MetricsTailSamples = $CandidateMetricsTailSamples
                     }
                     if ($DisableAutoMetricsDiscovery) {
                         $candidateArgs.DisableAutoMetricsDiscovery = $true
