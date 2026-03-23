@@ -505,6 +505,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -FailOnErrorSortingBlockingPatterns
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -ErrorSortingNoiseWarnHitsTotal 500 -ErrorSortingNoiseFailHitsTotal 2000
+.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -FailOnErrorSortingNoiseWarn
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -ErrorSortingNoiseWarnHitsTotal 100 -ErrorSortingNoiseFailHitsTotal 300 -FailOnErrorSortingNoiseFail
 .\tools\run_roadmap_autopilot.ps1 -OneShot -CandidateMetricsTailSeconds 300 -CandidateMetricsWarmupTrimSeconds 30
 .\tools\run_roadmap_autopilot.ps1 -OneShot -CandidateUseFullMetricsHistory
@@ -536,11 +537,12 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnEffectiveDecisionNotReadyForBeta` force un `exit` en erreur si `effective_decision` est renseignee mais differente de `ready_for_beta`.
 - Pour CI stricte, `-FailOnCachedDecisionSource` force un `exit` en erreur si `decision_source` vient du cache (`cached_candidate` ou `cached_candidate_fallback`).
 - Pour CI stricte, `-FailOnPrismJarSyncNotSynced` force un `exit` en erreur si `prism_jar_sync_status` n'est pas `synced`.
+- Pour CI stricte, `-FailOnErrorSortingNoiseWarn` force un `exit` en erreur si `error_sorting_known_noise_status` vaut `warn`, `fail` ou `error`.
 - Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
-- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `cached_decision_source_used`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
+- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `cached_decision_source_used`, `error_sorting_noise_warn_or_worse`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
 - `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
