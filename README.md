@@ -558,7 +558,8 @@ Notes autopilot cache/retry:
 - `strict_ci_summary_output_defaulted` indique si `SummaryOutputPath` a ete injecte automatiquement par le mode strict (chemin source dans `strict_ci_summary_output_path`).
 - `active_fail_gate_count` et `active_fail_gates` listent les gates CI actives effectivement evaluees sur le run.
 - `triggered_fail_gate_count` et `triggered_fail_gates` listent les gates qui auraient echoue sur ce run (utile quand plusieurs gates sont en echec mais qu'une seule devient `autopilot_failure_reason`).
-- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
+- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_write_mode`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
+- Le resume JSON est ecrit en mode atomique (`summary_output_write_mode=atomic`, ecriture temp + replace) pour eviter les fichiers partiels en CI.
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
