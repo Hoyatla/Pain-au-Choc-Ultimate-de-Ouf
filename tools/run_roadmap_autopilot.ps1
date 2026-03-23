@@ -1092,7 +1092,13 @@ $autopilotStatePathResolved = if ([System.IO.Path]::IsPathRooted($AutopilotState
 $summaryOutputPathResolved = if ([string]::IsNullOrWhiteSpace($SummaryOutputPath)) {
     ""
 } else {
-    $summaryPathCandidate = if ([System.IO.Path]::IsPathRooted($SummaryOutputPath)) {
+    $summaryPathIsRooted = $false
+    try {
+        $summaryPathIsRooted = [System.IO.Path]::IsPathRooted($SummaryOutputPath)
+    } catch {
+        $summaryPathIsRooted = $false
+    }
+    $summaryPathCandidate = if ($summaryPathIsRooted) {
         $SummaryOutputPath
     } else {
         Join-Path $repoRoot $SummaryOutputPath
@@ -1957,6 +1963,7 @@ $result = [PSCustomObject]@{
         autopilot_failed = $false
         summary_output_path = $summaryOutputPathResolved
         summary_output_compressed = [bool]$SummaryOutputCompress
+        summary_output_write_mode = "atomic"
         summary_output_written = $false
         summary_output_written_utc = ""
         summary_output_error = ""
@@ -2098,25 +2105,32 @@ $result = [PSCustomObject]@{
     $result.autopilot_failed = -not [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)
 
     if (-not [string]::IsNullOrWhiteSpace($summaryOutputPathResolved)) {
+        $summaryOutputTempPath = ""
         try {
             $summaryOutputDir = Split-Path -Path $summaryOutputPathResolved -Parent
             if (-not [string]::IsNullOrWhiteSpace($summaryOutputDir)) {
                 New-Item -ItemType Directory -Path $summaryOutputDir -Force | Out-Null
             }
-            $result.summary_output_written = $true
-            $result.summary_output_written_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            $result.summary_output_error = ""
             $summaryJson = if ($SummaryOutputCompress) {
                 $result | ConvertTo-Json -Depth 12 -Compress
             } else {
                 $result | ConvertTo-Json -Depth 12
             }
-            $summaryJson | Set-Content -LiteralPath $summaryOutputPathResolved -Encoding utf8
+            $summaryOutputTempPath = "{0}.tmp.{1}" -f $summaryOutputPathResolved, ([guid]::NewGuid().ToString("N"))
+            $summaryJson | Set-Content -LiteralPath $summaryOutputTempPath -Encoding utf8
+            Move-Item -LiteralPath $summaryOutputTempPath -Destination $summaryOutputPathResolved -Force
+            $result.summary_output_written = $true
+            $result.summary_output_written_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $result.summary_output_error = ""
         } catch {
             $result.summary_output_written = $false
             $result.summary_output_written_utc = ""
             $result.summary_output_error = $_.Exception.Message
             Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
+        } finally {
+            if (-not [string]::IsNullOrWhiteSpace($summaryOutputTempPath) -and (Test-Path -LiteralPath $summaryOutputTempPath)) {
+                Remove-Item -LiteralPath $summaryOutputTempPath -Force -ErrorAction SilentlyContinue
+            }
         }
     }
     if ([bool]$FailOnSummaryOutputWriteError -and `
