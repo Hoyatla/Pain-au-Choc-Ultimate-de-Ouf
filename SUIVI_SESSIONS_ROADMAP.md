@@ -4149,3 +4149,15 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Option CI ajoutee pour echec explicite sur blocage stale-cache startup (`FailOnStartupSyncStaleCacheBlock`) + docs README/TRANSFERT mises a jour.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 21:39:17 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 21:39:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

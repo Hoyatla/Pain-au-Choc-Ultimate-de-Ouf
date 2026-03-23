@@ -40,6 +40,7 @@ param(
     [switch]$FailOnStartupSyncStaleCacheBlock,
     [switch]$FailOnPendingMetricsDecision,
     [switch]$FailOnNoEffectiveDecision,
+    [switch]$FailOnEffectiveDecisionNotReadyForBeta,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1862,6 +1863,7 @@ $result = [PSCustomObject]@{
         prism_startup_sync_blocked_by_stale_cache = $prismStartupSyncBlockedByStaleCache
         fail_on_pending_metrics_decision = [bool]$FailOnPendingMetricsDecision
         fail_on_no_effective_decision = [bool]$FailOnNoEffectiveDecision
+        fail_on_effective_decision_not_ready_for_beta = [bool]$FailOnEffectiveDecisionNotReadyForBeta
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
@@ -1929,6 +1931,10 @@ $result = [PSCustomObject]@{
         $result.autopilot_failure_reason = "pending_metrics_decision"
     } elseif ([bool]$FailOnNoEffectiveDecision -and [string]::IsNullOrWhiteSpace($result.effective_decision)) {
         $result.autopilot_failure_reason = "missing_effective_decision"
+    } elseif ([bool]$FailOnEffectiveDecisionNotReadyForBeta -and `
+            -not [string]::IsNullOrWhiteSpace($result.effective_decision) -and `
+            $result.effective_decision.Trim().ToLowerInvariant() -ne "ready_for_beta") {
+        $result.autopilot_failure_reason = "effective_decision_not_ready_for_beta"
     } elseif ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
         $result.autopilot_failure_reason = "startup_sync_stale_cache_blocked"
     } else {
@@ -1948,6 +1954,9 @@ $result = [PSCustomObject]@{
             }
             "missing_effective_decision" {
                 throw "Effective decision is empty while FailOnNoEffectiveDecision is enabled."
+            }
+            "effective_decision_not_ready_for_beta" {
+                throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)
             }
             "startup_sync_stale_cache_blocked" {
                 throw "Startup Prism sync was blocked because cached candidate is stale."
