@@ -36,6 +36,7 @@ param(
     [string]$RequiredTelemetrySchemaVersion = "20260318_shadowv2",
     [bool]$AutoSyncModJarToPrism = $true,
     [switch]$BuildJarBeforeSync,
+    [bool]$EnforceFreshCachedCandidateForStartupSync = $true,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1132,6 +1133,7 @@ $prismJarSyncStatus = if ($AutoSyncModJarToPrism) { "not_run" } else { "disabled
 $prismJarSyncSource = ""
 $prismJarSyncPath = ""
 $prismJarSyncSha256 = ""
+$prismJarSyncSkipReason = ""
 $strictCandidateAttemptCount = 0
 $strictCandidateRetryUsed = $false
 $strictCandidateSuccessAttempt = ""
@@ -1146,12 +1148,33 @@ Push-Location $repoRoot
 try {
     if ($AutoSyncModJarToPrism) {
         $startupSyncResult = $null
+        $startupSyncBlockedByStaleCachedCandidate = $false
         $cachedDecisionLabel = if ([string]::IsNullOrWhiteSpace($cachedCandidateDecision)) {
             ""
         } else {
             $cachedCandidateDecision.Trim().ToLowerInvariant()
         }
-        if (-not $BuildJarBeforeSync -and `
+
+        if ([bool]$EnforceFreshCachedCandidateForStartupSync -and `
+                -not $BuildJarBeforeSync -and `
+                $cachedDecisionLabel -eq "ready_for_beta" -and `
+                -not [string]::IsNullOrWhiteSpace($cachedCandidateDecision) -and `
+                -not $cachedCandidateIsFresh -and `
+                $MaxCachedCandidateAgeMinutes -gt 0) {
+            $startupSyncBlockedByStaleCachedCandidate = $true
+            $prismJarSyncStatus = "skipped"
+            $prismJarSyncSource = "none"
+            $prismJarSyncPath = ""
+            $prismJarSyncSha256 = ""
+            $prismJarSyncSkipReason = "stale_cached_candidate_startup_sync_blocked"
+            $cachedAgeLabel = if ($null -eq $cachedCandidateAgeMinutes) { "unknown" } else { [string]$cachedCandidateAgeMinutes }
+            Write-Warning ("[Autopilot] Startup Prism sync skipped: cached ready candidate is stale (age_minutes={0}, max_age_minutes={1})." -f `
+                    $cachedAgeLabel,
+                    $MaxCachedCandidateAgeMinutes)
+        }
+
+        if (-not $startupSyncBlockedByStaleCachedCandidate -and `
+                -not $BuildJarBeforeSync -and `
                 $cachedDecisionLabel -eq "ready_for_beta" -and `
                 $cachedCandidateIsFresh -and `
                 -not [string]::IsNullOrWhiteSpace($cachedCandidateDir)) {
@@ -1162,14 +1185,14 @@ try {
                 -PrismInstanceName $InstanceName
         }
         $startupJarSynced = ($null -ne $startupSyncResult -and [bool]$startupSyncResult.synced)
-        if (-not $startupJarSynced) {
+        if (-not $startupSyncBlockedByStaleCachedCandidate -and -not $startupJarSynced) {
             $startupSyncResult = Sync-LatestModJarToPrism `
                 -RepoRoot $repoRoot `
                 -PrismRootPath $PrismRoot `
                 -PrismInstanceName $InstanceName `
                 -BuildJar:$BuildJarBeforeSync
         }
-        if ($null -ne $startupSyncResult) {
+        if (-not $startupSyncBlockedByStaleCachedCandidate -and $null -ne $startupSyncResult) {
             $prismJarSyncStatus = if ([bool]$startupSyncResult.synced) { "synced" } else { "skipped" }
             $prismJarSyncSource = [string]$startupSyncResult.source
             $prismJarSyncPath = [string]$startupSyncResult.jar_path
@@ -1817,6 +1840,8 @@ $result = [PSCustomObject]@{
         prism_jar_sync_source = $prismJarSyncSource
         prism_jar_sync_path = $prismJarSyncPath
         prism_jar_sync_sha256 = $prismJarSyncSha256
+        prism_jar_sync_skip_reason = $prismJarSyncSkipReason
+        enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
         effective_decision = ""
