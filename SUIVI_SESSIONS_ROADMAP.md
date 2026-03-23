@@ -4071,3 +4071,21 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 20:22:58 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 20:23:20 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 20:24:27 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Retry multi-fenetre strict valide en run reel (`strict_candidate_attempt_count=2`, `strict_candidate_retry_used=true`, `strict_candidate_attempts_summary=primary fail + full_history_retry fail`) avant conclusion `candidate_build_failed`; fallback decision cachee maintenu operationnel (`decision_source=cached_candidate_fallback`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

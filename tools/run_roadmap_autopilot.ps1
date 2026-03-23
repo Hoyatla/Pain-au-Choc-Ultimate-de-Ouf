@@ -27,6 +27,8 @@ param(
     [int]$CandidateMetricsTailSamples = 0,
     [switch]$CandidateUseFullMetricsHistory,
     [bool]$PreferCachedDecisionOnBuildFailure = $true,
+    [bool]$EnableStrictCandidateWindowRetry = $true,
+    [int]$StrictCandidateRetryTailSeconds = 600,
     [int]$MaxMetricsAgeMinutes = 240,
     [int]$MetricsCodeDriftToleranceMinutes = 2,
     [string]$RequiredTelemetrySchemaVersion = "20260318_shadowv2",
@@ -67,6 +69,9 @@ if ($CandidateMetricsTailSeconds -lt 0) {
 }
 if ($CandidateMetricsTailSamples -lt 0) {
     throw "CandidateMetricsTailSamples must be >= 0"
+}
+if ($StrictCandidateRetryTailSeconds -lt 0) {
+    throw "StrictCandidateRetryTailSeconds must be >= 0"
 }
 if ($MaxMetricsAgeMinutes -lt 0) {
     throw "MaxMetricsAgeMinutes must be >= 0"
@@ -504,6 +509,39 @@ function Sync-CandidateModJarToPrism {
     }
 }
 
+function Add-CandidateBuildAttemptConfig {
+    param(
+        [System.Collections.Generic.List[object]]$Configs,
+        [System.Collections.Generic.HashSet[string]]$Keys,
+        [string]$Name,
+        [bool]$UseFullMetricsHistory,
+        [int]$TailSeconds,
+        [int]$TailSamples,
+        [int]$WarmupTrimSeconds
+    )
+
+    if ($null -eq $Configs -or $null -eq $Keys) {
+        return
+    }
+
+    $attemptKey = ("full={0}|tail_s={1}|tail_n={2}|warmup={3}" -f `
+            [bool]$UseFullMetricsHistory,
+            [int]$TailSeconds,
+            [int]$TailSamples,
+            [int]$WarmupTrimSeconds)
+    if (-not $Keys.Add($attemptKey)) {
+        return
+    }
+
+    $Configs.Add([PSCustomObject]@{
+            name = $Name
+            use_full_metrics_history = [bool]$UseFullMetricsHistory
+            tail_seconds = [int]$TailSeconds
+            tail_samples = [int]$TailSamples
+            warmup_trim_seconds = [int]$WarmupTrimSeconds
+        }) | Out-Null
+}
+
 function Resolve-MetricsPath {
     param(
         [string]$PreferredPath,
@@ -938,6 +976,11 @@ $prismJarSyncStatus = if ($AutoSyncModJarToPrism) { "not_run" } else { "disabled
 $prismJarSyncSource = ""
 $prismJarSyncPath = ""
 $prismJarSyncSha256 = ""
+$strictCandidateAttemptCount = 0
+$strictCandidateRetryUsed = $false
+$strictCandidateSuccessAttempt = ""
+$strictCandidateAttemptsSummary = ""
+$strictCandidateLastError = ""
 
 Push-Location $repoRoot
 try {
@@ -1132,7 +1175,7 @@ try {
                     $finalDecision = "pending_metrics"
                 } else {
                     Write-Host "[Autopilot] Campaign complete. Running strict beta candidate pipeline."
-                    $candidateArgs = @{
+                    $candidateArgsBase = @{
                         CandidateRoot = $CandidateRoot
                         ReportsDir = $ReportsDir
                         MetricsPath = $MetricsPath
@@ -1145,27 +1188,50 @@ try {
                         MaxMetricsAgeMinutes = $MaxMetricsAgeMinutes
                         MetricsCodeDriftToleranceMinutes = $MetricsCodeDriftToleranceMinutes
                         RequiredTelemetrySchemaVersion = $RequiredTelemetrySchemaVersion
-                        MetricsWarmupTrimSeconds = $CandidateMetricsWarmupTrimSeconds
                         FrameMsP95Max = $FrameMsP95Max
                         FrameMsP99Max = $FrameMsP99Max
                         MsptP95Max = $MsptP95Max
                     }
-                    if ($CandidateUseFullMetricsHistory) {
-                        $candidateArgs.UseFullMetricsHistory = $true
-                    }
-                    if ($CandidateMetricsTailSeconds -gt 0) {
-                        $candidateArgs.MetricsTailSeconds = $CandidateMetricsTailSeconds
-                    }
-                    if ($CandidateMetricsTailSamples -gt 0) {
-                        $candidateArgs.MetricsTailSamples = $CandidateMetricsTailSamples
-                    }
                     if ($DisableAutoMetricsDiscovery) {
-                        $candidateArgs.DisableAutoMetricsDiscovery = $true
+                        $candidateArgsBase.DisableAutoMetricsDiscovery = $true
                     }
                     if ($SyncTelemetryToRepo) {
-                        $candidateArgs.SyncTelemetryToRepo = $true
-                        $candidateArgs.TelemetrySyncDestination = $TelemetrySyncDestination
-                        $candidateArgs.SyncTelemetryCaptureState = $SyncTelemetryCaptureState
+                        $candidateArgsBase.SyncTelemetryToRepo = $true
+                        $candidateArgsBase.TelemetrySyncDestination = $TelemetrySyncDestination
+                        $candidateArgsBase.SyncTelemetryCaptureState = $SyncTelemetryCaptureState
+                    }
+
+                    $attemptConfigs = New-Object 'System.Collections.Generic.List[object]'
+                    $attemptKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+                    Add-CandidateBuildAttemptConfig `
+                        -Configs $attemptConfigs `
+                        -Keys $attemptKeys `
+                        -Name "primary" `
+                        -UseFullMetricsHistory:([bool]$CandidateUseFullMetricsHistory) `
+                        -TailSeconds $CandidateMetricsTailSeconds `
+                        -TailSamples $CandidateMetricsTailSamples `
+                        -WarmupTrimSeconds $CandidateMetricsWarmupTrimSeconds
+
+                    if ($EnableStrictCandidateWindowRetry) {
+                        if (-not [bool]$CandidateUseFullMetricsHistory) {
+                            Add-CandidateBuildAttemptConfig `
+                                -Configs $attemptConfigs `
+                                -Keys $attemptKeys `
+                                -Name "full_history_retry" `
+                                -UseFullMetricsHistory:$true `
+                                -TailSeconds 0 `
+                                -TailSamples 0 `
+                                -WarmupTrimSeconds $CandidateMetricsWarmupTrimSeconds
+                        } elseif ($StrictCandidateRetryTailSeconds -gt 0) {
+                            Add-CandidateBuildAttemptConfig `
+                                -Configs $attemptConfigs `
+                                -Keys $attemptKeys `
+                                -Name "tail_retry" `
+                                -UseFullMetricsHistory:$false `
+                                -TailSeconds $StrictCandidateRetryTailSeconds `
+                                -TailSamples 0 `
+                                -WarmupTrimSeconds $CandidateMetricsWarmupTrimSeconds
+                        }
                     }
 
                     $existingCandidates = @(Get-ChildItem -LiteralPath $CandidateRoot -Directory -Filter "beta_candidate_*" -ErrorAction SilentlyContinue)
@@ -1174,37 +1240,94 @@ try {
                         [void]$existingCandidateSet.Add([System.IO.Path]::GetFullPath($candidate.FullName))
                     }
 
-                    $buildExitCode = 0
-                    try {
-                        Reset-LastExitCode
-                        & $buildCandidateScript @candidateArgs
-                        $buildExitCode = Get-LastExitCodeOrZero
-                    } catch {
-                        $buildExitCode = if ((Get-LastExitCodeOrZero) -eq 0) { 1 } else { Get-LastExitCodeOrZero }
-                        Write-Warning ("Strict beta candidate pipeline failed: {0}" -f $_.Exception.Message)
+                    $strictCandidateAttemptCount = 0
+                    $strictCandidateRetryUsed = $false
+                    $strictCandidateSuccessAttempt = ""
+                    $strictCandidateLastError = ""
+                    $strictCandidateAttemptsSummary = ""
+                    $attemptSummaryItems = New-Object 'System.Collections.Generic.List[string]'
+
+                    $buildExitCode = 1
+                    $candidateForDecision = $null
+                    foreach ($attemptConfig in $attemptConfigs) {
+                        $strictCandidateAttemptCount++
+                        $attemptArgs = @{}
+                        foreach ($arg in $candidateArgsBase.GetEnumerator()) {
+                            $attemptArgs[$arg.Key] = $arg.Value
+                        }
+
+                        $attemptArgs.MetricsWarmupTrimSeconds = [int]$attemptConfig.warmup_trim_seconds
+                        if ([bool]$attemptConfig.use_full_metrics_history) {
+                            $attemptArgs.UseFullMetricsHistory = $true
+                        }
+                        if ([int]$attemptConfig.tail_seconds -gt 0) {
+                            $attemptArgs.MetricsTailSeconds = [int]$attemptConfig.tail_seconds
+                        }
+                        if ([int]$attemptConfig.tail_samples -gt 0) {
+                            $attemptArgs.MetricsTailSamples = [int]$attemptConfig.tail_samples
+                        }
+
+                        $attemptName = [string]$attemptConfig.name
+                        Write-Host ("[Autopilot] Strict candidate attempt {0}/{1}: profile={2}, full_history={3}, tail_seconds={4}, tail_samples={5}, warmup_trim={6}" -f `
+                                $strictCandidateAttemptCount,
+                                $attemptConfigs.Count,
+                                $attemptName,
+                                [bool]$attemptConfig.use_full_metrics_history,
+                                [int]$attemptConfig.tail_seconds,
+                                [int]$attemptConfig.tail_samples,
+                                [int]$attemptConfig.warmup_trim_seconds)
+
+                        $attemptExitCode = 0
+                        $attemptErrorMessage = ""
+                        try {
+                            Reset-LastExitCode
+                            & $buildCandidateScript @attemptArgs
+                            $attemptExitCode = Get-LastExitCodeOrZero
+                        } catch {
+                            $attemptExitCode = if ((Get-LastExitCodeOrZero) -eq 0) { 1 } else { Get-LastExitCodeOrZero }
+                            $attemptErrorMessage = $_.Exception.Message
+                            Write-Warning ("Strict beta candidate attempt {0} failed: {1}" -f $attemptName, $attemptErrorMessage)
+                        }
+
+                        if ($attemptExitCode -eq 0) {
+                            $buildExitCode = 0
+                            $strictCandidateSuccessAttempt = $attemptName
+                            $attemptSummaryItems.Add(("{0}:success(exit=0)" -f $attemptName)) | Out-Null
+
+                            $allCandidates = @(Get-ChildItem -LiteralPath $CandidateRoot -Directory -Filter "beta_candidate_*" -ErrorAction SilentlyContinue |
+                                    Sort-Object Name -Descending)
+                            $newCandidate = $null
+                            foreach ($candidate in $allCandidates) {
+                                $candidateKey = [System.IO.Path]::GetFullPath($candidate.FullName)
+                                if (-not $existingCandidateSet.Contains($candidateKey)) {
+                                    $newCandidate = $candidate
+                                    break
+                                }
+                            }
+
+                            if ($null -ne $newCandidate) {
+                                $candidateForDecision = $newCandidate
+                            } elseif ($allCandidates.Count -gt 0) {
+                                $candidateForDecision = $allCandidates[0]
+                                Write-Warning "[Autopilot] No new beta candidate detected after successful build. Falling back to latest candidate."
+                            }
+                            break
+                        } else {
+                            $buildExitCode = $attemptExitCode
+                            $strictCandidateLastError = $attemptErrorMessage
+                            $attemptSummaryItems.Add(("{0}:failed(exit={1})" -f $attemptName, $attemptExitCode)) | Out-Null
+                            if ($strictCandidateAttemptCount -lt $attemptConfigs.Count) {
+                                Write-Warning "[Autopilot] Strict candidate attempt failed. Retrying with alternate metrics window."
+                            }
+                        }
+                    }
+                    $strictCandidateRetryUsed = ($strictCandidateAttemptCount -gt 1)
+                    if ($attemptSummaryItems.Count -gt 0) {
+                        $strictCandidateAttemptsSummary = [string]::Join("; ", $attemptSummaryItems.ToArray())
+                    } else {
+                        $strictCandidateAttemptsSummary = ""
                     }
                     $lastAction = "beta_candidate_attempt"
-
-                    $allCandidates = @(Get-ChildItem -LiteralPath $CandidateRoot -Directory -Filter "beta_candidate_*" -ErrorAction SilentlyContinue |
-                            Sort-Object Name -Descending)
-                    $newCandidate = $null
-                    foreach ($candidate in $allCandidates) {
-                        $candidateKey = [System.IO.Path]::GetFullPath($candidate.FullName)
-                        if (-not $existingCandidateSet.Contains($candidateKey)) {
-                            $newCandidate = $candidate
-                            break
-                        }
-                    }
-
-                    $candidateForDecision = $null
-                    if ($buildExitCode -eq 0) {
-                        if ($null -ne $newCandidate) {
-                            $candidateForDecision = $newCandidate
-                        } elseif ($allCandidates.Count -gt 0) {
-                            $candidateForDecision = $allCandidates[0]
-                            Write-Warning "[Autopilot] No new beta candidate detected after successful build. Falling back to latest candidate."
-                        }
-                    }
 
                     if ($null -ne $candidateForDecision) {
                         $finalCandidateDir = $candidateForDecision.FullName
@@ -1225,7 +1348,8 @@ try {
                         $finalCandidateDir = ""
                         $finalDecision = "candidate_build_failed"
                         $finalReadiness = ""
-                        Write-Host "[Autopilot] Strict candidate build failed. Candidate decision is unavailable for this run."
+                        $attemptsLabel = if ($strictCandidateAttemptCount -gt 0) { $strictCandidateAttemptCount } else { 1 }
+                        Write-Host ("[Autopilot] Strict candidate build failed after {0} attempt(s). Candidate decision is unavailable for this run." -f $attemptsLabel)
                     }
 
                     $lastProcessedMetricsSignature = $currentMetricsSignature
@@ -1436,6 +1560,13 @@ $result = [PSCustomObject]@{
         candidate_metrics_tail_seconds = $CandidateMetricsTailSeconds
         candidate_metrics_tail_samples = $CandidateMetricsTailSamples
         candidate_use_full_metrics_history = [bool]$CandidateUseFullMetricsHistory
+        enable_strict_candidate_window_retry = [bool]$EnableStrictCandidateWindowRetry
+        strict_candidate_retry_tail_seconds = $StrictCandidateRetryTailSeconds
+        strict_candidate_attempt_count = $strictCandidateAttemptCount
+        strict_candidate_retry_used = $strictCandidateRetryUsed
+        strict_candidate_success_attempt = $strictCandidateSuccessAttempt
+        strict_candidate_attempts_summary = $strictCandidateAttemptsSummary
+        strict_candidate_last_error = $strictCandidateLastError
         error_sorting_status = $errorSortingStatus
         error_sorting_blocking_hits = $errorSortingBlockingHits
         error_sorting_known_noise_hits = $errorSortingKnownNoiseHits

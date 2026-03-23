@@ -509,6 +509,8 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -CandidateMetricsTailSeconds 300 -CandidateMetricsWarmupTrimSeconds 30
 .\tools\run_roadmap_autopilot.ps1 -OneShot -CandidateUseFullMetricsHistory
 .\tools\run_roadmap_autopilot.ps1 -OneShot -PreferCachedDecisionOnBuildFailure:$false
+.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCandidateWindowRetry:$false
+.\tools\run_roadmap_autopilot.ps1 -OneShot -StrictCandidateRetryTailSeconds 900
 ```
 
 Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
