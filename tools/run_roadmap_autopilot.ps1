@@ -52,6 +52,7 @@ param(
     [switch]$FailOnSummaryOutputWriteError,
     [switch]$FailOnMissingSummaryOutput,
     [switch]$FailOnSummaryIntegrityMissing,
+    [switch]$FailOnGitDirtyWorktree,
     [switch]$EnableStrictCiFailGates,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
@@ -131,6 +132,7 @@ if ($EnableStrictCiFailGates) {
     $FailOnSummaryOutputWriteError = $true
     $FailOnMissingSummaryOutput = $true
     $FailOnSummaryIntegrityMissing = $true
+    $FailOnGitDirtyWorktree = $true
     $FailOnErrorSortingReportMissing = $true
     $FailOnErrorSortingStatusNotPass = $true
     $FailOnErrorSortingNoiseWarn = $true
@@ -155,6 +157,72 @@ function Get-LastExitCodeOrZero {
 
 function Reset-LastExitCode {
     Set-Variable -Name LASTEXITCODE -Scope Global -Value 0
+}
+
+function Get-GitContext {
+    param(
+        [string]$RepoRootPath
+    )
+
+    $result = [PSCustomObject]@{
+        available = $false
+        error = ""
+        branch = ""
+        commit = ""
+        is_dirty = $false
+        status_entry_count = 0
+    }
+
+    try {
+        $gitCommand = Get-Command git -ErrorAction SilentlyContinue
+        if ($null -eq $gitCommand) {
+            $result.error = "git_not_found"
+            return $result
+        }
+
+        Reset-LastExitCode
+        $insideOutput = & git -C $RepoRootPath rev-parse --is-inside-work-tree 2>$null
+        if ((Get-LastExitCodeOrZero) -ne 0) {
+            $result.error = "not_git_repo"
+            Reset-LastExitCode
+            return $result
+        }
+        $insideValue = [string]($insideOutput | Select-Object -Last 1)
+        if ($insideValue.Trim().ToLowerInvariant() -ne "true") {
+            $result.error = "not_git_repo"
+            Reset-LastExitCode
+            return $result
+        }
+
+        Reset-LastExitCode
+        $branchOutput = & git -C $RepoRootPath rev-parse --abbrev-ref HEAD 2>$null
+        if ((Get-LastExitCodeOrZero) -eq 0) {
+            $result.branch = [string]($branchOutput | Select-Object -Last 1)
+        }
+
+        Reset-LastExitCode
+        $commitOutput = & git -C $RepoRootPath rev-parse HEAD 2>$null
+        if ((Get-LastExitCodeOrZero) -eq 0) {
+            $result.commit = [string]($commitOutput | Select-Object -Last 1)
+        }
+
+        Reset-LastExitCode
+        $statusOutput = & git -C $RepoRootPath status --porcelain 2>$null
+        if ((Get-LastExitCodeOrZero) -ne 0) {
+            $statusOutput = @()
+        }
+        $statusEntries = @($statusOutput | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        $result.status_entry_count = $statusEntries.Count
+        $result.is_dirty = ($statusEntries.Count -gt 0)
+        $result.available = $true
+        $result.error = ""
+        return $result
+    } catch {
+        $result.error = $_.Exception.Message
+        return $result
+    } finally {
+        Reset-LastExitCode
+    }
 }
 
 function Resolve-ScriptPath {
@@ -1874,6 +1942,13 @@ $latestMetricsFreshnessStatus = [string]$latestMetricsFreshness.status
 $errorSortingReportMdExists = -not [string]::IsNullOrWhiteSpace($errorSortingReportMdPath) -and (Test-Path -LiteralPath $errorSortingReportMdPath -PathType Leaf)
 $errorSortingReportJsonExists = -not [string]::IsNullOrWhiteSpace($errorSortingReportJsonPath) -and (Test-Path -LiteralPath $errorSortingReportJsonPath -PathType Leaf)
 $errorSortingReportsPresent = ($errorSortingReportMdExists -and $errorSortingReportJsonExists)
+$gitContext = Get-GitContext -RepoRootPath $repoRoot
+$gitContextAvailable = [bool]$gitContext.available
+$gitContextError = [string]$gitContext.error
+$gitBranch = [string]$gitContext.branch
+$gitCommit = [string]$gitContext.commit
+$gitIsDirty = [bool]$gitContext.is_dirty
+$gitStatusEntryCount = [int]$gitContext.status_entry_count
 $activeFailGates = New-Object System.Collections.Generic.List[string]
 if ([bool]$FailOnPendingMetricsDecision) { [void]$activeFailGates.Add("pending_metrics_decision") }
 if ([bool]$FailOnLatestMetricsNotFresh) { [void]$activeFailGates.Add("latest_metrics_not_fresh") }
@@ -1885,6 +1960,7 @@ if ([bool]$FailOnPrismJarSyncNotSynced) { [void]$activeFailGates.Add("prism_jar_
 if ([bool]$FailOnSummaryOutputWriteError) { [void]$activeFailGates.Add("summary_output_write_error") }
 if ([bool]$FailOnMissingSummaryOutput) { [void]$activeFailGates.Add("missing_summary_output") }
 if ([bool]$FailOnSummaryIntegrityMissing) { [void]$activeFailGates.Add("summary_integrity_missing") }
+if ([bool]$FailOnGitDirtyWorktree) { [void]$activeFailGates.Add("git_dirty_worktree") }
 if ([bool]$FailOnStartupSyncStaleCacheBlock) { [void]$activeFailGates.Add("startup_sync_stale_cache_blocked") }
 if ([bool]$FailOnErrorSortingReportMissing) { [void]$activeFailGates.Add("error_sorting_report_missing") }
 if ([bool]$FailOnErrorSortingStatusNotPass) { [void]$activeFailGates.Add("error_sorting_status_not_pass") }
@@ -1938,6 +2014,12 @@ $result = [PSCustomObject]@{
         error_sorting_report_md_exists = [bool]$errorSortingReportMdExists
         error_sorting_report_json_exists = [bool]$errorSortingReportJsonExists
         error_sorting_reports_present = [bool]$errorSortingReportsPresent
+        git_context_available = [bool]$gitContextAvailable
+        git_context_error = $gitContextError
+        git_branch = $gitBranch
+        git_commit = $gitCommit
+        git_is_dirty = [bool]$gitIsDirty
+        git_status_entry_count = [int]$gitStatusEntryCount
         cached_candidate_decision = $cachedCandidateDecision
         cached_candidate_readiness_percent = $cachedCandidateReadiness
         cached_candidate_dir = $cachedCandidateDir
@@ -1965,6 +2047,7 @@ $result = [PSCustomObject]@{
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
         fail_on_missing_summary_output = [bool]$FailOnMissingSummaryOutput
         fail_on_summary_integrity_missing = [bool]$FailOnSummaryIntegrityMissing
+        fail_on_git_dirty_worktree = [bool]$FailOnGitDirtyWorktree
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         fail_on_error_sorting_report_missing = [bool]$FailOnErrorSortingReportMissing
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
@@ -2093,6 +2176,11 @@ $result = [PSCustomObject]@{
     if ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
         [void]$triggeredFailGates.Add("startup_sync_stale_cache_blocked")
     }
+    if ([bool]$FailOnGitDirtyWorktree -and -not [bool]$result.git_context_available) {
+        [void]$triggeredFailGates.Add("git_context_unavailable")
+    } elseif ([bool]$FailOnGitDirtyWorktree -and [bool]$result.git_is_dirty) {
+        [void]$triggeredFailGates.Add("git_dirty_worktree")
+    }
     if ([bool]$FailOnSummaryIntegrityMissing -and `
             -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
             (-not [bool]$result.summary_output_written -or `
@@ -2195,6 +2283,16 @@ $result = [PSCustomObject]@{
             [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
         $result.autopilot_failure_reason = "missing_summary_output"
         $result.autopilot_failed = $true
+    } elseif ([bool]$FailOnGitDirtyWorktree -and `
+            -not [bool]$result.git_context_available -and `
+            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        $result.autopilot_failure_reason = "git_context_unavailable"
+        $result.autopilot_failed = $true
+    } elseif ([bool]$FailOnGitDirtyWorktree -and `
+            [bool]$result.git_is_dirty -and `
+            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        $result.autopilot_failure_reason = "git_dirty_worktree"
+        $result.autopilot_failed = $true
     } elseif ([bool]$FailOnSummaryIntegrityMissing -and `
             -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
             (-not [bool]$result.summary_output_written -or `
@@ -2286,6 +2384,12 @@ $result = [PSCustomObject]@{
             }
             "missing_summary_output" {
                 throw "Summary output was not produced while FailOnMissingSummaryOutput is enabled."
+            }
+            "git_context_unavailable" {
+                throw ("Git context is unavailable ({0}) while FailOnGitDirtyWorktree is enabled." -f $result.git_context_error)
+            }
+            "git_dirty_worktree" {
+                throw ("Git worktree is dirty (entries={0}) while FailOnGitDirtyWorktree is enabled." -f $result.git_status_entry_count)
             }
             "summary_integrity_missing" {
                 throw ("Summary output integrity is incomplete (written={0}, size_bytes={1}, sha256_present={2}) while FailOnSummaryIntegrityMissing is enabled." -f `
