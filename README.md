@@ -556,6 +556,7 @@ Notes autopilot cache/retry:
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
 - `strict_ci_fail_gates_enabled` indique si le bundle strict a ete active (`EnableStrictCiFailGates`).
 - `strict_ci_summary_output_defaulted` indique si `SummaryOutputPath` a ete injecte automatiquement par le mode strict (chemin source dans `strict_ci_summary_output_path`).
+- `active_fail_gate_count` et `active_fail_gates` listent les gates CI actives effectivement evaluees sur le run.
 - `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
