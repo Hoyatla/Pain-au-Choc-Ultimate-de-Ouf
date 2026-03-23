@@ -4029,3 +4029,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Correctif complementaire autopilot valide: startup sync prioritaire sur candidate cachee `ready_for_beta` (sans build force), confirme par log `Prism candidate jar sync`; fallback `build/libs` conserve.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 19:14:54 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Durcissement sync autopilot: fonctions de sync renvoient des objets explicites (`synced/source/hash/path`) et le fallback candidate->build/libs repose desormais sur `result.synced` (plus de dependance a la conversion implicite PowerShell). Validation one-shot OK.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

@@ -327,13 +327,23 @@ function Sync-LatestModJarToPrism {
 
     if ([string]::IsNullOrWhiteSpace($PrismInstanceName)) {
         Write-Host "[Autopilot] Jar sync skipped (instance name empty)."
-        return
+        return [PSCustomObject]@{
+            synced = $false
+            source = "build_libs"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     $instanceMinecraftDir = Join-Path (Join-Path $PrismRootPath $PrismInstanceName) "minecraft"
     if (-not (Test-Path -LiteralPath $instanceMinecraftDir -PathType Container)) {
         Write-Warning ("[Autopilot] Jar sync skipped: instance path not found: {0}" -f $instanceMinecraftDir)
-        return
+        return [PSCustomObject]@{
+            synced = $false
+            source = "build_libs"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     if ($BuildJar) {
@@ -356,7 +366,12 @@ function Sync-LatestModJarToPrism {
     $libsDir = Join-Path $RepoRoot "build\libs"
     if (-not (Test-Path -LiteralPath $libsDir -PathType Container)) {
         Write-Warning ("[Autopilot] Jar sync skipped: build/libs missing ({0})." -f $libsDir)
-        return
+        return [PSCustomObject]@{
+            synced = $false
+            source = "build_libs"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     $jarCandidate = Get-ChildItem -LiteralPath $libsDir -File -Filter $jarPattern |
@@ -369,7 +384,12 @@ function Sync-LatestModJarToPrism {
     }
     if ($null -eq $jarCandidate) {
         Write-Warning "[Autopilot] Jar sync skipped: no jar found in build/libs."
-        return
+        return [PSCustomObject]@{
+            synced = $false
+            source = "build_libs"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     $modsDir = Join-Path $instanceMinecraftDir "mods"
@@ -380,6 +400,12 @@ function Sync-LatestModJarToPrism {
     $jarHash = (Get-FileHash -LiteralPath $jarCandidate.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
     Write-Host ("[Autopilot] Prism jar sync: {0} -> {1}" -f $jarCandidate.Name, $destinationPath)
     Write-Host ("[Autopilot] Prism jar sha256: {0}" -f $jarHash)
+    return [PSCustomObject]@{
+        synced = $true
+        source = "build_libs"
+        jar_path = $destinationPath
+        jar_sha256 = $jarHash
+    }
 }
 
 function Sync-CandidateModJarToPrism {
@@ -392,18 +418,33 @@ function Sync-CandidateModJarToPrism {
 
     if ([string]::IsNullOrWhiteSpace($CandidateDir) -or -not (Test-Path -LiteralPath $CandidateDir -PathType Container)) {
         Write-Warning ("[Autopilot] Candidate jar sync skipped: candidate directory not found ({0})." -f $CandidateDir)
-        return $false
+        return [PSCustomObject]@{
+            synced = $false
+            source = "candidate"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     if ([string]::IsNullOrWhiteSpace($PrismInstanceName)) {
         Write-Host "[Autopilot] Candidate jar sync skipped (instance name empty)."
-        return $false
+        return [PSCustomObject]@{
+            synced = $false
+            source = "candidate"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     $instanceMinecraftDir = Join-Path (Join-Path $PrismRootPath $PrismInstanceName) "minecraft"
     if (-not (Test-Path -LiteralPath $instanceMinecraftDir -PathType Container)) {
         Write-Warning ("[Autopilot] Candidate jar sync skipped: instance path not found: {0}" -f $instanceMinecraftDir)
-        return $false
+        return [PSCustomObject]@{
+            synced = $false
+            source = "candidate"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     $gradlePropsPath = Join-Path $RepoRoot "gradle.properties"
@@ -425,7 +466,12 @@ function Sync-CandidateModJarToPrism {
     }
     if ($null -eq $jarCandidate) {
         Write-Warning ("[Autopilot] Candidate jar sync skipped: no jar found in {0}." -f $CandidateDir)
-        return $false
+        return [PSCustomObject]@{
+            synced = $false
+            source = "candidate"
+            jar_path = ""
+            jar_sha256 = ""
+        }
     }
 
     $modsDir = Join-Path $instanceMinecraftDir "mods"
@@ -436,7 +482,12 @@ function Sync-CandidateModJarToPrism {
     $jarHash = (Get-FileHash -LiteralPath $jarCandidate.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
     Write-Host ("[Autopilot] Prism candidate jar sync: {0} -> {1}" -f $jarCandidate.Name, $destinationPath)
     Write-Host ("[Autopilot] Prism candidate jar sha256: {0}" -f $jarHash)
-    return $true
+    return [PSCustomObject]@{
+        synced = $true
+        source = "candidate"
+        jar_path = $destinationPath
+        jar_sha256 = $jarHash
+    }
 }
 
 function Resolve-MetricsPath {
@@ -873,7 +924,7 @@ $errorSortingReportJsonPath = ""
 Push-Location $repoRoot
 try {
     if ($AutoSyncModJarToPrism) {
-        $startupJarSynced = $false
+        $startupSyncResult = $null
         $cachedDecisionLabel = if ([string]::IsNullOrWhiteSpace($cachedCandidateDecision)) {
             ""
         } else {
@@ -882,14 +933,15 @@ try {
         if (-not $BuildJarBeforeSync -and `
                 $cachedDecisionLabel -eq "ready_for_beta" -and `
                 -not [string]::IsNullOrWhiteSpace($cachedCandidateDir)) {
-            $startupJarSynced = Sync-CandidateModJarToPrism `
+            $startupSyncResult = Sync-CandidateModJarToPrism `
                 -CandidateDir $cachedCandidateDir `
                 -RepoRoot $repoRoot `
                 -PrismRootPath $PrismRoot `
                 -PrismInstanceName $InstanceName
         }
+        $startupJarSynced = ($null -ne $startupSyncResult -and [bool]$startupSyncResult.synced)
         if (-not $startupJarSynced) {
-            Sync-LatestModJarToPrism `
+            $startupSyncResult = Sync-LatestModJarToPrism `
                 -RepoRoot $repoRoot `
                 -PrismRootPath $PrismRoot `
                 -PrismInstanceName $InstanceName `
@@ -1156,16 +1208,17 @@ try {
 
                     if ($AutoSyncModJarToPrism -and $buildExitCode -eq 0) {
                         try {
-                            $candidateJarSynced = $false
+                            $candidateSyncResult = $null
                             if ($null -ne $candidateForDecision) {
-                                $candidateJarSynced = Sync-CandidateModJarToPrism `
+                                $candidateSyncResult = Sync-CandidateModJarToPrism `
                                     -CandidateDir $candidateForDecision.FullName `
                                     -RepoRoot $repoRoot `
                                     -PrismRootPath $PrismRoot `
                                     -PrismInstanceName $InstanceName
                             }
+                            $candidateJarSynced = ($null -ne $candidateSyncResult -and [bool]$candidateSyncResult.synced)
                             if (-not $candidateJarSynced) {
-                                Sync-LatestModJarToPrism `
+                                $candidateSyncResult = Sync-LatestModJarToPrism `
                                     -RepoRoot $repoRoot `
                                     -PrismRootPath $PrismRoot `
                                     -PrismInstanceName $InstanceName `
