@@ -1944,6 +1944,8 @@ $result = [PSCustomObject]@{
         strict_ci_summary_output_path = $StrictCiSummaryOutputPath
         active_fail_gate_count = $activeFailGates.Count
         active_fail_gates = @($activeFailGates)
+        triggered_fail_gate_count = 0
+        triggered_fail_gates = @()
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
@@ -2012,6 +2014,51 @@ $result = [PSCustomObject]@{
         $result.decision_freshness = "no_candidate"
     }
 
+    $triggeredFailGates = New-Object System.Collections.Generic.List[string]
+    if ([bool]$FailOnPendingMetricsDecision -and $result.final_decision -eq "pending_metrics") {
+        [void]$triggeredFailGates.Add("pending_metrics_decision")
+    }
+    if ([bool]$FailOnLatestMetricsNotFresh -and -not [bool]$result.latest_metrics_is_fresh) {
+        [void]$triggeredFailGates.Add("latest_metrics_not_fresh")
+    }
+    if ([bool]$FailOnNoEffectiveDecision -and [string]::IsNullOrWhiteSpace($result.effective_decision)) {
+        [void]$triggeredFailGates.Add("missing_effective_decision")
+    }
+    if ([bool]$FailOnNonFreshEffectiveDecision -and $result.decision_freshness -ne "fresh") {
+        [void]$triggeredFailGates.Add("effective_decision_not_fresh")
+    }
+    if ([bool]$FailOnCachedDecisionSource -and `
+            ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
+        [void]$triggeredFailGates.Add("cached_decision_source_used")
+    }
+    if ([bool]$FailOnErrorSortingStatusNotPass -and $result.error_sorting_status -ne "pass") {
+        [void]$triggeredFailGates.Add("error_sorting_status_not_pass")
+    }
+    if ([bool]$FailOnErrorSortingNoiseWarn -and `
+            ($result.error_sorting_known_noise_status -eq "warn" -or `
+                $result.error_sorting_known_noise_status -eq "fail" -or `
+                $result.error_sorting_known_noise_status -eq "error")) {
+        [void]$triggeredFailGates.Add("error_sorting_noise_warn_or_worse")
+    } elseif ([bool]$FailOnErrorSortingNoiseWarn -and `
+            $result.error_sorting_known_noise_status -ne "pass") {
+        [void]$triggeredFailGates.Add("error_sorting_noise_status_unavailable")
+    }
+    if ([bool]$FailOnPrismJarSyncNotSynced -and `
+            [bool]$AutoSyncModJarToPrism -and `
+            $result.prism_jar_sync_status -ne "synced") {
+        [void]$triggeredFailGates.Add("prism_jar_sync_not_synced")
+    }
+    if ([bool]$FailOnEffectiveDecisionNotReadyForBeta -and `
+            -not [string]::IsNullOrWhiteSpace($result.effective_decision) -and `
+            $result.effective_decision.Trim().ToLowerInvariant() -ne "ready_for_beta") {
+        [void]$triggeredFailGates.Add("effective_decision_not_ready_for_beta")
+    }
+    if ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
+        [void]$triggeredFailGates.Add("startup_sync_stale_cache_blocked")
+    }
+    $result.triggered_fail_gate_count = $triggeredFailGates.Count
+    $result.triggered_fail_gates = @($triggeredFailGates)
+
     if ([bool]$FailOnPendingMetricsDecision -and $result.final_decision -eq "pending_metrics") {
         $result.autopilot_failure_reason = "pending_metrics_decision"
     } elseif ([bool]$FailOnLatestMetricsNotFresh -and -not [bool]$result.latest_metrics_is_fresh) {
@@ -2077,6 +2124,12 @@ $result = [PSCustomObject]@{
             [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
         $result.autopilot_failure_reason = "summary_output_write_error"
         $result.autopilot_failed = $true
+    }
+    if ([bool]$FailOnSummaryOutputWriteError -and `
+            -not [string]::IsNullOrWhiteSpace($result.summary_output_error) -and `
+            -not ($result.triggered_fail_gates -contains "summary_output_write_error")) {
+        $result.triggered_fail_gates = @($result.triggered_fail_gates + @("summary_output_write_error"))
+        $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
     }
 
     Reset-LastExitCode
