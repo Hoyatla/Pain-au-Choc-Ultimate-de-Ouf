@@ -4131,3 +4131,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 20:51:20 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Autopilot resume enrichi pour diagnostic retry/fallback (`strict_candidate_retry_kpi_*`, parsing KPI `status=...` robuste, normalisation `strict_candidate_retry_suppressed_reason`), avec docs README/TRANSFERT synchronisees.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
