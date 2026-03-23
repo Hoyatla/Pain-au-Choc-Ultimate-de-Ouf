@@ -4186,6 +4186,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Gate CI de fiabilite export ajoute (`FailOnSummaryOutputWriteError`) + timestamp d'ecriture (`summary_output_written_utc`) et normalisation robuste du chemin de sortie.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 22:10:16 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Export JSON compact disponible (`SummaryOutputCompress`) avec coherence du marqueur `summary_output_written` dans le fichier ecrit.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 21:39:17 (UTC) - Codex
 
 - Statut: in_progress
