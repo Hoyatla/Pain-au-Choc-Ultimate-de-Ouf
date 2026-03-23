@@ -4233,3 +4233,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: En mode `EnableStrictCiFailGates`, export JSON strict auto active si `SummaryOutputPath` absent (`strict_ci_summary_output_defaulted=true`, `summary_output_written=true`, chemin par defaut `run/pauc_reports/autopilot_summary_ci_strict.json`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu sur gate `pending_metrics_decision`, mais artefact resume strict ecrit).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:34:04 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI `FailOnNonFreshEffectiveDecision` ajoutee pour exiger `decision_freshness=fresh` (echec explicite `autopilot_failure_reason=effective_decision_not_fresh` sinon). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnNonFreshEffectiveDecision` (KO attendu, `decision_freshness=stale_metrics_cached_candidate`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
