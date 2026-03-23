@@ -614,6 +614,21 @@ function Test-IsKpiFailStatus {
     return $false
 }
 
+function Convert-ToStatusToken {
+    param(
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ""
+    }
+
+    $normalized = $Value.Trim().ToLowerInvariant()
+    $normalized = $normalized -replace "[^a-z0-9]+", "_"
+    $normalized = $normalized.Trim("_")
+    return $normalized
+}
+
 function Resolve-MetricsPath {
     param(
         [string]$PreferredPath,
@@ -1484,7 +1499,12 @@ try {
                                         $strictCandidateRetrySuppressedReason = if ([string]::IsNullOrWhiteSpace($kpiStatusLabel)) {
                                             "kpi_status_unavailable"
                                         } else {
-                                            ("kpi_status_{0}" -f $kpiStatusNormalized)
+                                            $statusToken = Convert-ToStatusToken -Value $kpiStatusNormalized
+                                            if ([string]::IsNullOrWhiteSpace($statusToken)) {
+                                                "kpi_status_unknown"
+                                            } else {
+                                                ("kpi_status_{0}" -f $statusToken)
+                                            }
                                         }
                                         $reportLabel = if ([string]::IsNullOrWhiteSpace([string]$kpiProbe.report_path)) {
                                             "n/a"
