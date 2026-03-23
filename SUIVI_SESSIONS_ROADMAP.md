@@ -4048,7 +4048,19 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Autopilot enrichi avec options de fenetre metrics pour build candidate (`-CandidateMetricsWarmupTrimSeconds`, `-CandidateMetricsTailSeconds`, `-CandidateMetricsTailSamples`, `-CandidateUseFullMetricsHistory`) et forwarding valide vers `build_beta_candidate.ps1` (run de validation execute avec state temporaire).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 19:50:48 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Projection decision autopilot durcie: en cas de `final_decision=candidate_build_failed`, fallback operationnel optionnel sur candidate cachee active (`decision_source=cached_candidate_fallback`, `decision_override_reason` explicite). Validation run reel OK; desactivation possible via `-PreferCachedDecisionOnBuildFailure:$false`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 19:32:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 19:50:23 (UTC) - Codex
 
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.

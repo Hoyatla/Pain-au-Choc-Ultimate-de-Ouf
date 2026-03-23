@@ -26,6 +26,7 @@ param(
     [int]$CandidateMetricsTailSeconds = 0,
     [int]$CandidateMetricsTailSamples = 0,
     [switch]$CandidateUseFullMetricsHistory,
+    [bool]$PreferCachedDecisionOnBuildFailure = $true,
     [int]$MaxMetricsAgeMinutes = 240,
     [int]$MetricsCodeDriftToleranceMinutes = 2,
     [string]$RequiredTelemetrySchemaVersion = "20260318_shadowv2",
@@ -1448,20 +1449,32 @@ $result = [PSCustomObject]@{
         prism_jar_sync_source = $prismJarSyncSource
         prism_jar_sync_path = $prismJarSyncPath
         prism_jar_sync_sha256 = $prismJarSyncSha256
+        prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
         effective_decision = ""
         effective_readiness_percent = ""
         decision_freshness = "unknown"
+        decision_override_reason = ""
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
         results_path = $ResultsPath
     }
 
     if (-not [string]::IsNullOrWhiteSpace($result.final_decision) -and $result.final_decision -ne "pending_metrics") {
-        $result.decision_source = "fresh_candidate"
-        $result.effective_decision = $result.final_decision
-        $result.effective_readiness_percent = $result.final_readiness_percent
-        $result.decision_freshness = "fresh"
+        if ($result.final_decision -eq "candidate_build_failed" -and `
+                [bool]$PreferCachedDecisionOnBuildFailure -and `
+                -not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
+            $result.decision_source = "cached_candidate_fallback"
+            $result.effective_decision = $result.cached_candidate_decision
+            $result.effective_readiness_percent = $result.cached_candidate_readiness_percent
+            $result.decision_freshness = "fresh_failure_cached_fallback"
+            $result.decision_override_reason = "fresh_candidate_build_failed_using_cached_candidate"
+        } else {
+            $result.decision_source = "fresh_candidate"
+            $result.effective_decision = $result.final_decision
+            $result.effective_readiness_percent = $result.final_readiness_percent
+            $result.decision_freshness = "fresh"
+        }
     } elseif (-not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
         $result.decision_source = "cached_candidate"
         $result.effective_decision = $result.cached_candidate_decision

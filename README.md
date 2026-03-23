@@ -506,6 +506,9 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -FailOnErrorSortingBlockingPatterns
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -ErrorSortingNoiseWarnHitsTotal 500 -ErrorSortingNoiseFailHitsTotal 2000
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$true -ErrorSortingNoiseWarnHitsTotal 100 -ErrorSortingNoiseFailHitsTotal 300 -FailOnErrorSortingNoiseFail
+.\tools\run_roadmap_autopilot.ps1 -OneShot -CandidateMetricsTailSeconds 300 -CandidateMetricsWarmupTrimSeconds 30
+.\tools\run_roadmap_autopilot.ps1 -OneShot -CandidateUseFullMetricsHistory
+.\tools\run_roadmap_autopilot.ps1 -OneShot -PreferCachedDecisionOnBuildFailure:$false
 ```
 
 Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
