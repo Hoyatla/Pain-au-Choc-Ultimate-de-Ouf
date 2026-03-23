@@ -4023,3 +4023,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Correctif autopilot valide en run reel: post-build sync Prism basee sur le jar de la candidate retenue (plus fallback `build/libs`), observe via logs `Prism candidate jar sync` sur candidate `beta_candidate_20260323_185611_951` (`ready_for_beta`, `100%`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 19:11:31 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Correctif complementaire autopilot valide: startup sync prioritaire sur candidate cachee `ready_for_beta` (sans build force), confirme par log `Prism candidate jar sync`; fallback `build/libs` conserve.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

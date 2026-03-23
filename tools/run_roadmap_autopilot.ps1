@@ -873,11 +873,28 @@ $errorSortingReportJsonPath = ""
 Push-Location $repoRoot
 try {
     if ($AutoSyncModJarToPrism) {
-        Sync-LatestModJarToPrism `
-            -RepoRoot $repoRoot `
-            -PrismRootPath $PrismRoot `
-            -PrismInstanceName $InstanceName `
-            -BuildJar:$BuildJarBeforeSync
+        $startupJarSynced = $false
+        $cachedDecisionLabel = if ([string]::IsNullOrWhiteSpace($cachedCandidateDecision)) {
+            ""
+        } else {
+            $cachedCandidateDecision.Trim().ToLowerInvariant()
+        }
+        if (-not $BuildJarBeforeSync -and `
+                $cachedDecisionLabel -eq "ready_for_beta" -and `
+                -not [string]::IsNullOrWhiteSpace($cachedCandidateDir)) {
+            $startupJarSynced = Sync-CandidateModJarToPrism `
+                -CandidateDir $cachedCandidateDir `
+                -RepoRoot $repoRoot `
+                -PrismRootPath $PrismRoot `
+                -PrismInstanceName $InstanceName
+        }
+        if (-not $startupJarSynced) {
+            Sync-LatestModJarToPrism `
+                -RepoRoot $repoRoot `
+                -PrismRootPath $PrismRoot `
+                -PrismInstanceName $InstanceName `
+                -BuildJar:$BuildJarBeforeSync
+        }
     }
 
     while ($true) {
