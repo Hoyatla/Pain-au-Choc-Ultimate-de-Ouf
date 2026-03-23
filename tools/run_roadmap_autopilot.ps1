@@ -1197,6 +1197,11 @@ try {
             $prismJarSyncSource = [string]$startupSyncResult.source
             $prismJarSyncPath = [string]$startupSyncResult.jar_path
             $prismJarSyncSha256 = [string]$startupSyncResult.jar_sha256
+            if ([bool]$startupSyncResult.synced) {
+                $prismJarSyncSkipReason = ""
+            } elseif ([string]::IsNullOrWhiteSpace($prismJarSyncSkipReason)) {
+                $prismJarSyncSkipReason = "startup_sync_not_synced"
+            }
         }
     }
 
@@ -1622,6 +1627,11 @@ try {
                                 $prismJarSyncSource = [string]$candidateSyncResult.source
                                 $prismJarSyncPath = [string]$candidateSyncResult.jar_path
                                 $prismJarSyncSha256 = [string]$candidateSyncResult.jar_sha256
+                                if ([bool]$candidateSyncResult.synced) {
+                                    $prismJarSyncSkipReason = ""
+                                } else {
+                                    $prismJarSyncSkipReason = "post_build_sync_not_synced"
+                                }
                             }
                         } catch {
                             Write-Warning ("[Autopilot] Post-build Prism sync failed: {0}" -f $_.Exception.Message)
@@ -1629,6 +1639,7 @@ try {
                             $prismJarSyncSource = ""
                             $prismJarSyncPath = ""
                             $prismJarSyncSha256 = ""
+                            $prismJarSyncSkipReason = "post_build_sync_error"
                         }
                     }
 
