@@ -382,6 +382,63 @@ function Sync-LatestModJarToPrism {
     Write-Host ("[Autopilot] Prism jar sha256: {0}" -f $jarHash)
 }
 
+function Sync-CandidateModJarToPrism {
+    param(
+        [string]$CandidateDir,
+        [string]$RepoRoot,
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($CandidateDir) -or -not (Test-Path -LiteralPath $CandidateDir -PathType Container)) {
+        Write-Warning ("[Autopilot] Candidate jar sync skipped: candidate directory not found ({0})." -f $CandidateDir)
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        Write-Host "[Autopilot] Candidate jar sync skipped (instance name empty)."
+        return $false
+    }
+
+    $instanceMinecraftDir = Join-Path (Join-Path $PrismRootPath $PrismInstanceName) "minecraft"
+    if (-not (Test-Path -LiteralPath $instanceMinecraftDir -PathType Container)) {
+        Write-Warning ("[Autopilot] Candidate jar sync skipped: instance path not found: {0}" -f $instanceMinecraftDir)
+        return $false
+    }
+
+    $gradlePropsPath = Join-Path $RepoRoot "gradle.properties"
+    $artifactId = Get-GradlePropertyValue -FilePath $gradlePropsPath -Key "mod_artifact_id" -DefaultValue "pauc"
+    $modVersion = Get-GradlePropertyValue -FilePath $gradlePropsPath -Key "mod_version" -DefaultValue ""
+    $jarPattern = if ([string]::IsNullOrWhiteSpace($modVersion)) {
+        "$artifactId*.jar"
+    } else {
+        "$artifactId-$modVersion*.jar"
+    }
+
+    $jarCandidate = Get-ChildItem -LiteralPath $CandidateDir -File -Filter $jarPattern |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+    if ($null -eq $jarCandidate) {
+        $jarCandidate = Get-ChildItem -LiteralPath $CandidateDir -File -Filter "*.jar" |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+    }
+    if ($null -eq $jarCandidate) {
+        Write-Warning ("[Autopilot] Candidate jar sync skipped: no jar found in {0}." -f $CandidateDir)
+        return $false
+    }
+
+    $modsDir = Join-Path $instanceMinecraftDir "mods"
+    New-Item -ItemType Directory -Path $modsDir -Force | Out-Null
+    $destinationPath = Join-Path $modsDir $jarCandidate.Name
+    Copy-Item -LiteralPath $jarCandidate.FullName -Destination $destinationPath -Force
+
+    $jarHash = (Get-FileHash -LiteralPath $jarCandidate.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+    Write-Host ("[Autopilot] Prism candidate jar sync: {0} -> {1}" -f $jarCandidate.Name, $destinationPath)
+    Write-Host ("[Autopilot] Prism candidate jar sha256: {0}" -f $jarHash)
+    return $true
+}
+
 function Resolve-MetricsPath {
     param(
         [string]$PreferredPath,
@@ -1082,11 +1139,21 @@ try {
 
                     if ($AutoSyncModJarToPrism -and $buildExitCode -eq 0) {
                         try {
-                            Sync-LatestModJarToPrism `
-                                -RepoRoot $repoRoot `
-                                -PrismRootPath $PrismRoot `
-                                -PrismInstanceName $InstanceName `
-                                -BuildJar:$false
+                            $candidateJarSynced = $false
+                            if ($null -ne $candidateForDecision) {
+                                $candidateJarSynced = Sync-CandidateModJarToPrism `
+                                    -CandidateDir $candidateForDecision.FullName `
+                                    -RepoRoot $repoRoot `
+                                    -PrismRootPath $PrismRoot `
+                                    -PrismInstanceName $InstanceName
+                            }
+                            if (-not $candidateJarSynced) {
+                                Sync-LatestModJarToPrism `
+                                    -RepoRoot $repoRoot `
+                                    -PrismRootPath $PrismRoot `
+                                    -PrismInstanceName $InstanceName `
+                                    -BuildJar:$false
+                            }
                         } catch {
                             Write-Warning ("[Autopilot] Post-build Prism sync failed: {0}" -f $_.Exception.Message)
                         }

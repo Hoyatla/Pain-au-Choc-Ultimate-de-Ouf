@@ -4005,3 +4005,21 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Autopilot one-shot relance sans nouvelle capture (`waiting_candidate_metrics_new`) mais cache candidat actualise sur `beta_candidate_20260323_183020_036` (`effective_decision=ready_for_beta`, `100%`). V3 hardware/drivers revalide (`pass_with_waivers`) + verification candidate `pass`.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:55:05 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:55:50 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:56:31 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Correctif autopilot valide en run reel: post-build sync Prism basee sur le jar de la candidate retenue (plus fallback `build/libs`), observe via logs `Prism candidate jar sync` sur candidate `beta_candidate_20260323_185611_951` (`ready_for_beta`, `100%`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
