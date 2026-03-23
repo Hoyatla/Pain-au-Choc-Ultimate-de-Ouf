@@ -4168,6 +4168,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Gate CI additionnelle validee pour refuser les verdicts issus du cache (`FailOnCachedDecisionSource` -> `autopilot_failure_reason=cached_decision_source_used`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 21:51:55 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI sync Prism validee (`FailOnPrismJarSyncNotSynced`) avec reason explicite `autopilot_failure_reason=prism_jar_sync_not_synced`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 21:39:17 (UTC) - Codex
 
 - Statut: in_progress
