@@ -51,6 +51,7 @@ param(
     [int]$ErrorSortingTopN = 25,
     [int]$ErrorSortingNoiseWarnHitsTotal = 500,
     [int]$ErrorSortingNoiseFailHitsTotal = 2000,
+    [switch]$FailOnErrorSortingNoiseWarn,
     [switch]$FailOnErrorSortingBlockingPatterns,
     [switch]$FailOnErrorSortingNoiseFail
 )
@@ -1887,6 +1888,7 @@ $result = [PSCustomObject]@{
         fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
+        fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
@@ -1962,6 +1964,11 @@ $result = [PSCustomObject]@{
     } elseif ([bool]$FailOnCachedDecisionSource -and `
             ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
         $result.autopilot_failure_reason = "cached_decision_source_used"
+    } elseif ([bool]$FailOnErrorSortingNoiseWarn -and `
+            ($result.error_sorting_known_noise_status -eq "warn" -or `
+                $result.error_sorting_known_noise_status -eq "fail" -or `
+                $result.error_sorting_known_noise_status -eq "error")) {
+        $result.autopilot_failure_reason = "error_sorting_noise_warn_or_worse"
     } elseif ([bool]$FailOnPrismJarSyncNotSynced -and `
             [bool]$AutoSyncModJarToPrism -and `
             $result.prism_jar_sync_status -ne "synced") {
@@ -2022,6 +2029,11 @@ $result = [PSCustomObject]@{
             }
             "cached_decision_source_used" {
                 throw ("Decision source is '{0}' while FailOnCachedDecisionSource is enabled." -f $result.decision_source)
+            }
+            "error_sorting_noise_warn_or_worse" {
+                throw ("Error sorting known noise status is '{0}' (hits={1}) while FailOnErrorSortingNoiseWarn is enabled." -f `
+                        $result.error_sorting_known_noise_status,
+                        $result.error_sorting_known_noise_hits)
             }
             "prism_jar_sync_not_synced" {
                 throw ("Prism jar sync status is '{0}' (source='{1}', reason='{2}') while FailOnPrismJarSyncNotSynced is enabled." -f `
