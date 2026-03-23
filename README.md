@@ -522,6 +522,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -FailOnPrismJarSyncNotSynced
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json -FailOnSummaryOutputWriteError
+.\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json -SummaryOutputCompress
 ```
 
 Notes autopilot cache/retry:
@@ -541,7 +542,8 @@ Notes autopilot cache/retry:
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
 - `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `cached_decision_source_used`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
-- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
+- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
+- `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
 
