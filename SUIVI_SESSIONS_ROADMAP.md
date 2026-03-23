@@ -4257,3 +4257,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Resume autopilot complete avec `triggered_fail_gate_count` + `triggered_fail_gates` pour exposer toutes les gates en echec effectif (pas seulement la prioritaire dans `autopilot_failure_reason`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK, triggered=0) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, triggered>1 avec cause primaire `pending_metrics_decision`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:55:55 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Ecriture JSON resume durcie en mode atomique (`summary_output_write_mode=atomic`, temp+replace) + correction de normalisation `SummaryOutputPath` invalide (plus de crash precoce sur `IsPathRooted`, passage propre par `summary_output_write_error`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary_atomic_test.json -SummaryOutputCompress` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -SummaryOutputPath .\run\pauc_reports\bad<path>\summary.json -FailOnSummaryOutputWriteError` (KO attendu avec reason `summary_output_write_error`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
