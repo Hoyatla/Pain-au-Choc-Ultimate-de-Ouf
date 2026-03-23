@@ -44,6 +44,7 @@ param(
     [switch]$FailOnPendingMetricsDecision,
     [switch]$FailOnNoEffectiveDecision,
     [switch]$FailOnEffectiveDecisionNotReadyForBeta,
+    [switch]$FailOnNonFreshEffectiveDecision,
     [switch]$FailOnCachedDecisionSource,
     [switch]$FailOnPrismJarSyncNotSynced,
     [switch]$FailOnSummaryOutputWriteError,
@@ -117,6 +118,7 @@ if ($EnableStrictCiFailGates) {
     $FailOnPendingMetricsDecision = $true
     $FailOnNoEffectiveDecision = $true
     $FailOnEffectiveDecisionNotReadyForBeta = $true
+    $FailOnNonFreshEffectiveDecision = $true
     $FailOnCachedDecisionSource = $true
     $FailOnPrismJarSyncNotSynced = $true
     $FailOnSummaryOutputWriteError = $true
@@ -1905,6 +1907,7 @@ $result = [PSCustomObject]@{
         fail_on_pending_metrics_decision = [bool]$FailOnPendingMetricsDecision
         fail_on_no_effective_decision = [bool]$FailOnNoEffectiveDecision
         fail_on_effective_decision_not_ready_for_beta = [bool]$FailOnEffectiveDecisionNotReadyForBeta
+        fail_on_non_fresh_effective_decision = [bool]$FailOnNonFreshEffectiveDecision
         fail_on_cached_decision_source = [bool]$FailOnCachedDecisionSource
         fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
@@ -1986,6 +1989,9 @@ $result = [PSCustomObject]@{
         $result.autopilot_failure_reason = "pending_metrics_decision"
     } elseif ([bool]$FailOnNoEffectiveDecision -and [string]::IsNullOrWhiteSpace($result.effective_decision)) {
         $result.autopilot_failure_reason = "missing_effective_decision"
+    } elseif ([bool]$FailOnNonFreshEffectiveDecision -and `
+            $result.decision_freshness -ne "fresh") {
+        $result.autopilot_failure_reason = "effective_decision_not_fresh"
     } elseif ([bool]$FailOnCachedDecisionSource -and `
             ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
         $result.autopilot_failure_reason = "cached_decision_source_used"
@@ -2057,6 +2063,11 @@ $result = [PSCustomObject]@{
             }
             "missing_effective_decision" {
                 throw "Effective decision is empty while FailOnNoEffectiveDecision is enabled."
+            }
+            "effective_decision_not_fresh" {
+                throw ("Decision freshness is '{0}' (source='{1}') while FailOnNonFreshEffectiveDecision is enabled." -f `
+                        $result.decision_freshness,
+                        $result.decision_source)
             }
             "cached_decision_source_used" {
                 throw ("Decision source is '{0}' while FailOnCachedDecisionSource is enabled." -f $result.decision_source)
