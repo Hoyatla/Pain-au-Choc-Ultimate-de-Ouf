@@ -3952,3 +3952,56 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Cloture session demandee par mainteneur: contexte complet fige dans SUIVI+TRANSFERT (etat candidates, hashes jar, commandes de reprise, gates bloquants, artefacts).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:23:37 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:25:58 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:27:05 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 18:29:57 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Session 2026-03-23 - Codex (reprise rapide)
+
+- Objectif session: reprendre la pipeline candidate, verifier la faisabilite stricte, et sortir un etat operationnel exploitable immediat.
+- Travail realise:
+  - relance stricte:
+    - `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -StrictPreflight -StrictReadiness`
+    - echec strict confirme sur `kpi_gate` (frame_ms_p95/frame_ms_p99), avec autres gates preflight en `pass`.
+  - verification autopilot:
+    - `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns`
+    - capture longue detectee (750 rows / 845s), mais pipeline stricte terminee en `candidate_build_failed` pour la meme cause KPI.
+    - error sorting: `status=pass`, `blocking_hits=0`, `known_noise_status=warn`.
+  - candidate exploratoire validee:
+    - `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -FrameMsP95Max 60 -FrameMsP99Max 400`
+    - candidate: `run/beta_candidates/beta_candidate_20260323_183020_036`
+    - readiness: `ready_for_beta (100%)`, verification: `pass`.
+  - alignement jars:
+    - jar candidate / jar repo / jar instance `test` resynchronises.
+    - hash cible: `2532F87A3C9C8F08D4FFCF5626F88A96F9C4DA66726BD4C0F32EBA98EF72CDE2`.
+- Etat de sortie:
+  - blocage strict restant: `kpi_gate` sur seuils stricts (`20/60`).
+  - etat operationnel immediat: candidate exploratoire `ready_for_beta` disponible et verifiee.
+  - git status: modification suivie limitee a ce journal (`SUIVI_SESSIONS_ROADMAP.md`).
+
+## Checkpoint 2026-03-23 18:36:53 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Autopilot one-shot relance sans nouvelle capture (`waiting_candidate_metrics_new`) mais cache candidat actualise sur `beta_candidate_20260323_183020_036` (`effective_decision=ready_for_beta`, `100%`). V3 hardware/drivers revalide (`pass_with_waivers`) + verification candidate `pass`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

@@ -1,42 +1,44 @@
 ﻿# Transfert Projet - PauC Ultimate De Ouf
 
 Date de transfert: `2026-03-12`
-Mise a jour transfert: `2026-03-22`
+Mise a jour transfert: `2026-03-23`
 
 Ce document donne un etat de passation exploitable immediatement pour un nouveau mainteneur.
 
 ## Reprise immediate (ici)
 
-- Candidat de reference strict: `run/beta_candidates/beta_candidate_20260322_160614_277` (`ready_for_beta`, `100%`).
-- Candidat exploratoire court (dernier run): `run/beta_candidates/beta_candidate_20260322_220939_377` (`not_ready`, `97.5%`, gate bloquant `soak_stability=skipped`).
-- Jar Prism `test` actuellement sync: `sha256=86FC9AF0E9932E7457BBF6D185B2DA91AC9ECC9CDE32988C0EA63E11DF4876C0`.
+- Candidat strict le plus recent: `run/beta_candidates/beta_candidate_20260323_182403_611` (`not_ready`, `90%`, gate bloquant unique `kpi_gate=fail`).
+- Candidat operationnel courant: `run/beta_candidates/beta_candidate_20260323_183020_036` (`ready_for_beta`, `100%`, verification `pass`).
+- Jar repo + Prism `test` actuellement sync: `sha256=2532F87A3C9C8F08D4FFCF5626F88A96F9C4DA66726BD4C0F32EBA98EF72CDE2`.
 - Commandes de reprise immediates:
   - mode operationnel (recommande): `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnErrorSortingBlockingPatterns`
   - mode strict complet (exige capture >=240 samples et >=480s): `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -StrictPreflight -StrictReadiness`
-  - mode exploratoire capture courte: `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -FrameMsP99Max 400`
+  - mode exploratoire KPI assoupli (etat courant): `.\tools\build_beta_candidate.ps1 -PrismInstanceName test -FrameMsP95Max 60 -FrameMsP99Max 400`
 - Lecture du resultat:
   - utiliser `effective_decision` / `effective_readiness_percent` comme verdict exploitable.
   - `final_decision` peut etre `pending_metrics` si session trop courte/stale.
-  - `final_decision` peut etre `candidate_build_failed` en strict si un gate bloque (dernier cas: `soak_stability=skipped`).
+  - `final_decision` peut etre `candidate_build_failed` en strict si un gate bloque (dernier cas: `kpi_gate=fail`).
 
-## Statut validations humaines (maj 2026-03-21)
+## Statut validations humaines (maj 2026-03-23)
 
 - V1 produit/priorites: validee (`2026-03-21`) par decision mainteneur (consigne de poursuite sans blocage Intel/AMD).
 - V2 QA in-game: validee sur candidate `beta_candidate_20260321_201359_492`.
   - preuves: preflight strict `phase6_preflight_20260321_201339_271.md` (tous gates `pass`), readiness `100%`, verification candidate `pass`, completion A/B `12/12`, aucun nouveau crash date au `2026-03-21`.
   - jar Prism `test` resynchronise explicitement sur le hash candidat: `2B3A850EE742239DF20EAD48EAA334EFABFF10A97E6DA95990791C3E59200CFF`.
-- V3 hardware/drivers: cloturee avec waivers (`pass_with_waivers`) via `run/pauc_reports/v3_hardware_driver_matrix_20260321_222918_504.md`.
+- V3 hardware/drivers: cloturee avec waivers (`pass_with_waivers`) via `run/pauc_reports/v3_hardware_driver_matrix_20260323_183528_795.md`.
   - NVIDIA: `pass` (runtime GL observe, driver `32.0.15.9579`, GL `4.6.0 NVIDIA 595.79`).
   - Intel: `no_runtime_evidence` (adapter detecte, mais aucun run GL force sur Intel dans les logs disponibles).
   - AMD: `missing_hardware` (aucun adaptateur AMD detecte sur la machine de validation).
   - commande de reproduction:
-    - `.\tools\validate_v3_hardware_drivers.ps1 -InstanceName test -CandidateDir .\run\beta_candidates\beta_candidate_20260321_201359_492 -AllowMissingVendors`
+    - `.\tools\validate_v3_hardware_drivers.ps1 -InstanceName test -CandidateDir .\run\beta_candidates\beta_candidate_20260323_183020_036 -AllowMissingVendors`
+- Revalidation outillage beta (2026-03-23):
+  - `.\tools\verify_beta_candidate.ps1 -CandidateDir .\run\beta_candidates\beta_candidate_20260323_183020_036` -> `overall_status=pass`.
 
 ## Verdict de cloture (etat actuel)
 
 - Validation humaine complete: `V1=ok`, `V2=ok`, `V3=ok_with_waivers`.
-- Candidat recommande pour suite release/beta stricte: `beta_candidate_20260322_160614_277`.
-- Candidat de debug rapide disponible: `beta_candidate_20260322_220939_377` (`not_ready` uniquement pour soak court).
+- Candidat recommande pour suite release/beta: `beta_candidate_20260323_183020_036`.
+- Candidat strict recent a debloquer: `beta_candidate_20260323_182403_611` (`not_ready` uniquement a cause de `kpi_gate`).
 - Waivers ouverts a lever plus tard (non bloquants pour l'etat courant):
   - Intel runtime GL non observe sur cette machine.
   - AMD non present sur la machine de validation.
