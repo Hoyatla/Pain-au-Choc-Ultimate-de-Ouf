@@ -27,6 +27,7 @@ param(
     [int]$CandidateMetricsTailSamples = 0,
     [switch]$CandidateUseFullMetricsHistory,
     [bool]$PreferCachedDecisionOnBuildFailure = $true,
+    [int]$MaxCachedCandidateAgeMinutes = 0,
     [bool]$EnableStrictCandidateWindowRetry = $true,
     [int]$StrictCandidateRetryTailSeconds = 600,
     [bool]$RetryStrictCandidateOnlyOnKpiFailure = $true,
@@ -73,6 +74,9 @@ if ($CandidateMetricsTailSamples -lt 0) {
 }
 if ($StrictCandidateRetryTailSeconds -lt 0) {
     throw "StrictCandidateRetryTailSeconds must be >= 0"
+}
+if ($MaxCachedCandidateAgeMinutes -lt 0) {
+    throw "MaxCachedCandidateAgeMinutes must be >= 0"
 }
 if ($MaxMetricsAgeMinutes -lt 0) {
     throw "MaxMetricsAgeMinutes must be >= 0"
@@ -697,6 +701,60 @@ function Try-ParseMetricsTimestamp {
     return $ok
 }
 
+function Get-CachedCandidateFreshness {
+    param(
+        [string]$TimestampUtc,
+        [int]$MaxAgeMinutes
+    )
+
+    $result = [PSCustomObject]@{
+        is_fresh = $true
+        age_minutes = $null
+        status = "fresh"
+        max_age_minutes = [int]$MaxAgeMinutes
+    }
+
+    $parsedTimestamp = [datetime]::MinValue
+    $hasTimestamp = Try-ParseMetricsTimestamp -Value $TimestampUtc -ParsedTimestamp ([ref]$parsedTimestamp)
+    if ($hasTimestamp) {
+        if ($parsedTimestamp.Kind -eq [System.DateTimeKind]::Unspecified) {
+            $parsedTimestamp = [datetime]::SpecifyKind($parsedTimestamp, [System.DateTimeKind]::Utc)
+        } else {
+            $parsedTimestamp = $parsedTimestamp.ToUniversalTime()
+        }
+        $ageMinutes = ((Get-Date).ToUniversalTime() - $parsedTimestamp).TotalMinutes
+        if ($ageMinutes -lt 0) {
+            $ageMinutes = 0
+        }
+        $result.age_minutes = [Math]::Round($ageMinutes, 2)
+    }
+
+    if ($MaxAgeMinutes -le 0) {
+        $result.is_fresh = $true
+        $result.status = if ($hasTimestamp) { "fresh_no_limit" } else { "age_check_disabled" }
+        return $result
+    }
+
+    if (-not $hasTimestamp) {
+        $result.is_fresh = $false
+        $result.status = if ([string]::IsNullOrWhiteSpace($TimestampUtc)) {
+            "missing_timestamp"
+        } else {
+            "invalid_timestamp"
+        }
+        return $result
+    }
+
+    if ([double]$result.age_minutes -le [double]$MaxAgeMinutes) {
+        $result.is_fresh = $true
+        $result.status = "fresh"
+    } else {
+        $result.is_fresh = $false
+        $result.status = "stale_age_exceeded"
+    }
+    return $result
+}
+
 function Get-LatestMetricsSessionStats {
     param(
         [string]$MetricsFilePath,
@@ -991,6 +1049,20 @@ if ($cachedCandidateUpdatedFromSnapshot) {
     Write-AutopilotState -FilePath $autopilotStatePathResolved -State $autopilotState
 }
 
+$cachedCandidateFreshness = Get-CachedCandidateFreshness `
+    -TimestampUtc $cachedCandidateTimestampUtc `
+    -MaxAgeMinutes $MaxCachedCandidateAgeMinutes
+$cachedCandidateIsFresh = [bool]$cachedCandidateFreshness.is_fresh
+$cachedCandidateAgeMinutes = $cachedCandidateFreshness.age_minutes
+$cachedCandidateFreshnessStatus = [string]$cachedCandidateFreshness.status
+if (-not $cachedCandidateIsFresh -and -not [string]::IsNullOrWhiteSpace($cachedCandidateDecision)) {
+    $cachedAgeLabel = if ($null -eq $cachedCandidateAgeMinutes) { "unknown" } else { [string]$cachedCandidateAgeMinutes }
+    Write-Warning ("[Autopilot] Cached candidate ignored: freshness={0}, age_minutes={1}, max_age_minutes={2}." -f `
+            $cachedCandidateFreshnessStatus,
+            $cachedAgeLabel,
+            $MaxCachedCandidateAgeMinutes)
+}
+
 $deadline = (Get-Date).AddMinutes($MaxDurationMinutes)
 $iteration = 0
 $lastAction = "none"
@@ -1033,6 +1105,7 @@ try {
         }
         if (-not $BuildJarBeforeSync -and `
                 $cachedDecisionLabel -eq "ready_for_beta" -and `
+                $cachedCandidateIsFresh -and `
                 -not [string]::IsNullOrWhiteSpace($cachedCandidateDir)) {
             $startupSyncResult = Sync-CandidateModJarToPrism `
                 -CandidateDir $cachedCandidateDir `
@@ -1158,12 +1231,12 @@ try {
 
             if (-not [bool]$latestSessionStats.resolved) {
                 Write-Host ("[Autopilot] Campaign complete but metrics session unavailable ({0}). Waiting for telemetry." -f $latestSessionStats.reason)
-                if (Write-CachedCandidateStatus `
+                if ($cachedCandidateIsFresh -and (Write-CachedCandidateStatus `
                         -Decision $cachedCandidateDecision `
                         -ReadinessPercent $cachedCandidateReadiness `
                         -CandidateDir $cachedCandidateDir `
                         -ServerGovernorHealth $cachedCandidateServerGovernorHealth `
-                        -ServerGovernorInsufficientPressure $cachedCandidateServerGovernorInsufficientPressure) {
+                        -ServerGovernorInsufficientPressure $cachedCandidateServerGovernorInsufficientPressure)) {
                     $finalCandidateDir = $cachedCandidateDir
                 }
                 $lastAction = "waiting_candidate_metrics"
@@ -1174,12 +1247,12 @@ try {
                         $MinMetricsRowsForCandidatePreflight,
                         [Math]::Round($latestMetricsDurationSeconds, 1),
                         $MinMetricsDurationSecondsForCandidatePreflight)
-                if (Write-CachedCandidateStatus `
+                if ($cachedCandidateIsFresh -and (Write-CachedCandidateStatus `
                         -Decision $cachedCandidateDecision `
                         -ReadinessPercent $cachedCandidateReadiness `
                         -CandidateDir $cachedCandidateDir `
                         -ServerGovernorHealth $cachedCandidateServerGovernorHealth `
-                        -ServerGovernorInsufficientPressure $cachedCandidateServerGovernorInsufficientPressure) {
+                        -ServerGovernorInsufficientPressure $cachedCandidateServerGovernorInsufficientPressure)) {
                     $finalCandidateDir = $cachedCandidateDir
                 }
                 $lastAction = "waiting_candidate_metrics"
@@ -1193,7 +1266,7 @@ try {
                 Write-Host ("[Autopilot] Campaign complete but latest metrics schema is outdated: detected={0}, required={1}. Waiting for runtime restart." -f `
                         $detectedSchema,
                         $RequiredTelemetrySchemaVersion)
-                if (Write-CachedCandidateStatus -Decision $cachedCandidateDecision -ReadinessPercent $cachedCandidateReadiness -CandidateDir $cachedCandidateDir) {
+                if ($cachedCandidateIsFresh -and (Write-CachedCandidateStatus -Decision $cachedCandidateDecision -ReadinessPercent $cachedCandidateReadiness -CandidateDir $cachedCandidateDir)) {
                     $finalCandidateDir = $cachedCandidateDir
                 }
                 $lastAction = "waiting_candidate_metrics_schema"
@@ -1203,12 +1276,12 @@ try {
                 if (-not [string]::IsNullOrWhiteSpace($lastProcessedMetricsSignature) -and $currentMetricsSignature -eq $lastProcessedMetricsSignature) {
                     $latestLabel = if ([string]::IsNullOrWhiteSpace($latestMetricsTimestampUtc)) { "unknown" } else { $latestMetricsTimestampUtc }
                     Write-Host ("[Autopilot] Campaign complete but no new telemetry since last candidate attempt (latest={0}). Waiting for fresh gameplay capture." -f $latestLabel)
-                    if (Write-CachedCandidateStatus `
+                    if ($cachedCandidateIsFresh -and (Write-CachedCandidateStatus `
                             -Decision $cachedCandidateDecision `
                             -ReadinessPercent $cachedCandidateReadiness `
                             -CandidateDir $cachedCandidateDir `
                             -ServerGovernorHealth $cachedCandidateServerGovernorHealth `
-                            -ServerGovernorInsufficientPressure $cachedCandidateServerGovernorInsufficientPressure) {
+                            -ServerGovernorInsufficientPressure $cachedCandidateServerGovernorInsufficientPressure)) {
                         $finalCandidateDir = $cachedCandidateDir
                     }
                     $lastAction = "waiting_candidate_metrics_new"
@@ -1417,6 +1490,12 @@ try {
                             $cachedCandidateTimestampUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
                             $cachedCandidateServerGovernorHealth = [string]$readiness.server_governor_health
                             $cachedCandidateServerGovernorInsufficientPressure = [string]$readiness.server_governor_skipped_for_insufficient_pressure
+                            $cachedCandidateFreshness = Get-CachedCandidateFreshness `
+                                -TimestampUtc $cachedCandidateTimestampUtc `
+                                -MaxAgeMinutes $MaxCachedCandidateAgeMinutes
+                            $cachedCandidateIsFresh = [bool]$cachedCandidateFreshness.is_fresh
+                            $cachedCandidateAgeMinutes = $cachedCandidateFreshness.age_minutes
+                            $cachedCandidateFreshnessStatus = [string]$cachedCandidateFreshness.status
                         }
                     } elseif ($buildExitCode -ne 0) {
                         $finalCandidateDir = ""
@@ -1615,6 +1694,13 @@ try {
         }
     }
 
+$cachedCandidateFreshness = Get-CachedCandidateFreshness `
+    -TimestampUtc $cachedCandidateTimestampUtc `
+    -MaxAgeMinutes $MaxCachedCandidateAgeMinutes
+$cachedCandidateIsFresh = [bool]$cachedCandidateFreshness.is_fresh
+$cachedCandidateAgeMinutes = $cachedCandidateFreshness.age_minutes
+$cachedCandidateFreshnessStatus = [string]$cachedCandidateFreshness.status
+
 $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         iterations = $iteration
@@ -1657,6 +1743,10 @@ $result = [PSCustomObject]@{
         cached_candidate_readiness_percent = $cachedCandidateReadiness
         cached_candidate_dir = $cachedCandidateDir
         cached_candidate_timestamp_utc = $cachedCandidateTimestampUtc
+        max_cached_candidate_age_minutes = $MaxCachedCandidateAgeMinutes
+        cached_candidate_is_fresh = $cachedCandidateIsFresh
+        cached_candidate_age_minutes = $cachedCandidateAgeMinutes
+        cached_candidate_freshness_status = $cachedCandidateFreshnessStatus
         cached_candidate_server_governor_health = $cachedCandidateServerGovernorHealth
         cached_candidate_server_governor_skipped_for_insufficient_pressure = $cachedCandidateServerGovernorInsufficientPressure
         prism_jar_sync_status = $prismJarSyncStatus
@@ -1677,6 +1767,7 @@ $result = [PSCustomObject]@{
     if (-not [string]::IsNullOrWhiteSpace($result.final_decision) -and $result.final_decision -ne "pending_metrics") {
         if ($result.final_decision -eq "candidate_build_failed" -and `
                 [bool]$PreferCachedDecisionOnBuildFailure -and `
+                [bool]$result.cached_candidate_is_fresh -and `
                 -not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
             $result.decision_source = "cached_candidate_fallback"
             $result.effective_decision = $result.cached_candidate_decision
@@ -1688,12 +1779,24 @@ $result = [PSCustomObject]@{
             $result.effective_decision = $result.final_decision
             $result.effective_readiness_percent = $result.final_readiness_percent
             $result.decision_freshness = "fresh"
+            if ($result.final_decision -eq "candidate_build_failed" -and `
+                    [bool]$PreferCachedDecisionOnBuildFailure -and `
+                    -not [bool]$result.cached_candidate_is_fresh -and `
+                    -not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
+                $result.decision_override_reason = "cached_candidate_not_fresh_for_build_failure_fallback"
+            }
         }
-    } elseif (-not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
+    } elseif (-not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision) -and [bool]$result.cached_candidate_is_fresh) {
         $result.decision_source = "cached_candidate"
         $result.effective_decision = $result.cached_candidate_decision
         $result.effective_readiness_percent = $result.cached_candidate_readiness_percent
         $result.decision_freshness = "stale_metrics_cached_candidate"
+    } elseif (-not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision) -and -not [bool]$result.cached_candidate_is_fresh) {
+        $result.decision_source = "none"
+        $result.effective_decision = ""
+        $result.effective_readiness_percent = ""
+        $result.decision_freshness = "stale_candidate_ignored"
+        $result.decision_override_reason = "cached_candidate_not_fresh"
     } else {
         $result.decision_source = "none"
         $result.effective_decision = ""
