@@ -29,6 +29,7 @@ param(
     [bool]$PreferCachedDecisionOnBuildFailure = $true,
     [bool]$EnableStrictCandidateWindowRetry = $true,
     [int]$StrictCandidateRetryTailSeconds = 600,
+    [bool]$RetryStrictCandidateOnlyOnKpiFailure = $true,
     [int]$MaxMetricsAgeMinutes = 240,
     [int]$MetricsCodeDriftToleranceMinutes = 2,
     [string]$RequiredTelemetrySchemaVersion = "20260318_shadowv2",
@@ -542,6 +543,44 @@ function Add-CandidateBuildAttemptConfig {
         }) | Out-Null
 }
 
+function Get-LatestPreflightKpiStatus {
+    param(
+        [string]$ReportsDirPath
+    )
+
+    $defaultResult = [PSCustomObject]@{
+        report_path = ""
+        kpi_status = ""
+    }
+    if ([string]::IsNullOrWhiteSpace($ReportsDirPath) -or -not (Test-Path -LiteralPath $ReportsDirPath -PathType Container)) {
+        return $defaultResult
+    }
+
+    $latestReport = Get-ChildItem -LiteralPath $ReportsDirPath -File -Filter "phase6_preflight_*.md" -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            Select-Object -First 1
+    if ($null -eq $latestReport) {
+        return $defaultResult
+    }
+
+    $kpiStatus = ""
+    try {
+        foreach ($line in Get-Content -LiteralPath $latestReport.FullName) {
+            if ($line -match "^\-\s*KPI gate:\s*(.+)$") {
+                $kpiStatus = $matches[1].Trim()
+                break
+            }
+        }
+    } catch {
+        Write-Warning ("[Autopilot] Unable to parse KPI status from preflight report {0}: {1}" -f $latestReport.FullName, $_.Exception.Message)
+    }
+
+    return [PSCustomObject]@{
+        report_path = $latestReport.FullName
+        kpi_status = $kpiStatus
+    }
+}
+
 function Resolve-MetricsPath {
     param(
         [string]$PreferredPath,
@@ -981,6 +1020,7 @@ $strictCandidateRetryUsed = $false
 $strictCandidateSuccessAttempt = ""
 $strictCandidateAttemptsSummary = ""
 $strictCandidateLastError = ""
+$strictCandidateRetrySuppressedReason = ""
 
 Push-Location $repoRoot
 try {
@@ -1245,6 +1285,7 @@ try {
                     $strictCandidateSuccessAttempt = ""
                     $strictCandidateLastError = ""
                     $strictCandidateAttemptsSummary = ""
+                    $strictCandidateRetrySuppressedReason = ""
                     $attemptSummaryItems = New-Object 'System.Collections.Generic.List[string]'
 
                     $buildExitCode = 1
@@ -1317,7 +1358,40 @@ try {
                             $strictCandidateLastError = $attemptErrorMessage
                             $attemptSummaryItems.Add(("{0}:failed(exit={1})" -f $attemptName, $attemptExitCode)) | Out-Null
                             if ($strictCandidateAttemptCount -lt $attemptConfigs.Count) {
-                                Write-Warning "[Autopilot] Strict candidate attempt failed. Retrying with alternate metrics window."
+                                $shouldRetry = $true
+                                if ($RetryStrictCandidateOnlyOnKpiFailure) {
+                                    $kpiProbe = Get-LatestPreflightKpiStatus -ReportsDirPath $ReportsDir
+                                    $kpiStatusLabel = [string]$kpiProbe.kpi_status
+                                    $kpiStatusNormalized = if ([string]::IsNullOrWhiteSpace($kpiStatusLabel)) {
+                                        ""
+                                    } else {
+                                        $kpiStatusLabel.Trim().ToLowerInvariant()
+                                    }
+                                    if ($kpiStatusNormalized -ne "fail") {
+                                        $shouldRetry = $false
+                                        $strictCandidateRetrySuppressedReason = if ([string]::IsNullOrWhiteSpace($kpiStatusLabel)) {
+                                            "kpi_status_unavailable"
+                                        } else {
+                                            ("kpi_status_{0}" -f $kpiStatusNormalized)
+                                        }
+                                        $reportLabel = if ([string]::IsNullOrWhiteSpace([string]$kpiProbe.report_path)) {
+                                            "n/a"
+                                        } else {
+                                            [string]$kpiProbe.report_path
+                                        }
+                                        $statusLabel = if ([string]::IsNullOrWhiteSpace($kpiStatusLabel)) {
+                                            "unknown"
+                                        } else {
+                                            $kpiStatusLabel
+                                        }
+                                        Write-Warning ("[Autopilot] Strict candidate retry skipped: latest preflight KPI status is '{0}' ({1})." -f $statusLabel, $reportLabel)
+                                    }
+                                }
+                                if ($shouldRetry) {
+                                    Write-Warning "[Autopilot] Strict candidate attempt failed. Retrying with alternate metrics window."
+                                } else {
+                                    break
+                                }
                             }
                         }
                     }
@@ -1562,11 +1636,13 @@ $result = [PSCustomObject]@{
         candidate_use_full_metrics_history = [bool]$CandidateUseFullMetricsHistory
         enable_strict_candidate_window_retry = [bool]$EnableStrictCandidateWindowRetry
         strict_candidate_retry_tail_seconds = $StrictCandidateRetryTailSeconds
+        retry_strict_candidate_only_on_kpi_failure = [bool]$RetryStrictCandidateOnlyOnKpiFailure
         strict_candidate_attempt_count = $strictCandidateAttemptCount
         strict_candidate_retry_used = $strictCandidateRetryUsed
         strict_candidate_success_attempt = $strictCandidateSuccessAttempt
         strict_candidate_attempts_summary = $strictCandidateAttemptsSummary
         strict_candidate_last_error = $strictCandidateLastError
+        strict_candidate_retry_suppressed_reason = $strictCandidateRetrySuppressedReason
         error_sorting_status = $errorSortingStatus
         error_sorting_blocking_hits = $errorSortingBlockingHits
         error_sorting_known_noise_hits = $errorSortingKnownNoiseHits
