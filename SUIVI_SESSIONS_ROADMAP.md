@@ -4293,3 +4293,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Gate CI `FailOnSummaryIntegrityMissing` ajoutee pour exiger un resume complet quand `SummaryOutputPath` est renseigne (`written=true`, `size_bytes>0`, `sha256` non vide), avec reason `autopilot_failure_reason=summary_integrity_missing` sinon. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnSummaryIntegrityMissing -SummaryOutputPath .\run\pauc_reports\autopilot_summary_integrity_gate.json -SummaryOutputCompress` (OK attendu) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnSummaryIntegrityMissing -SummaryOutputPath .\run\pauc_reports\bad<path>\summary.json` (KO attendu).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 23:32:49 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI `FailOnGitDirtyWorktree` ajoutee avec contexte git dans le resume (`git_context_available`, `git_branch`, `git_commit`, `git_is_dirty`, `git_status_entry_count`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnGitDirtyWorktree` (OK attendu, worktree propre) puis creation d'un fichier non suivi `autopilot_git_dirty_probe.tmp` et rerun `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnGitDirtyWorktree` (KO attendu, `autopilot_failure_reason=git_dirty_worktree`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
