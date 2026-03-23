@@ -4245,3 +4245,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Gate CI `FailOnLatestMetricsNotFresh` ajoutee avec telemetrie `latest_metrics_is_fresh`, `latest_metrics_age_minutes`, `latest_metrics_freshness_status` (raison `autopilot_failure_reason=latest_metrics_not_fresh` si stale). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnLatestMetricsNotFresh` (KO attendu, `stale_age_exceeded`) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -MaxMetricsAgeMinutes 1000 -FailOnLatestMetricsNotFresh` (OK attendu).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:39:10 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Resume autopilot enrichi avec inventaire des gates actives (`active_fail_gate_count`, `active_fail_gates`) pour lecture CI immediate. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK, `active_fail_gate_count=0`) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, `active_fail_gate_count=11`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
