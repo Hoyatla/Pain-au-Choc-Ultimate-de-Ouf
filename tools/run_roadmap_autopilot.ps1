@@ -3,6 +3,7 @@ param(
     [string]$MetricsPath = ".\run\pauc_telemetry\runtime_metrics.csv",
     [string]$StatePath = ".\run\pauc_telemetry\ab_capture_state.json",
     [string]$AutopilotStatePath = ".\run\pauc_telemetry\roadmap_autopilot_state.json",
+    [string]$SummaryOutputPath = "",
     [string]$CandidateRoot = ".\run\beta_candidates",
     [string]$ReportsDir = ".\run\pauc_reports",
     [string]$PrismRoot = "$env:APPDATA\PrismLauncher\instances",
@@ -1060,6 +1061,13 @@ $autopilotStatePathResolved = if ([System.IO.Path]::IsPathRooted($AutopilotState
 } else {
     Join-Path $repoRoot $AutopilotStatePath
 }
+$summaryOutputPathResolved = if ([string]::IsNullOrWhiteSpace($SummaryOutputPath)) {
+    ""
+} elseif ([System.IO.Path]::IsPathRooted($SummaryOutputPath)) {
+    $SummaryOutputPath
+} else {
+    Join-Path $repoRoot $SummaryOutputPath
+}
 $autopilotState = Read-AutopilotState -FilePath $autopilotStatePathResolved
 $lastProcessedMetricsSignature = [string]$autopilotState.last_processed_metrics_signature
 $cachedCandidateDir = [string]$autopilotState.last_candidate_dir
@@ -1878,6 +1886,9 @@ $result = [PSCustomObject]@{
         decision_override_reason = ""
         autopilot_failure_reason = ""
         autopilot_failed = $false
+        summary_output_path = $summaryOutputPathResolved
+        summary_output_written = $false
+        summary_output_error = ""
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
         results_path = $ResultsPath
@@ -1953,6 +1964,22 @@ $result = [PSCustomObject]@{
         $result.autopilot_failure_reason = ""
     }
     $result.autopilot_failed = -not [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)
+
+    if (-not [string]::IsNullOrWhiteSpace($summaryOutputPathResolved)) {
+        try {
+            $summaryOutputDir = Split-Path -Path $summaryOutputPathResolved -Parent
+            if (-not [string]::IsNullOrWhiteSpace($summaryOutputDir)) {
+                New-Item -ItemType Directory -Path $summaryOutputDir -Force | Out-Null
+            }
+            $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $summaryOutputPathResolved -Encoding utf8
+            $result.summary_output_written = $true
+            $result.summary_output_error = ""
+        } catch {
+            $result.summary_output_written = $false
+            $result.summary_output_error = $_.Exception.Message
+            Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
+        }
+    }
 
     Reset-LastExitCode
     Write-Host ""
