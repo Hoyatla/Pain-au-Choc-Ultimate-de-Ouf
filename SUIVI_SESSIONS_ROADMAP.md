@@ -4269,3 +4269,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Mode strict CI ajuste pour compresser le resume JSON par defaut (`StrictCiForceSummaryOutputCompress=$true`) avec trace explicite `strict_ci_summary_output_compress_forced`. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, `summary_output_compressed=true`, forced=true) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates -StrictCiForceSummaryOutputCompress:$false -SummaryOutputCompress:$false` (KO attendu, `summary_output_compressed=false`, forced=false).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 23:01:02 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Gate CI `FailOnMissingSummaryOutput` ajoutee pour exiger un artefact resume ecrit (raison `autopilot_failure_reason=missing_summary_output` sinon). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnMissingSummaryOutput` (KO attendu, aucun `SummaryOutputPath`) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -FailOnMissingSummaryOutput -SummaryOutputPath .\run\pauc_reports\autopilot_summary_required.json` (OK attendu).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
