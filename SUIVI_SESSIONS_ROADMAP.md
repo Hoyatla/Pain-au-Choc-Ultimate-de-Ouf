@@ -4137,3 +4137,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Autopilot resume enrichi pour diagnostic retry/fallback (`strict_candidate_retry_kpi_*`, parsing KPI `status=...` robuste, normalisation `strict_candidate_retry_suppressed_reason`), avec docs README/TRANSFERT synchronisees.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 20:59:47 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Sync startup Prism durci: blocage explicite quand cache candidate `ready_for_beta` est stale (`MaxCachedCandidateAgeMinutes` + `EnforceFreshCachedCandidateForStartupSync`), avec telemetrie `prism_jar_sync_skip_reason` coherente entre startup/post-build.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
