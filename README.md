@@ -521,6 +521,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -FailOnCachedDecisionSource
 .\tools\run_roadmap_autopilot.ps1 -OneShot -FailOnPrismJarSyncNotSynced
 .\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json
+.\tools\run_roadmap_autopilot.ps1 -OneShot -SummaryOutputPath .\run\pauc_reports\autopilot_summary.json -FailOnSummaryOutputWriteError
 ```
 
 Notes autopilot cache/retry:
@@ -534,12 +535,13 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnEffectiveDecisionNotReadyForBeta` force un `exit` en erreur si `effective_decision` est renseignee mais differente de `ready_for_beta`.
 - Pour CI stricte, `-FailOnCachedDecisionSource` force un `exit` en erreur si `decision_source` vient du cache (`cached_candidate` ou `cached_candidate_fallback`).
 - Pour CI stricte, `-FailOnPrismJarSyncNotSynced` force un `exit` en erreur si `prism_jar_sync_status` n'est pas `synced`.
+- Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
-- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `cached_decision_source_used`, `prism_jar_sync_not_synced`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
+- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `cached_decision_source_used`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
-- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_written`, `summary_output_error`).
+- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
 
