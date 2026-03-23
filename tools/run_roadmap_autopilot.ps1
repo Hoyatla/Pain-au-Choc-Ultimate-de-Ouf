@@ -46,6 +46,7 @@ param(
     [switch]$FailOnCachedDecisionSource,
     [switch]$FailOnPrismJarSyncNotSynced,
     [switch]$FailOnSummaryOutputWriteError,
+    [switch]$EnableStrictCiFailGates,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -107,6 +108,19 @@ if ($ErrorSortingNoiseFailHitsTotal -lt 0) {
 }
 if ($ErrorSortingNoiseFailHitsTotal -lt $ErrorSortingNoiseWarnHitsTotal) {
     throw "ErrorSortingNoiseFailHitsTotal must be >= ErrorSortingNoiseWarnHitsTotal"
+}
+
+if ($EnableStrictCiFailGates) {
+    $FailOnStartupSyncStaleCacheBlock = $true
+    $FailOnPendingMetricsDecision = $true
+    $FailOnNoEffectiveDecision = $true
+    $FailOnEffectiveDecisionNotReadyForBeta = $true
+    $FailOnCachedDecisionSource = $true
+    $FailOnPrismJarSyncNotSynced = $true
+    $FailOnSummaryOutputWriteError = $true
+    $FailOnErrorSortingStatusNotPass = $true
+    $FailOnErrorSortingNoiseWarn = $true
+    $RunErrorSortingPass = $true
 }
 
 function Get-LastExitCodeOrZero {
@@ -1891,6 +1905,7 @@ $result = [PSCustomObject]@{
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
         fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
+        strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
