@@ -1873,6 +1873,7 @@ $result = [PSCustomObject]@{
         decision_freshness = "unknown"
         decision_override_reason = ""
         autopilot_failure_reason = ""
+        autopilot_failed = $false
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
         results_path = $ResultsPath
@@ -1940,6 +1941,7 @@ $result = [PSCustomObject]@{
     } else {
         $result.autopilot_failure_reason = ""
     }
+    $result.autopilot_failed = -not [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)
 
     Reset-LastExitCode
     Write-Host ""
