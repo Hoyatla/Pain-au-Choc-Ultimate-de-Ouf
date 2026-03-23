@@ -5,6 +5,7 @@ param(
     [string]$AutopilotStatePath = ".\run\pauc_telemetry\roadmap_autopilot_state.json",
     [string]$SummaryOutputPath = "",
     [string]$StrictCiSummaryOutputPath = ".\run\pauc_reports\autopilot_summary_ci_strict.json",
+    [bool]$StrictCiForceSummaryOutputCompress = $true,
     [switch]$SummaryOutputCompress,
     [string]$CandidateRoot = ".\run\beta_candidates",
     [string]$ReportsDir = ".\run\pauc_reports",
@@ -114,6 +115,7 @@ if ($ErrorSortingNoiseFailHitsTotal -lt $ErrorSortingNoiseWarnHitsTotal) {
 }
 
 $strictCiSummaryOutputDefaulted = $false
+$strictCiSummaryOutputCompressForced = $false
 if ($EnableStrictCiFailGates) {
     $FailOnStartupSyncStaleCacheBlock = $true
     $FailOnPendingMetricsDecision = $true
@@ -130,6 +132,10 @@ if ($EnableStrictCiFailGates) {
     if ([string]::IsNullOrWhiteSpace($SummaryOutputPath) -and -not [string]::IsNullOrWhiteSpace($StrictCiSummaryOutputPath)) {
         $SummaryOutputPath = $StrictCiSummaryOutputPath
         $strictCiSummaryOutputDefaulted = $true
+    }
+    if ($StrictCiForceSummaryOutputCompress -and -not [bool]$SummaryOutputCompress) {
+        $SummaryOutputCompress = $true
+        $strictCiSummaryOutputCompressForced = $true
     }
 }
 
@@ -1948,6 +1954,7 @@ $result = [PSCustomObject]@{
         strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
         strict_ci_summary_output_defaulted = [bool]$strictCiSummaryOutputDefaulted
         strict_ci_summary_output_path = $StrictCiSummaryOutputPath
+        strict_ci_summary_output_compress_forced = [bool]$strictCiSummaryOutputCompressForced
         active_fail_gate_count = $activeFailGates.Count
         active_fail_gates = @($activeFailGates)
         triggered_fail_gate_count = 0
