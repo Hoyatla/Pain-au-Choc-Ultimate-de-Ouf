@@ -4,6 +4,7 @@ param(
     [string]$StatePath = ".\run\pauc_telemetry\ab_capture_state.json",
     [string]$AutopilotStatePath = ".\run\pauc_telemetry\roadmap_autopilot_state.json",
     [string]$SummaryOutputPath = "",
+    [switch]$SummaryOutputCompress,
     [string]$CandidateRoot = ".\run\beta_candidates",
     [string]$ReportsDir = ".\run\pauc_reports",
     [string]$PrismRoot = "$env:APPDATA\PrismLauncher\instances",
@@ -1896,6 +1897,7 @@ $result = [PSCustomObject]@{
         autopilot_failure_reason = ""
         autopilot_failed = $false
         summary_output_path = $summaryOutputPathResolved
+        summary_output_compressed = [bool]$SummaryOutputCompress
         summary_output_written = $false
         summary_output_written_utc = ""
         summary_output_error = ""
@@ -1981,10 +1983,15 @@ $result = [PSCustomObject]@{
             if (-not [string]::IsNullOrWhiteSpace($summaryOutputDir)) {
                 New-Item -ItemType Directory -Path $summaryOutputDir -Force | Out-Null
             }
-            $result | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $summaryOutputPathResolved -Encoding utf8
             $result.summary_output_written = $true
             $result.summary_output_written_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             $result.summary_output_error = ""
+            $summaryJson = if ($SummaryOutputCompress) {
+                $result | ConvertTo-Json -Depth 12 -Compress
+            } else {
+                $result | ConvertTo-Json -Depth 12
+            }
+            $summaryJson | Set-Content -LiteralPath $summaryOutputPathResolved -Encoding utf8
         } catch {
             $result.summary_output_written = $false
             $result.summary_output_written_utc = ""
