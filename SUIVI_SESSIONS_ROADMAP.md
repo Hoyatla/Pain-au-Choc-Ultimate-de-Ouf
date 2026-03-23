@@ -4150,6 +4150,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Option CI ajoutee pour echec explicite sur blocage stale-cache startup (`FailOnStartupSyncStaleCacheBlock`) + docs README/TRANSFERT mises a jour.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-23 21:42:24 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Nouvelles gates CI decision autopilot validees en run reel (`FailOnPendingMetricsDecision`, `FailOnNoEffectiveDecision`, `FailOnEffectiveDecisionNotReadyForBeta`) avec cause normalisee via `autopilot_failure_reason`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-23 21:39:17 (UTC) - Codex
 
 - Statut: in_progress
