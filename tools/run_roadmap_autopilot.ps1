@@ -51,6 +51,7 @@ param(
     [switch]$FailOnPrismJarSyncNotSynced,
     [switch]$FailOnSummaryOutputWriteError,
     [switch]$FailOnMissingSummaryOutput,
+    [switch]$FailOnSummaryIntegrityMissing,
     [switch]$EnableStrictCiFailGates,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
@@ -129,6 +130,7 @@ if ($EnableStrictCiFailGates) {
     $FailOnPrismJarSyncNotSynced = $true
     $FailOnSummaryOutputWriteError = $true
     $FailOnMissingSummaryOutput = $true
+    $FailOnSummaryIntegrityMissing = $true
     $FailOnErrorSortingReportMissing = $true
     $FailOnErrorSortingStatusNotPass = $true
     $FailOnErrorSortingNoiseWarn = $true
@@ -1882,6 +1884,7 @@ if ([bool]$FailOnCachedDecisionSource) { [void]$activeFailGates.Add("cached_deci
 if ([bool]$FailOnPrismJarSyncNotSynced) { [void]$activeFailGates.Add("prism_jar_sync_not_synced") }
 if ([bool]$FailOnSummaryOutputWriteError) { [void]$activeFailGates.Add("summary_output_write_error") }
 if ([bool]$FailOnMissingSummaryOutput) { [void]$activeFailGates.Add("missing_summary_output") }
+if ([bool]$FailOnSummaryIntegrityMissing) { [void]$activeFailGates.Add("summary_integrity_missing") }
 if ([bool]$FailOnStartupSyncStaleCacheBlock) { [void]$activeFailGates.Add("startup_sync_stale_cache_blocked") }
 if ([bool]$FailOnErrorSortingReportMissing) { [void]$activeFailGates.Add("error_sorting_report_missing") }
 if ([bool]$FailOnErrorSortingStatusNotPass) { [void]$activeFailGates.Add("error_sorting_status_not_pass") }
@@ -1961,6 +1964,7 @@ $result = [PSCustomObject]@{
         fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
         fail_on_missing_summary_output = [bool]$FailOnMissingSummaryOutput
+        fail_on_summary_integrity_missing = [bool]$FailOnSummaryIntegrityMissing
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         fail_on_error_sorting_report_missing = [bool]$FailOnErrorSortingReportMissing
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
@@ -2089,6 +2093,13 @@ $result = [PSCustomObject]@{
     if ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
         [void]$triggeredFailGates.Add("startup_sync_stale_cache_blocked")
     }
+    if ([bool]$FailOnSummaryIntegrityMissing -and `
+            -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
+            (-not [bool]$result.summary_output_written -or `
+                [int64]$result.summary_output_size_bytes -le 0 -or `
+                [string]::IsNullOrWhiteSpace($result.summary_output_sha256))) {
+        [void]$triggeredFailGates.Add("summary_integrity_missing")
+    }
     $result.triggered_fail_gate_count = $triggeredFailGates.Count
     $result.triggered_fail_gates = @($triggeredFailGates)
 
@@ -2184,6 +2195,14 @@ $result = [PSCustomObject]@{
             [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
         $result.autopilot_failure_reason = "missing_summary_output"
         $result.autopilot_failed = $true
+    } elseif ([bool]$FailOnSummaryIntegrityMissing -and `
+            -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
+            (-not [bool]$result.summary_output_written -or `
+                [int64]$result.summary_output_size_bytes -le 0 -or `
+                [string]::IsNullOrWhiteSpace($result.summary_output_sha256)) -and `
+            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
+        $result.autopilot_failure_reason = "summary_integrity_missing"
+        $result.autopilot_failed = $true
     }
     if ([bool]$FailOnSummaryOutputWriteError -and `
             -not [string]::IsNullOrWhiteSpace($result.summary_output_error) -and `
@@ -2195,6 +2214,15 @@ $result = [PSCustomObject]@{
             ([string]::IsNullOrWhiteSpace($result.summary_output_path) -or -not [bool]$result.summary_output_written) -and `
             -not ($result.triggered_fail_gates -contains "missing_summary_output")) {
         $result.triggered_fail_gates = @($result.triggered_fail_gates + @("missing_summary_output"))
+        $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
+    }
+    if ([bool]$FailOnSummaryIntegrityMissing -and `
+            -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
+            (-not [bool]$result.summary_output_written -or `
+                [int64]$result.summary_output_size_bytes -le 0 -or `
+                [string]::IsNullOrWhiteSpace($result.summary_output_sha256)) -and `
+            -not ($result.triggered_fail_gates -contains "summary_integrity_missing")) {
+        $result.triggered_fail_gates = @($result.triggered_fail_gates + @("summary_integrity_missing"))
         $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
     }
 
@@ -2258,6 +2286,12 @@ $result = [PSCustomObject]@{
             }
             "missing_summary_output" {
                 throw "Summary output was not produced while FailOnMissingSummaryOutput is enabled."
+            }
+            "summary_integrity_missing" {
+                throw ("Summary output integrity is incomplete (written={0}, size_bytes={1}, sha256_present={2}) while FailOnSummaryIntegrityMissing is enabled." -f `
+                        $result.summary_output_written,
+                        $result.summary_output_size_bytes,
+                        -not [string]::IsNullOrWhiteSpace($result.summary_output_sha256))
             }
             "effective_decision_not_ready_for_beta" {
                 throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)
