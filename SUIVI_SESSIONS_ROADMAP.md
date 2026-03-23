@@ -4251,3 +4251,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Resume autopilot enrichi avec inventaire des gates actives (`active_fail_gate_count`, `active_fail_gates`) pour lecture CI immediate. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK, `active_fail_gate_count=0`) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, `active_fail_gate_count=11`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:41:33 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Resume autopilot complete avec `triggered_fail_gate_count` + `triggered_fail_gates` pour exposer toutes les gates en echec effectif (pas seulement la prioritaire dans `autopilot_failure_reason`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK, triggered=0) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, triggered>1 avec cause primaire `pending_metrics_decision`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
