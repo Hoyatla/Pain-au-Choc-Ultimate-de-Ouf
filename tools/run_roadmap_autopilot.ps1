@@ -1987,6 +1987,8 @@ $result = [PSCustomObject]@{
         summary_output_write_mode = "atomic"
         summary_output_written = $false
         summary_output_written_utc = ""
+        summary_output_size_bytes = 0
+        summary_output_sha256 = ""
         summary_output_error = ""
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
@@ -2146,12 +2148,18 @@ $result = [PSCustomObject]@{
             $summaryOutputTempPath = "{0}.tmp.{1}" -f $summaryOutputPathResolved, ([guid]::NewGuid().ToString("N"))
             $summaryJson | Set-Content -LiteralPath $summaryOutputTempPath -Encoding utf8
             Move-Item -LiteralPath $summaryOutputTempPath -Destination $summaryOutputPathResolved -Force
+            $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
+            $summaryHash = Get-FileHash -LiteralPath $summaryOutputPathResolved -Algorithm SHA256 -ErrorAction Stop
             $result.summary_output_written = $true
             $result.summary_output_written_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $result.summary_output_size_bytes = [int64]$summaryFileInfo.Length
+            $result.summary_output_sha256 = [string]$summaryHash.Hash
             $result.summary_output_error = ""
         } catch {
             $result.summary_output_written = $false
             $result.summary_output_written_utc = ""
+            $result.summary_output_size_bytes = 0
+            $result.summary_output_sha256 = ""
             $result.summary_output_error = $_.Exception.Message
             Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
         } finally {
