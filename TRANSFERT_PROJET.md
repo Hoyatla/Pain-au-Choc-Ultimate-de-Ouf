@@ -20,7 +20,7 @@ Ce document donne un etat de passation exploitable immediatement pour un nouveau
   - sync startup Prism bloque quand le cache `ready_for_beta` est stale (desactivable via `-EnforceFreshCachedCandidateForStartupSync:$false`), avec raison explicite `prism_jar_sync_skip_reason=stale_cached_candidate_startup_sync_blocked`.
   - mode CI strict disponible: `-FailOnStartupSyncStaleCacheBlock` (echec du run si ce blocage stale-cache survient).
   - gates CI decision disponibles: `-FailOnPendingMetricsDecision`, `-FailOnNoEffectiveDecision`, `-FailOnEffectiveDecisionNotReadyForBeta`, `-FailOnCachedDecisionSource`, `-FailOnPrismJarSyncNotSynced`, `-FailOnSummaryOutputWriteError` (raison exposee dans `autopilot_failure_reason`, booleen agregat `autopilot_failed`).
-  - export machine-readable disponible: `-SummaryOutputPath <fichier.json>` (`summary_output_written/written_utc/error` dans le resume).
+  - export machine-readable disponible: `-SummaryOutputPath <fichier.json>` (`summary_output_compressed`, `summary_output_written/written_utc/error` dans le resume; mode compact via `-SummaryOutputCompress`).
   - resume autopilot enrichi: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`, `decision_freshness` detaille en cas de `candidate_build_failed`.
 - Lecture du resultat:
   - utiliser `effective_decision` / `effective_readiness_percent` comme verdict exploitable.
