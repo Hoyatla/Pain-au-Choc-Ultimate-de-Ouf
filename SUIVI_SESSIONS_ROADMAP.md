@@ -4227,3 +4227,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Switch bundle CI `EnableStrictCiFailGates` ajoute pour activer automatiquement l'ensemble des gates strictes + forcer `RunErrorSortingPass` (`strict_ci_fail_gates_enabled=true` dans le resume). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot` (OK) puis `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu, `autopilot_failure_reason=pending_metrics_decision`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-23 22:24:00 (UTC) - Codex
+
+- Statut: in_progress
+- Note: En mode `EnableStrictCiFailGates`, export JSON strict auto active si `SummaryOutputPath` absent (`strict_ci_summary_output_defaulted=true`, `summary_output_written=true`, chemin par defaut `run/pauc_reports/autopilot_summary_ci_strict.json`). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -InstanceName test -OneShot -EnableStrictCiFailGates` (KO attendu sur gate `pending_metrics_decision`, mais artefact resume strict ecrit).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
