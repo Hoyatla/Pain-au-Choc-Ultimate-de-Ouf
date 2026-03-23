@@ -1853,6 +1853,18 @@ $latestMetricsFreshness = Get-CachedCandidateFreshness `
 $latestMetricsIsFresh = [bool]$latestMetricsFreshness.is_fresh
 $latestMetricsAgeMinutes = $latestMetricsFreshness.age_minutes
 $latestMetricsFreshnessStatus = [string]$latestMetricsFreshness.status
+$activeFailGates = New-Object System.Collections.Generic.List[string]
+if ([bool]$FailOnPendingMetricsDecision) { [void]$activeFailGates.Add("pending_metrics_decision") }
+if ([bool]$FailOnLatestMetricsNotFresh) { [void]$activeFailGates.Add("latest_metrics_not_fresh") }
+if ([bool]$FailOnNoEffectiveDecision) { [void]$activeFailGates.Add("missing_effective_decision") }
+if ([bool]$FailOnEffectiveDecisionNotReadyForBeta) { [void]$activeFailGates.Add("effective_decision_not_ready_for_beta") }
+if ([bool]$FailOnNonFreshEffectiveDecision) { [void]$activeFailGates.Add("effective_decision_not_fresh") }
+if ([bool]$FailOnCachedDecisionSource) { [void]$activeFailGates.Add("cached_decision_source_used") }
+if ([bool]$FailOnPrismJarSyncNotSynced) { [void]$activeFailGates.Add("prism_jar_sync_not_synced") }
+if ([bool]$FailOnSummaryOutputWriteError) { [void]$activeFailGates.Add("summary_output_write_error") }
+if ([bool]$FailOnStartupSyncStaleCacheBlock) { [void]$activeFailGates.Add("startup_sync_stale_cache_blocked") }
+if ([bool]$FailOnErrorSortingStatusNotPass) { [void]$activeFailGates.Add("error_sorting_status_not_pass") }
+if ([bool]$FailOnErrorSortingNoiseWarn) { [void]$activeFailGates.Add("error_sorting_noise_warn_or_worse") }
 
 $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -1930,6 +1942,8 @@ $result = [PSCustomObject]@{
         strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
         strict_ci_summary_output_defaulted = [bool]$strictCiSummaryOutputDefaulted
         strict_ci_summary_output_path = $StrictCiSummaryOutputPath
+        active_fail_gate_count = $activeFailGates.Count
+        active_fail_gates = @($activeFailGates)
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
