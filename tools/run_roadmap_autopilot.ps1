@@ -51,6 +51,7 @@ param(
     [int]$ErrorSortingTopN = 25,
     [int]$ErrorSortingNoiseWarnHitsTotal = 500,
     [int]$ErrorSortingNoiseFailHitsTotal = 2000,
+    [switch]$FailOnErrorSortingStatusNotPass,
     [switch]$FailOnErrorSortingNoiseWarn,
     [switch]$FailOnErrorSortingBlockingPatterns,
     [switch]$FailOnErrorSortingNoiseFail
@@ -1888,6 +1889,7 @@ $result = [PSCustomObject]@{
         fail_on_prism_jar_sync_not_synced = [bool]$FailOnPrismJarSyncNotSynced
         fail_on_summary_output_write_error = [bool]$FailOnSummaryOutputWriteError
         fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
+        fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
         fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
@@ -1964,6 +1966,9 @@ $result = [PSCustomObject]@{
     } elseif ([bool]$FailOnCachedDecisionSource -and `
             ($result.decision_source -eq "cached_candidate" -or $result.decision_source -eq "cached_candidate_fallback")) {
         $result.autopilot_failure_reason = "cached_decision_source_used"
+    } elseif ([bool]$FailOnErrorSortingStatusNotPass -and `
+            $result.error_sorting_status -ne "pass") {
+        $result.autopilot_failure_reason = "error_sorting_status_not_pass"
     } elseif ([bool]$FailOnErrorSortingNoiseWarn -and `
             ($result.error_sorting_known_noise_status -eq "warn" -or `
                 $result.error_sorting_known_noise_status -eq "fail" -or `
@@ -2029,6 +2034,12 @@ $result = [PSCustomObject]@{
             }
             "cached_decision_source_used" {
                 throw ("Decision source is '{0}' while FailOnCachedDecisionSource is enabled." -f $result.decision_source)
+            }
+            "error_sorting_status_not_pass" {
+                throw ("Error sorting status is '{0}' (blocking_hits={1}, known_noise_status={2}) while FailOnErrorSortingStatusNotPass is enabled." -f `
+                        $result.error_sorting_status,
+                        $result.error_sorting_blocking_hits,
+                        $result.error_sorting_known_noise_status)
             }
             "error_sorting_noise_warn_or_worse" {
                 throw ("Error sorting known noise status is '{0}' (hits={1}) while FailOnErrorSortingNoiseWarn is enabled." -f `
