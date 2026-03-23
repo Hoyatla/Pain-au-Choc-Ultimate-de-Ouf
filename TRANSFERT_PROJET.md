@@ -20,6 +20,7 @@ Ce document donne un etat de passation exploitable immediatement pour un nouveau
   - sync startup Prism bloque quand le cache `ready_for_beta` est stale (desactivable via `-EnforceFreshCachedCandidateForStartupSync:$false`), avec raison explicite `prism_jar_sync_skip_reason=stale_cached_candidate_startup_sync_blocked`.
   - mode CI strict disponible: `-FailOnStartupSyncStaleCacheBlock` (echec du run si ce blocage stale-cache survient).
   - gates CI decision disponibles: `-FailOnPendingMetricsDecision`, `-FailOnNoEffectiveDecision`, `-FailOnEffectiveDecisionNotReadyForBeta`, `-FailOnCachedDecisionSource`, `-FailOnPrismJarSyncNotSynced`, `-FailOnErrorSortingStatusNotPass`, `-FailOnErrorSortingNoiseWarn`, `-FailOnSummaryOutputWriteError` (raison exposee dans `autopilot_failure_reason`, incluant `error_sorting_status_not_pass`, `error_sorting_noise_warn_or_worse` et `error_sorting_noise_status_unavailable`; booleen agregat `autopilot_failed`).
+  - bundle CI strict disponible: `-EnableStrictCiFailGates` active d'un coup toutes les gates CI strictes et force `RunErrorSortingPass` (etat expose via `strict_ci_fail_gates_enabled`).
   - export machine-readable disponible: `-SummaryOutputPath <fichier.json>` (`summary_output_compressed`, `summary_output_written/written_utc/error` dans le resume; mode compact via `-SummaryOutputCompress`).
   - resume autopilot enrichi: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`, `decision_freshness` detaille en cas de `candidate_build_failed`.
 - Lecture du resultat:
