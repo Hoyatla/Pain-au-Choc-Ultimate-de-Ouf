@@ -515,6 +515,8 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180
 .\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180 -EnforceFreshCachedCandidateForStartupSync:$false
 .\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180 -FailOnStartupSyncStaleCacheBlock
+.\tools\run_roadmap_autopilot.ps1 -OneShot -FailOnPendingMetricsDecision
+.\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180 -FailOnNoEffectiveDecision
 ```
 
 Notes autopilot cache/retry:
@@ -523,9 +525,12 @@ Notes autopilot cache/retry:
 - Le fallback/usage du candidate cache peut etre borne dans le temps via `-MaxCachedCandidateAgeMinutes <n>` (`0` = desactive, valeur par defaut).
 - Quand ce cache est stale et que `-EnforceFreshCachedCandidateForStartupSync` est actif (defaut), le sync startup Prism est bloque (`prism_jar_sync_status=skipped`, `prism_jar_sync_skip_reason=stale_cached_candidate_startup_sync_blocked`) au lieu de retomber sur `build_libs`.
 - Pour CI stricte, `-FailOnStartupSyncStaleCacheBlock` force un `exit` en erreur quand ce blocage stale-cache se produit.
+- Pour CI stricte, `-FailOnPendingMetricsDecision` force un `exit` en erreur si `final_decision=pending_metrics`.
+- Pour CI stricte, `-FailOnNoEffectiveDecision` force un `exit` en erreur si `effective_decision` est vide.
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
+- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `missing_effective_decision`, `startup_sync_stale_cache_blocked`).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
 
