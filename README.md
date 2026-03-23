@@ -566,7 +566,7 @@ Notes autopilot cache/retry:
 - `error_sorting_report_md_exists`, `error_sorting_report_json_exists`, `error_sorting_reports_present` permettent de verifier la disponibilite des artefacts error sorting.
 - `active_fail_gate_count` et `active_fail_gates` listent les gates CI actives effectivement evaluees sur le run.
 - `triggered_fail_gate_count` et `triggered_fail_gates` listent les gates qui auraient echoue sur ce run (utile quand plusieurs gates sont en echec mais qu'une seule devient `autopilot_failure_reason`).
-- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_write_mode`, `summary_output_written`, `summary_output_written_utc`, `summary_output_error`).
+- `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_write_mode`, `summary_output_written`, `summary_output_written_utc`, `summary_output_size_bytes`, `summary_output_sha256`, `summary_output_error`).
 - Le resume JSON est ecrit en mode atomique (`summary_output_write_mode=atomic`, ecriture temp + replace) pour eviter les fichiers partiels en CI.
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
