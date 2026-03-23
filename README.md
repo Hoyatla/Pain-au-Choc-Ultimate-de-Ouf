@@ -511,7 +511,14 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -PreferCachedDecisionOnBuildFailure:$false
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCandidateWindowRetry:$false
 .\tools\run_roadmap_autopilot.ps1 -OneShot -StrictCandidateRetryTailSeconds 900
+.\tools\run_roadmap_autopilot.ps1 -OneShot -RetryStrictCandidateOnlyOnKpiFailure:$false
+.\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180
 ```
+
+Notes autopilot cache/retry:
+
+- Le retry strict multi-fenetre peut etre force meme hors echec KPI via `-RetryStrictCandidateOnlyOnKpiFailure:$false`.
+- Le fallback/usage du candidate cache peut etre borne dans le temps via `-MaxCachedCandidateAgeMinutes <n>` (`0` = desactive, valeur par defaut).
 
 Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
 
