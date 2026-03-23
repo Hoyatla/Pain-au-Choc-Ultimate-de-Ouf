@@ -37,6 +37,7 @@ param(
     [bool]$AutoSyncModJarToPrism = $true,
     [switch]$BuildJarBeforeSync,
     [bool]$EnforceFreshCachedCandidateForStartupSync = $true,
+    [switch]$FailOnStartupSyncStaleCacheBlock,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
@@ -1135,6 +1136,7 @@ $prismJarSyncPath = ""
 $prismJarSyncSha256 = ""
 $prismJarSyncSkipReason = ""
 $prismStartupSyncBlockedByStaleCache = $false
+$startupSyncStaleCacheBlockTriggered = $false
 $strictCandidateAttemptCount = 0
 $strictCandidateRetryUsed = $false
 $strictCandidateSuccessAttempt = ""
@@ -1164,6 +1166,7 @@ try {
                 $MaxCachedCandidateAgeMinutes -gt 0) {
             $startupSyncBlockedByStaleCachedCandidate = $true
             $prismStartupSyncBlockedByStaleCache = $true
+            $startupSyncStaleCacheBlockTriggered = $true
             $prismJarSyncStatus = "skipped"
             $prismJarSyncSource = "none"
             $prismJarSyncPath = ""
@@ -1855,6 +1858,7 @@ $result = [PSCustomObject]@{
         prism_jar_sync_sha256 = $prismJarSyncSha256
         prism_jar_sync_skip_reason = $prismJarSyncSkipReason
         prism_startup_sync_blocked_by_stale_cache = $prismStartupSyncBlockedByStaleCache
+        fail_on_startup_sync_stale_cache_block = [bool]$FailOnStartupSyncStaleCacheBlock
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
@@ -1921,6 +1925,10 @@ $result = [PSCustomObject]@{
     Write-Host "Roadmap autopilot summary"
     Write-Host "-------------------------"
     $result | Format-List
+
+    if ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
+        throw "Startup Prism sync was blocked because cached candidate is stale."
+    }
 } finally {
     Pop-Location
 }
