@@ -513,12 +513,14 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -StrictCandidateRetryTailSeconds 900
 .\tools\run_roadmap_autopilot.ps1 -OneShot -RetryStrictCandidateOnlyOnKpiFailure:$false
 .\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180
+.\tools\run_roadmap_autopilot.ps1 -OneShot -MaxCachedCandidateAgeMinutes 180 -EnforceFreshCachedCandidateForStartupSync:$false
 ```
 
 Notes autopilot cache/retry:
 
 - Le retry strict multi-fenetre peut etre force meme hors echec KPI via `-RetryStrictCandidateOnlyOnKpiFailure:$false`.
 - Le fallback/usage du candidate cache peut etre borne dans le temps via `-MaxCachedCandidateAgeMinutes <n>` (`0` = desactive, valeur par defaut).
+- Quand ce cache est stale et que `-EnforceFreshCachedCandidateForStartupSync` est actif (defaut), le sync startup Prism est bloque (`prism_jar_sync_status=skipped`, `prism_jar_sync_skip_reason=stale_cached_candidate_startup_sync_blocked`) au lieu de retomber sur `build_libs`.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
