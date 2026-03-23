@@ -1134,6 +1134,7 @@ $prismJarSyncSource = ""
 $prismJarSyncPath = ""
 $prismJarSyncSha256 = ""
 $prismJarSyncSkipReason = ""
+$prismStartupSyncBlockedByStaleCache = $false
 $strictCandidateAttemptCount = 0
 $strictCandidateRetryUsed = $false
 $strictCandidateSuccessAttempt = ""
@@ -1162,6 +1163,7 @@ try {
                 -not $cachedCandidateIsFresh -and `
                 $MaxCachedCandidateAgeMinutes -gt 0) {
             $startupSyncBlockedByStaleCachedCandidate = $true
+            $prismStartupSyncBlockedByStaleCache = $true
             $prismJarSyncStatus = "skipped"
             $prismJarSyncSource = "none"
             $prismJarSyncPath = ""
@@ -1852,6 +1854,7 @@ $result = [PSCustomObject]@{
         prism_jar_sync_path = $prismJarSyncPath
         prism_jar_sync_sha256 = $prismJarSyncSha256
         prism_jar_sync_skip_reason = $prismJarSyncSkipReason
+        prism_startup_sync_blocked_by_stale_cache = $prismStartupSyncBlockedByStaleCache
         enforce_fresh_cached_candidate_for_startup_sync = [bool]$EnforceFreshCachedCandidateForStartupSync
         prefer_cached_decision_on_build_failure = [bool]$PreferCachedDecisionOnBuildFailure
         decision_source = "none"
