@@ -1055,6 +1055,7 @@ $cachedCandidateFreshness = Get-CachedCandidateFreshness `
 $cachedCandidateIsFresh = [bool]$cachedCandidateFreshness.is_fresh
 $cachedCandidateAgeMinutes = $cachedCandidateFreshness.age_minutes
 $cachedCandidateFreshnessStatus = [string]$cachedCandidateFreshness.status
+$cachedCandidateEligibleForUse = ($cachedCandidateIsFresh -and -not [string]::IsNullOrWhiteSpace($cachedCandidateDecision))
 if (-not $cachedCandidateIsFresh -and -not [string]::IsNullOrWhiteSpace($cachedCandidateDecision)) {
     $cachedAgeLabel = if ($null -eq $cachedCandidateAgeMinutes) { "unknown" } else { [string]$cachedCandidateAgeMinutes }
     Write-Warning ("[Autopilot] Cached candidate ignored: freshness={0}, age_minutes={1}, max_age_minutes={2}." -f `
@@ -1700,6 +1701,7 @@ $cachedCandidateFreshness = Get-CachedCandidateFreshness `
 $cachedCandidateIsFresh = [bool]$cachedCandidateFreshness.is_fresh
 $cachedCandidateAgeMinutes = $cachedCandidateFreshness.age_minutes
 $cachedCandidateFreshnessStatus = [string]$cachedCandidateFreshness.status
+$cachedCandidateEligibleForUse = ($cachedCandidateIsFresh -and -not [string]::IsNullOrWhiteSpace($cachedCandidateDecision))
 
 $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -1745,6 +1747,7 @@ $result = [PSCustomObject]@{
         cached_candidate_timestamp_utc = $cachedCandidateTimestampUtc
         max_cached_candidate_age_minutes = $MaxCachedCandidateAgeMinutes
         cached_candidate_is_fresh = $cachedCandidateIsFresh
+        cached_candidate_eligible_for_use = $cachedCandidateEligibleForUse
         cached_candidate_age_minutes = $cachedCandidateAgeMinutes
         cached_candidate_freshness_status = $cachedCandidateFreshnessStatus
         cached_candidate_server_governor_health = $cachedCandidateServerGovernorHealth
@@ -1767,8 +1770,7 @@ $result = [PSCustomObject]@{
     if (-not [string]::IsNullOrWhiteSpace($result.final_decision) -and $result.final_decision -ne "pending_metrics") {
         if ($result.final_decision -eq "candidate_build_failed" -and `
                 [bool]$PreferCachedDecisionOnBuildFailure -and `
-                [bool]$result.cached_candidate_is_fresh -and `
-                -not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
+                [bool]$result.cached_candidate_eligible_for_use) {
             $result.decision_source = "cached_candidate_fallback"
             $result.effective_decision = $result.cached_candidate_decision
             $result.effective_readiness_percent = $result.cached_candidate_readiness_percent
@@ -1783,10 +1785,20 @@ $result = [PSCustomObject]@{
                     [bool]$PreferCachedDecisionOnBuildFailure -and `
                     -not [bool]$result.cached_candidate_is_fresh -and `
                     -not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
+                $result.decision_freshness = "fresh_failure_cached_candidate_stale"
                 $result.decision_override_reason = "cached_candidate_not_fresh_for_build_failure_fallback"
+            } elseif ($result.final_decision -eq "candidate_build_failed" -and `
+                    [bool]$PreferCachedDecisionOnBuildFailure -and `
+                    [string]::IsNullOrWhiteSpace($result.cached_candidate_decision)) {
+                $result.decision_freshness = "fresh_failure_no_cached_candidate"
+                $result.decision_override_reason = "no_cached_candidate_available_for_build_failure_fallback"
+            } elseif ($result.final_decision -eq "candidate_build_failed" -and `
+                    -not [bool]$PreferCachedDecisionOnBuildFailure) {
+                $result.decision_freshness = "fresh_failure_no_fallback"
+                $result.decision_override_reason = "cached_fallback_disabled_on_build_failure"
             }
         }
-    } elseif (-not [string]::IsNullOrWhiteSpace($result.cached_candidate_decision) -and [bool]$result.cached_candidate_is_fresh) {
+    } elseif ([bool]$result.cached_candidate_eligible_for_use) {
         $result.decision_source = "cached_candidate"
         $result.effective_decision = $result.cached_candidate_decision
         $result.effective_readiness_percent = $result.cached_candidate_readiness_percent
