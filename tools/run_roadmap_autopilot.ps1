@@ -568,12 +568,19 @@ function Get-LatestPreflightKpiStatus {
     }
 
     $kpiStatus = ""
+    $fallbackKpiStatus = ""
     try {
         foreach ($line in Get-Content -LiteralPath $latestReport.FullName) {
-            if ($line -match "^\-\s*KPI gate:\s*(.+)$") {
+            if ($line -match "^\-\s*KPI gate:\s*status\s*=\s*([^,\s]+)") {
                 $kpiStatus = $matches[1].Trim()
                 break
             }
+            if ([string]::IsNullOrWhiteSpace($fallbackKpiStatus) -and $line -match "^\-\s*KPI gate:\s*(.+)$") {
+                $fallbackKpiStatus = $matches[1].Trim()
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($kpiStatus)) {
+            $kpiStatus = $fallbackKpiStatus
         }
     } catch {
         Write-Warning ("[Autopilot] Unable to parse KPI status from preflight report {0}: {1}" -f $latestReport.FullName, $_.Exception.Message)
