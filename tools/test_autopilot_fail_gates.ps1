@@ -91,6 +91,7 @@ $results = New-Object System.Collections.Generic.List[object]
 
 foreach ($case in $cases) {
     $summaryPath = Join-Path $sessionDir ("{0}.json" -f $case.name)
+    $caseLogPath = Join-Path $sessionDir ("{0}.log" -f $case.name)
     $runArgs = @{
         OneShot = $true
         PrismRoot = $PrismRoot
@@ -112,7 +113,7 @@ foreach ($case in $cases) {
     $exitCode = 0
     Reset-LastExitCode
     try {
-        & $AutopilotScriptPath @runArgs
+        & $AutopilotScriptPath @runArgs *> $caseLogPath
         $exitCode = Get-LastExitCodeOrZero
     } catch {
         $exceptionMessage = $_.Exception.Message
@@ -168,6 +169,7 @@ foreach ($case in $cases) {
             autopilot_failure_reason = $actualReason
             error_sorting_pass_forced_by_fail_gate = $actualForced
             summary_path = if (Test-Path -LiteralPath $summaryPath -PathType Leaf) { (Resolve-Path -LiteralPath $summaryPath).Path } else { "" }
+            case_log_path = if (Test-Path -LiteralPath $caseLogPath -PathType Leaf) { (Resolve-Path -LiteralPath $caseLogPath).Path } else { "" }
             checks = @($checks.ToArray())
             exception = $exceptionMessage
         })
@@ -193,8 +195,9 @@ Write-Host ""
 Write-Host "Autopilot fail-gate self-test"
 Write-Host "-----------------------------"
 Write-Host ("Cases: total={0}, passed={1}, failed={2}" -f $report.total_cases, $report.passed_cases, $report.failed_cases)
+Write-Host ("Case logs directory: {0}" -f (Resolve-Path -LiteralPath $sessionDir).Path)
 Write-Host ""
-@($results.ToArray()) | Select-Object name, passed, exit_code, autopilot_failure_reason, error_sorting_pass_forced_by_fail_gate | Format-Table -AutoSize
+@($results.ToArray()) | Select-Object name, passed, exit_code, autopilot_failure_reason, error_sorting_pass_forced_by_fail_gate, case_log_path | Format-Table -AutoSize
 Write-Host ""
 Write-Host ("Report: {0}" -f (Resolve-Path -LiteralPath $reportPath).Path)
 
