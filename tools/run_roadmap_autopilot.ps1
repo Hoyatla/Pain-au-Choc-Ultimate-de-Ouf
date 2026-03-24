@@ -136,6 +136,8 @@ if ($EnableStrictCiFailGates) {
     $FailOnErrorSortingReportMissing = $true
     $FailOnErrorSortingStatusNotPass = $true
     $FailOnErrorSortingNoiseWarn = $true
+    $FailOnErrorSortingBlockingPatterns = $true
+    $FailOnErrorSortingNoiseFail = $true
     $RunErrorSortingPass = $true
     if ([string]::IsNullOrWhiteSpace($SummaryOutputPath) -and -not [string]::IsNullOrWhiteSpace($StrictCiSummaryOutputPath)) {
         $SummaryOutputPath = $StrictCiSummaryOutputPath
@@ -1264,6 +1266,8 @@ $errorSortingTriageEvents = 0
 $errorSortingTriageUniqueSignatures = 0
 $errorSortingReportMdPath = ""
 $errorSortingReportJsonPath = ""
+$errorSortingExitCode = 0
+$errorSortingError = ""
 $prismJarSyncStatus = if ($AutoSyncModJarToPrism) { "not_run" } else { "disabled" }
 $prismJarSyncSource = ""
 $prismJarSyncPath = ""
@@ -1807,11 +1811,16 @@ try {
                             Reset-LastExitCode
                             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
                             $errorSortingExitCode = Get-LastExitCodeOrZero
-                            if ($errorSortingExitCode -ne 0) {
-                                throw ("run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode)
+                            $errorSortingError = if ($errorSortingExitCode -eq 0) {
+                                ""
+                            } else {
+                                "run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode
                             }
                             $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
                             if ($null -eq $errorSortingSummary) {
+                                if ($errorSortingExitCode -ne 0) {
+                                    throw ("{0} and returned no summary object." -f $errorSortingError)
+                                }
                                 $errorSortingStatus = "missing_output"
                                 Write-Warning "[Autopilot] Error sorting pass returned no summary object."
                             } else {
@@ -1831,9 +1840,16 @@ try {
                                         $errorSortingKnownNoiseHits,
                                         $errorSortingKnownNoiseStatus)
                             }
+                            if (($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) -and $errorSortingExitCode -ne 0) {
+                                $buildExitCode = 1
+                            }
                         } catch {
                             $errorSortingStatus = "error"
                             $errorSortingKnownNoiseStatus = "error"
+                            if ($errorSortingExitCode -eq 0) {
+                                $errorSortingExitCode = 1
+                            }
+                            $errorSortingError = $_.Exception.Message
                             Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
                             if ($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) {
                                 $buildExitCode = 1
@@ -1892,11 +1908,16 @@ try {
             Reset-LastExitCode
             $errorSortingRaw = & $errorSortingScript @errorSortingArgs
             $errorSortingExitCode = Get-LastExitCodeOrZero
-            if ($errorSortingExitCode -ne 0) {
-                throw ("run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode)
+            $errorSortingError = if ($errorSortingExitCode -eq 0) {
+                ""
+            } else {
+                "run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode
             }
             $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
             if ($null -eq $errorSortingSummary) {
+                if ($errorSortingExitCode -ne 0) {
+                    throw ("{0} and returned no summary object." -f $errorSortingError)
+                }
                 $errorSortingStatus = "missing_output"
                 Write-Warning "[Autopilot] Error sorting pass returned no summary object."
             } else {
@@ -1919,10 +1940,11 @@ try {
         } catch {
             $errorSortingStatus = "error"
             $errorSortingKnownNoiseStatus = "error"
-            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
-            if ($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) {
-                throw
+            if ($errorSortingExitCode -eq 0) {
+                $errorSortingExitCode = 1
             }
+            $errorSortingError = $_.Exception.Message
+            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
         }
     }
 
@@ -1965,6 +1987,8 @@ if ([bool]$FailOnStartupSyncStaleCacheBlock) { [void]$activeFailGates.Add("start
 if ([bool]$FailOnErrorSortingReportMissing) { [void]$activeFailGates.Add("error_sorting_report_missing") }
 if ([bool]$FailOnErrorSortingStatusNotPass) { [void]$activeFailGates.Add("error_sorting_status_not_pass") }
 if ([bool]$FailOnErrorSortingNoiseWarn) { [void]$activeFailGates.Add("error_sorting_noise_warn_or_worse") }
+if ([bool]$FailOnErrorSortingBlockingPatterns) { [void]$activeFailGates.Add("error_sorting_blocking_patterns") }
+if ([bool]$FailOnErrorSortingNoiseFail) { [void]$activeFailGates.Add("error_sorting_noise_fail") }
 
 $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -2005,6 +2029,8 @@ $result = [PSCustomObject]@{
         error_sorting_blocking_hits = $errorSortingBlockingHits
         error_sorting_known_noise_hits = $errorSortingKnownNoiseHits
         error_sorting_known_noise_status = $errorSortingKnownNoiseStatus
+        error_sorting_exit_code = [int]$errorSortingExitCode
+        error_sorting_error = $errorSortingError
         error_sorting_known_noise_warn_hits_total = $errorSortingKnownNoiseWarnHitsTotal
         error_sorting_known_noise_fail_hits_total = $errorSortingKnownNoiseFailHitsTotal
         error_sorting_triage_total_events = $errorSortingTriageEvents
@@ -2052,6 +2078,8 @@ $result = [PSCustomObject]@{
         fail_on_error_sorting_report_missing = [bool]$FailOnErrorSortingReportMissing
         fail_on_error_sorting_status_not_pass = [bool]$FailOnErrorSortingStatusNotPass
         fail_on_error_sorting_noise_warn = [bool]$FailOnErrorSortingNoiseWarn
+        fail_on_error_sorting_blocking_patterns = [bool]$FailOnErrorSortingBlockingPatterns
+        fail_on_error_sorting_noise_fail = [bool]$FailOnErrorSortingNoiseFail
         strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
         strict_ci_summary_output_defaulted = [bool]$strictCiSummaryOutputDefaulted
         strict_ci_summary_output_path = $StrictCiSummaryOutputPath
@@ -2151,8 +2179,18 @@ $result = [PSCustomObject]@{
     if ([bool]$FailOnErrorSortingReportMissing -and -not [bool]$result.error_sorting_reports_present) {
         [void]$triggeredFailGates.Add("error_sorting_report_missing")
     }
+    if ([bool]$FailOnErrorSortingBlockingPatterns -and $result.error_sorting_status -ne "pass") {
+        [void]$triggeredFailGates.Add("error_sorting_blocking_patterns")
+    }
     if ([bool]$FailOnErrorSortingStatusNotPass -and $result.error_sorting_status -ne "pass") {
         [void]$triggeredFailGates.Add("error_sorting_status_not_pass")
+    }
+    if ([bool]$FailOnErrorSortingNoiseFail -and $result.error_sorting_known_noise_status -eq "fail") {
+        [void]$triggeredFailGates.Add("error_sorting_noise_fail")
+    } elseif ([bool]$FailOnErrorSortingNoiseFail -and `
+            $result.error_sorting_known_noise_status -ne "pass" -and `
+            $result.error_sorting_known_noise_status -ne "warn") {
+        [void]$triggeredFailGates.Add("error_sorting_noise_status_unavailable_for_fail")
     }
     if ([bool]$FailOnErrorSortingNoiseWarn -and `
             ($result.error_sorting_known_noise_status -eq "warn" -or `
@@ -2206,9 +2244,19 @@ $result = [PSCustomObject]@{
     } elseif ([bool]$FailOnErrorSortingReportMissing -and `
             -not [bool]$result.error_sorting_reports_present) {
         $result.autopilot_failure_reason = "error_sorting_report_missing"
+    } elseif ([bool]$FailOnErrorSortingBlockingPatterns -and `
+            $result.error_sorting_status -ne "pass") {
+        $result.autopilot_failure_reason = "error_sorting_blocking_patterns"
     } elseif ([bool]$FailOnErrorSortingStatusNotPass -and `
             $result.error_sorting_status -ne "pass") {
         $result.autopilot_failure_reason = "error_sorting_status_not_pass"
+    } elseif ([bool]$FailOnErrorSortingNoiseFail -and `
+            $result.error_sorting_known_noise_status -eq "fail") {
+        $result.autopilot_failure_reason = "error_sorting_noise_fail"
+    } elseif ([bool]$FailOnErrorSortingNoiseFail -and `
+            $result.error_sorting_known_noise_status -ne "pass" -and `
+            $result.error_sorting_known_noise_status -ne "warn") {
+        $result.autopilot_failure_reason = "error_sorting_noise_status_unavailable_for_fail"
     } elseif ([bool]$FailOnErrorSortingNoiseWarn -and `
             ($result.error_sorting_known_noise_status -eq "warn" -or `
                 $result.error_sorting_known_noise_status -eq "fail" -or `
@@ -2358,11 +2406,31 @@ $result = [PSCustomObject]@{
                         $result.error_sorting_report_json_exists,
                         $result.error_sorting_status)
             }
+            "error_sorting_blocking_patterns" {
+                throw ("Error sorting status is '{0}' (blocking_hits={1}, exit_code={2}, error='{3}') while FailOnErrorSortingBlockingPatterns is enabled." -f `
+                        $result.error_sorting_status,
+                        $result.error_sorting_blocking_hits,
+                        $result.error_sorting_exit_code,
+                        $result.error_sorting_error)
+            }
             "error_sorting_status_not_pass" {
                 throw ("Error sorting status is '{0}' (blocking_hits={1}, known_noise_status={2}) while FailOnErrorSortingStatusNotPass is enabled." -f `
                         $result.error_sorting_status,
                         $result.error_sorting_blocking_hits,
                         $result.error_sorting_known_noise_status)
+            }
+            "error_sorting_noise_fail" {
+                throw ("Error sorting known noise status is '{0}' (hits={1}, fail_threshold={2}, exit_code={3}) while FailOnErrorSortingNoiseFail is enabled." -f `
+                        $result.error_sorting_known_noise_status,
+                        $result.error_sorting_known_noise_hits,
+                        $result.error_sorting_known_noise_fail_hits_total,
+                        $result.error_sorting_exit_code)
+            }
+            "error_sorting_noise_status_unavailable_for_fail" {
+                throw ("Error sorting known noise status is '{0}' (exit_code={1}, error='{2}') while FailOnErrorSortingNoiseFail is enabled." -f `
+                        $result.error_sorting_known_noise_status,
+                        $result.error_sorting_exit_code,
+                        $result.error_sorting_error)
             }
             "error_sorting_noise_warn_or_worse" {
                 throw ("Error sorting known noise status is '{0}' (hits={1}) while FailOnErrorSortingNoiseWarn is enabled." -f `
