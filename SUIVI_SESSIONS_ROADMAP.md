@@ -4330,6 +4330,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Ergonomie self-test amelioree: `tools/test_autopilot_fail_gates.ps1` redirige maintenant la sortie detaillee de chaque cas vers des logs dedies (`<case>.log`) pour garder une sortie console concise tout en preservant la tracabilite complete (chemin expose dans le tableau resultat + repertoire de session). Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `4/4` pass, logs sous `run/pauc_reports/autopilot_fail_gate_selftest_20260324_003019_749`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-24 00:32:56 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test etendue: ajout d'un cas `strict_bundle_enables_error_sorting_gates` dans `tools/test_autopilot_fail_gates.ps1` pour verifier automatiquement que `EnableStrictCiFailGates` active bien `fail_on_error_sorting_blocking_patterns=true` et `fail_on_error_sorting_noise_fail=true` (en plus de `strict_ci_fail_gates_enabled=true`), avec assertion de `autopilot_failure_reason=pending_metrics_decision` en scenario metrics absentes.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-24 00:26:04 (UTC) - Codex
 
 - Statut: in_progress
