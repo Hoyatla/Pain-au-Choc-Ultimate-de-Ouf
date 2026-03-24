@@ -551,23 +551,26 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnGitDirtyWorktree` force un `exit` en erreur si le worktree git local n'est pas propre (ou si le contexte git est indisponible).
 - Pour CI stricte, `-FailOnPrismJarSyncNotSynced` force un `exit` en erreur si `prism_jar_sync_status` n'est pas `synced`.
 - Pour CI stricte, `-FailOnErrorSortingReportMissing` force un `exit` en erreur si les artefacts `error_sorting_report_md_path`/`error_sorting_report_json_path` sont absents.
+- Pour CI stricte, `-FailOnErrorSortingBlockingPatterns` force un `exit` en erreur si `error_sorting_status` n'est pas `pass` (blocking detecte ou statut indisponible).
 - Pour CI stricte, `-FailOnErrorSortingStatusNotPass` force un `exit` en erreur si `error_sorting_status` n'est pas `pass` (`not_run`, `missing_output`, `error`, `fail`).
 - Pour CI stricte, `-FailOnErrorSortingNoiseWarn` force un `exit` en erreur si `error_sorting_known_noise_status` vaut `warn`, `fail` ou `error`, et echoue aussi si ce statut n'est pas disponible (`not_run`, `missing_output`).
+- Pour CI stricte, `-FailOnErrorSortingNoiseFail` force un `exit` en erreur si `error_sorting_known_noise_status=fail`, et echoue aussi si ce statut est indisponible (`not_run`, `missing_output`, `error`).
 - Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
 - Pour CI stricte, `-FailOnMissingSummaryOutput` force un `exit` en erreur si aucun JSON resume n'est produit (`summary_output_path` vide ou `summary_output_written=false`).
 - Pour CI stricte, `-FailOnSummaryIntegrityMissing` force un `exit` en erreur si l'artefact resume est incomplet (`summary_output_written=false`, `summary_output_size_bytes<=0` ou `summary_output_sha256` vide) quand `SummaryOutputPath` est renseigne.
-- `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/git clean/prism/error sorting status+reports/summary write/summary required/startup stale-cache) et force `RunErrorSortingPass`.
+- `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/git clean/prism/error sorting status+reports+blocking+noise fail/summary write/summary required/startup stale-cache) et force `RunErrorSortingPass`.
 - En mode `EnableStrictCiFailGates`, si `SummaryOutputPath` n'est pas fourni, un export est force automatiquement vers `StrictCiSummaryOutputPath` (defaut: `.\run\pauc_reports\autopilot_summary_ci_strict.json`).
 - En mode `EnableStrictCiFailGates`, la compression du JSON resume est activee par defaut (`StrictCiForceSummaryOutputCompress=$true`, desactivable).
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.
-- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `latest_metrics_not_fresh`, `missing_effective_decision`, `effective_decision_not_fresh`, `cached_decision_source_used`, `error_sorting_report_missing`, `error_sorting_status_not_pass`, `error_sorting_noise_warn_or_worse`, `error_sorting_noise_status_unavailable`, `git_context_unavailable`, `git_dirty_worktree`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `missing_summary_output`, `summary_integrity_missing`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
+- `autopilot_failure_reason` expose la cause de fail gate (`pending_metrics_decision`, `latest_metrics_not_fresh`, `missing_effective_decision`, `effective_decision_not_fresh`, `cached_decision_source_used`, `error_sorting_report_missing`, `error_sorting_blocking_patterns`, `error_sorting_status_not_pass`, `error_sorting_noise_fail`, `error_sorting_noise_status_unavailable_for_fail`, `error_sorting_noise_warn_or_worse`, `error_sorting_noise_status_unavailable`, `git_context_unavailable`, `git_dirty_worktree`, `prism_jar_sync_not_synced`, `summary_output_write_error`, `missing_summary_output`, `summary_integrity_missing`, `effective_decision_not_ready_for_beta`, `startup_sync_stale_cache_blocked`).
 - `autopilot_failed` passe a `true` quand un fail gate autopilot est declenche.
 - `strict_ci_fail_gates_enabled` indique si le bundle strict a ete active (`EnableStrictCiFailGates`).
 - `strict_ci_summary_output_defaulted` indique si `SummaryOutputPath` a ete injecte automatiquement par le mode strict (chemin source dans `strict_ci_summary_output_path`).
 - `strict_ci_summary_output_compress_forced` indique si `SummaryOutputCompress` a ete active automatiquement par le mode strict.
 - `error_sorting_report_md_exists`, `error_sorting_report_json_exists`, `error_sorting_reports_present` permettent de verifier la disponibilite des artefacts error sorting.
+- `error_sorting_exit_code` et `error_sorting_error` exposent le code retour et l'erreur brute du passage `run_error_sorting_pass` pour debug CI.
 - `git_context_available`, `git_context_error`, `git_branch`, `git_commit`, `git_is_dirty`, `git_status_entry_count` permettent d'auditer l'etat git du run.
 - `active_fail_gate_count` et `active_fail_gates` listent les gates CI actives effectivement evaluees sur le run.
 - `triggered_fail_gate_count` et `triggered_fail_gates` listent les gates qui auraient echoue sur ce run (utile quand plusieurs gates sont en echec mais qu'une seule devient `autopilot_failure_reason`).
