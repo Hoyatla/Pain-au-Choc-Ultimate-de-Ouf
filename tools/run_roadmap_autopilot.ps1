@@ -269,6 +269,97 @@ function Get-LastOutputObject {
     return $Value
 }
 
+function Invoke-ErrorSortingPass {
+    param(
+        [string]$ScriptPath,
+        [string]$InstanceName,
+        [string]$PrismRootPath,
+        [string]$OutDir,
+        [int]$TopN,
+        [int]$KnownNoiseWarnHitsTotal,
+        [int]$KnownNoiseFailHitsTotal,
+        [bool]$IncludeWarnings,
+        [bool]$FailOnBlocking,
+        [bool]$FailOnNoiseFail
+    )
+
+    $result = [PSCustomObject]@{
+        status = "error"
+        blocking_hits = 0
+        known_noise_hits = 0
+        known_noise_status = "error"
+        known_noise_warn_hits_total = $KnownNoiseWarnHitsTotal
+        known_noise_fail_hits_total = $KnownNoiseFailHitsTotal
+        triage_total_events = 0
+        triage_unique_signatures = 0
+        report_md_path = ""
+        report_json_path = ""
+        exit_code = 0
+        error = ""
+    }
+
+    try {
+        $errorSortingArgs = @{
+            InstanceName = $InstanceName
+            PrismInstancesRoot = $PrismRootPath
+            OutDir = $OutDir
+            TopN = $TopN
+            KnownNoiseWarnHitsTotal = $KnownNoiseWarnHitsTotal
+            KnownNoiseFailHitsTotal = $KnownNoiseFailHitsTotal
+            RunQuarantine = $true
+            PassThru = $true
+        }
+        if ($IncludeWarnings) {
+            $errorSortingArgs.IncludeWarnings = $true
+        }
+        if ($FailOnBlocking) {
+            $errorSortingArgs.FailOnBlocking = $true
+        }
+        if ($FailOnNoiseFail) {
+            $errorSortingArgs.FailOnNoiseFail = $true
+        }
+
+        Reset-LastExitCode
+        $errorSortingRaw = & $ScriptPath @errorSortingArgs
+        $result.exit_code = Get-LastExitCodeOrZero
+        if ($result.exit_code -ne 0) {
+            $result.error = "run_error_sorting_pass exited with code {0}" -f $result.exit_code
+        }
+
+        $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
+        if ($null -eq $errorSortingSummary) {
+            if ($result.exit_code -ne 0) {
+                throw ("{0} and returned no summary object." -f $result.error)
+            }
+            $result.status = "missing_output"
+            $result.known_noise_status = "missing_output"
+            return $result
+        }
+
+        $result.status = [string]$errorSortingSummary.overall_status
+        $result.blocking_hits = [int]$errorSortingSummary.blocking_hits_total
+        $result.known_noise_hits = [int]$errorSortingSummary.known_noise_hits_total
+        $result.known_noise_status = [string]$errorSortingSummary.known_noise_status
+        $result.known_noise_warn_hits_total = [int]$errorSortingSummary.known_noise_warn_hits_total
+        $result.known_noise_fail_hits_total = [int]$errorSortingSummary.known_noise_fail_hits_total
+        $result.triage_total_events = [int]$errorSortingSummary.triage_total_events
+        $result.triage_unique_signatures = [int]$errorSortingSummary.triage_unique_signatures
+        $result.report_md_path = [string]$errorSortingSummary.report_md_path
+        $result.report_json_path = [string]$errorSortingSummary.report_json_path
+        return $result
+    } catch {
+        $result.status = "error"
+        $result.known_noise_status = "error"
+        if ($result.exit_code -eq 0) {
+            $result.exit_code = 1
+        }
+        $result.error = $_.Exception.Message
+        return $result
+    } finally {
+        Reset-LastExitCode
+    }
+}
+
 function Read-AutopilotState {
     param(
         [string]$FilePath
@@ -1798,73 +1889,44 @@ try {
                     }
 
                     if ($buildExitCode -eq 0 -and $RunErrorSortingPass) {
-                        try {
-                            $errorSortingArgs = @{
-                                InstanceName = $InstanceName
-                                PrismInstancesRoot = $PrismRoot
-                                OutDir = $ReportsDir
-                                TopN = $ErrorSortingTopN
-                                KnownNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
-                                KnownNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
-                                RunQuarantine = $true
-                                PassThru = $true
-                            }
-                            if ($ErrorSortingIncludeWarnings) {
-                                $errorSortingArgs.IncludeWarnings = $true
-                            }
-                            if ($FailOnErrorSortingBlockingPatterns) {
-                                $errorSortingArgs.FailOnBlocking = $true
-                            }
-                            if ($FailOnErrorSortingNoiseFail) {
-                                $errorSortingArgs.FailOnNoiseFail = $true
-                            }
+                        $errorSortingResult = Invoke-ErrorSortingPass `
+                            -ScriptPath $errorSortingScript `
+                            -InstanceName $InstanceName `
+                            -PrismRootPath $PrismRoot `
+                            -OutDir $ReportsDir `
+                            -TopN $ErrorSortingTopN `
+                            -KnownNoiseWarnHitsTotal $ErrorSortingNoiseWarnHitsTotal `
+                            -KnownNoiseFailHitsTotal $ErrorSortingNoiseFailHitsTotal `
+                            -IncludeWarnings ([bool]$ErrorSortingIncludeWarnings) `
+                            -FailOnBlocking ([bool]$FailOnErrorSortingBlockingPatterns) `
+                            -FailOnNoiseFail ([bool]$FailOnErrorSortingNoiseFail)
 
-                            Reset-LastExitCode
-                            $errorSortingRaw = & $errorSortingScript @errorSortingArgs
-                            $errorSortingExitCode = Get-LastExitCodeOrZero
-                            $errorSortingError = if ($errorSortingExitCode -eq 0) {
-                                ""
-                            } else {
-                                "run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode
-                            }
-                            $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
-                            if ($null -eq $errorSortingSummary) {
-                                if ($errorSortingExitCode -ne 0) {
-                                    throw ("{0} and returned no summary object." -f $errorSortingError)
-                                }
-                                $errorSortingStatus = "missing_output"
-                                Write-Warning "[Autopilot] Error sorting pass returned no summary object."
-                            } else {
-                                $errorSortingStatus = [string]$errorSortingSummary.overall_status
-                                $errorSortingBlockingHits = [int]$errorSortingSummary.blocking_hits_total
-                                $errorSortingKnownNoiseHits = [int]$errorSortingSummary.known_noise_hits_total
-                                $errorSortingKnownNoiseStatus = [string]$errorSortingSummary.known_noise_status
-                                $errorSortingKnownNoiseWarnHitsTotal = [int]$errorSortingSummary.known_noise_warn_hits_total
-                                $errorSortingKnownNoiseFailHitsTotal = [int]$errorSortingSummary.known_noise_fail_hits_total
-                                $errorSortingTriageEvents = [int]$errorSortingSummary.triage_total_events
-                                $errorSortingTriageUniqueSignatures = [int]$errorSortingSummary.triage_unique_signatures
-                                $errorSortingReportMdPath = [string]$errorSortingSummary.report_md_path
-                                $errorSortingReportJsonPath = [string]$errorSortingSummary.report_json_path
-                                Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise={2} ({3})" -f `
-                                        $errorSortingStatus,
-                                        $errorSortingBlockingHits,
-                                        $errorSortingKnownNoiseHits,
-                                        $errorSortingKnownNoiseStatus)
-                            }
-                            if (($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) -and $errorSortingExitCode -ne 0) {
-                                $buildExitCode = 1
-                            }
-                        } catch {
-                            $errorSortingStatus = "error"
-                            $errorSortingKnownNoiseStatus = "error"
-                            if ($errorSortingExitCode -eq 0) {
-                                $errorSortingExitCode = 1
-                            }
-                            $errorSortingError = $_.Exception.Message
-                            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
-                            if ($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) {
-                                $buildExitCode = 1
-                            }
+                        $errorSortingStatus = [string]$errorSortingResult.status
+                        $errorSortingBlockingHits = [int]$errorSortingResult.blocking_hits
+                        $errorSortingKnownNoiseHits = [int]$errorSortingResult.known_noise_hits
+                        $errorSortingKnownNoiseStatus = [string]$errorSortingResult.known_noise_status
+                        $errorSortingKnownNoiseWarnHitsTotal = [int]$errorSortingResult.known_noise_warn_hits_total
+                        $errorSortingKnownNoiseFailHitsTotal = [int]$errorSortingResult.known_noise_fail_hits_total
+                        $errorSortingTriageEvents = [int]$errorSortingResult.triage_total_events
+                        $errorSortingTriageUniqueSignatures = [int]$errorSortingResult.triage_unique_signatures
+                        $errorSortingReportMdPath = [string]$errorSortingResult.report_md_path
+                        $errorSortingReportJsonPath = [string]$errorSortingResult.report_json_path
+                        $errorSortingExitCode = [int]$errorSortingResult.exit_code
+                        $errorSortingError = [string]$errorSortingResult.error
+
+                        if ($errorSortingStatus -eq "missing_output") {
+                            Write-Warning "[Autopilot] Error sorting pass returned no summary object."
+                        } elseif ($errorSortingStatus -eq "error") {
+                            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $errorSortingError)
+                        } else {
+                            Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise={2} ({3})" -f `
+                                    $errorSortingStatus,
+                                    $errorSortingBlockingHits,
+                                    $errorSortingKnownNoiseHits,
+                                    $errorSortingKnownNoiseStatus)
+                        }
+                        if (($FailOnErrorSortingBlockingPatterns -or $FailOnErrorSortingNoiseFail) -and $errorSortingExitCode -ne 0) {
+                            $buildExitCode = 1
                         }
                     }
 
@@ -1895,67 +1957,41 @@ try {
     }
 
     if ($RunErrorSortingPass -and $errorSortingStatus -eq "not_run") {
-        try {
-            $errorSortingArgs = @{
-                InstanceName = $InstanceName
-                PrismInstancesRoot = $PrismRoot
-                OutDir = $ReportsDir
-                TopN = $ErrorSortingTopN
-                KnownNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
-                KnownNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
-                RunQuarantine = $true
-                PassThru = $true
-            }
-            if ($ErrorSortingIncludeWarnings) {
-                $errorSortingArgs.IncludeWarnings = $true
-            }
-            if ($FailOnErrorSortingBlockingPatterns) {
-                $errorSortingArgs.FailOnBlocking = $true
-            }
-            if ($FailOnErrorSortingNoiseFail) {
-                $errorSortingArgs.FailOnNoiseFail = $true
-            }
+        $errorSortingResult = Invoke-ErrorSortingPass `
+            -ScriptPath $errorSortingScript `
+            -InstanceName $InstanceName `
+            -PrismRootPath $PrismRoot `
+            -OutDir $ReportsDir `
+            -TopN $ErrorSortingTopN `
+            -KnownNoiseWarnHitsTotal $ErrorSortingNoiseWarnHitsTotal `
+            -KnownNoiseFailHitsTotal $ErrorSortingNoiseFailHitsTotal `
+            -IncludeWarnings ([bool]$ErrorSortingIncludeWarnings) `
+            -FailOnBlocking ([bool]$FailOnErrorSortingBlockingPatterns) `
+            -FailOnNoiseFail ([bool]$FailOnErrorSortingNoiseFail)
 
-            Reset-LastExitCode
-            $errorSortingRaw = & $errorSortingScript @errorSortingArgs
-            $errorSortingExitCode = Get-LastExitCodeOrZero
-            $errorSortingError = if ($errorSortingExitCode -eq 0) {
-                ""
-            } else {
-                "run_error_sorting_pass exited with code {0}" -f $errorSortingExitCode
-            }
-            $errorSortingSummary = Get-LastOutputObject -Value $errorSortingRaw
-            if ($null -eq $errorSortingSummary) {
-                if ($errorSortingExitCode -ne 0) {
-                    throw ("{0} and returned no summary object." -f $errorSortingError)
-                }
-                $errorSortingStatus = "missing_output"
-                Write-Warning "[Autopilot] Error sorting pass returned no summary object."
-            } else {
-                $errorSortingStatus = [string]$errorSortingSummary.overall_status
-                $errorSortingBlockingHits = [int]$errorSortingSummary.blocking_hits_total
-                $errorSortingKnownNoiseHits = [int]$errorSortingSummary.known_noise_hits_total
-                $errorSortingKnownNoiseStatus = [string]$errorSortingSummary.known_noise_status
-                $errorSortingKnownNoiseWarnHitsTotal = [int]$errorSortingSummary.known_noise_warn_hits_total
-                $errorSortingKnownNoiseFailHitsTotal = [int]$errorSortingSummary.known_noise_fail_hits_total
-                $errorSortingTriageEvents = [int]$errorSortingSummary.triage_total_events
-                $errorSortingTriageUniqueSignatures = [int]$errorSortingSummary.triage_unique_signatures
-                $errorSortingReportMdPath = [string]$errorSortingSummary.report_md_path
-                $errorSortingReportJsonPath = [string]$errorSortingSummary.report_json_path
-                Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise={2} ({3})" -f `
-                        $errorSortingStatus,
-                        $errorSortingBlockingHits,
-                        $errorSortingKnownNoiseHits,
-                        $errorSortingKnownNoiseStatus)
-            }
-        } catch {
-            $errorSortingStatus = "error"
-            $errorSortingKnownNoiseStatus = "error"
-            if ($errorSortingExitCode -eq 0) {
-                $errorSortingExitCode = 1
-            }
-            $errorSortingError = $_.Exception.Message
-            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $_.Exception.Message)
+        $errorSortingStatus = [string]$errorSortingResult.status
+        $errorSortingBlockingHits = [int]$errorSortingResult.blocking_hits
+        $errorSortingKnownNoiseHits = [int]$errorSortingResult.known_noise_hits
+        $errorSortingKnownNoiseStatus = [string]$errorSortingResult.known_noise_status
+        $errorSortingKnownNoiseWarnHitsTotal = [int]$errorSortingResult.known_noise_warn_hits_total
+        $errorSortingKnownNoiseFailHitsTotal = [int]$errorSortingResult.known_noise_fail_hits_total
+        $errorSortingTriageEvents = [int]$errorSortingResult.triage_total_events
+        $errorSortingTriageUniqueSignatures = [int]$errorSortingResult.triage_unique_signatures
+        $errorSortingReportMdPath = [string]$errorSortingResult.report_md_path
+        $errorSortingReportJsonPath = [string]$errorSortingResult.report_json_path
+        $errorSortingExitCode = [int]$errorSortingResult.exit_code
+        $errorSortingError = [string]$errorSortingResult.error
+
+        if ($errorSortingStatus -eq "missing_output") {
+            Write-Warning "[Autopilot] Error sorting pass returned no summary object."
+        } elseif ($errorSortingStatus -eq "error") {
+            Write-Warning ("[Autopilot] Error sorting pass failed: {0}" -f $errorSortingError)
+        } else {
+            Write-Host ("[Autopilot] Error sorting pass: status={0}, blocking_hits={1}, known_noise={2} ({3})" -f `
+                    $errorSortingStatus,
+                    $errorSortingBlockingHits,
+                    $errorSortingKnownNoiseHits,
+                    $errorSortingKnownNoiseStatus)
         }
     }
 
