@@ -4324,6 +4324,12 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Note: Nouveau script de non-regression ajoute: `tools/test_autopilot_fail_gates.ps1`. Le self-test execute 4 cas deterministes (baseline, `FailOnErrorSortingBlockingPatterns`, `FailOnErrorSortingStatusNotPass`, `FailOnErrorSortingNoiseFail`) en environnement metrics/logs volontairement absent, valide `autopilot_failure_reason` + `error_sorting_pass_forced_by_fail_gate` et publie un rapport JSON de session. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `total=4`, `passed=4`, `failed=0`, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_002811_546/autopilot_fail_gate_selftest_summary.json`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
 
+## Checkpoint 2026-03-24 00:30:27 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Ergonomie self-test amelioree: `tools/test_autopilot_fail_gates.ps1` redirige maintenant la sortie detaillee de chaque cas vers des logs dedies (`<case>.log`) pour garder une sortie console concise tout en preservant la tracabilite complete (chemin expose dans le tableau resultat + repertoire de session). Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `4/4` pass, logs sous `run/pauc_reports/autopilot_fail_gate_selftest_20260324_003019_749`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
 ## Checkpoint 2026-03-24 00:26:04 (UTC) - Codex
 
 - Statut: in_progress
