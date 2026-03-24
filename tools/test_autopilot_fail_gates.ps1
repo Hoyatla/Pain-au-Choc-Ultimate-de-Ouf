@@ -51,6 +51,9 @@ $cases = @(
         expect_failed = $false
         expect_exit_nonzero = $false
         expect_forced_error_sorting = $false
+        expected_strict_ci = $null
+        expected_fail_on_error_sorting_blocking_patterns = $null
+        expected_fail_on_error_sorting_noise_fail = $null
     },
     [PSCustomObject]@{
         name = "blocking_gate_forces_error_sorting"
@@ -62,6 +65,9 @@ $cases = @(
         expect_failed = $true
         expect_exit_nonzero = $true
         expect_forced_error_sorting = $true
+        expected_strict_ci = $null
+        expected_fail_on_error_sorting_blocking_patterns = $null
+        expected_fail_on_error_sorting_noise_fail = $null
     },
     [PSCustomObject]@{
         name = "status_gate_forces_error_sorting"
@@ -73,6 +79,9 @@ $cases = @(
         expect_failed = $true
         expect_exit_nonzero = $true
         expect_forced_error_sorting = $true
+        expected_strict_ci = $null
+        expected_fail_on_error_sorting_blocking_patterns = $null
+        expected_fail_on_error_sorting_noise_fail = $null
     },
     [PSCustomObject]@{
         name = "noise_fail_gate_forces_error_sorting"
@@ -84,6 +93,23 @@ $cases = @(
         expect_failed = $true
         expect_exit_nonzero = $true
         expect_forced_error_sorting = $true
+        expected_strict_ci = $null
+        expected_fail_on_error_sorting_blocking_patterns = $null
+        expected_fail_on_error_sorting_noise_fail = $null
+    },
+    [PSCustomObject]@{
+        name = "strict_bundle_enables_error_sorting_gates"
+        gate_args = @{
+            EnableStrictCiFailGates = $true
+            StrictCiForceSummaryOutputCompress = $false
+        }
+        expected_reason = "pending_metrics_decision"
+        expect_failed = $true
+        expect_exit_nonzero = $true
+        expect_forced_error_sorting = $false
+        expected_strict_ci = $true
+        expected_fail_on_error_sorting_blocking_patterns = $true
+        expected_fail_on_error_sorting_noise_fail = $true
     }
 )
 
@@ -137,6 +163,9 @@ foreach ($case in $cases) {
     $actualReason = if ($null -eq $summary) { "" } else { [string]$summary.autopilot_failure_reason }
     $actualFailed = if ($null -eq $summary) { ($exitCode -ne 0) } else { [bool]$summary.autopilot_failed }
     $actualForced = if ($null -eq $summary) { $false } else { [bool]$summary.error_sorting_pass_forced_by_fail_gate }
+    $actualStrictCi = if ($null -eq $summary) { $false } else { [bool]$summary.strict_ci_fail_gates_enabled }
+    $actualFailOnBlocking = if ($null -eq $summary) { $false } else { [bool]$summary.fail_on_error_sorting_blocking_patterns }
+    $actualFailOnNoiseFail = if ($null -eq $summary) { $false } else { [bool]$summary.fail_on_error_sorting_noise_fail }
 
     $checks = New-Object System.Collections.Generic.List[string]
     $passed = $true
@@ -160,6 +189,20 @@ foreach ($case in $cases) {
         $checks.Add("unexpected_error_sorting_force_flag")
         $passed = $false
     }
+    if ($null -ne $case.expected_strict_ci -and $actualStrictCi -ne [bool]$case.expected_strict_ci) {
+        $checks.Add("unexpected_strict_ci_flag")
+        $passed = $false
+    }
+    if ($null -ne $case.expected_fail_on_error_sorting_blocking_patterns -and `
+            $actualFailOnBlocking -ne [bool]$case.expected_fail_on_error_sorting_blocking_patterns) {
+        $checks.Add("unexpected_fail_on_error_sorting_blocking_patterns_flag")
+        $passed = $false
+    }
+    if ($null -ne $case.expected_fail_on_error_sorting_noise_fail -and `
+            $actualFailOnNoiseFail -ne [bool]$case.expected_fail_on_error_sorting_noise_fail) {
+        $checks.Add("unexpected_fail_on_error_sorting_noise_fail_flag")
+        $passed = $false
+    }
 
     $results.Add([PSCustomObject]@{
             name = $case.name
@@ -168,6 +211,9 @@ foreach ($case in $cases) {
             autopilot_failed = $actualFailed
             autopilot_failure_reason = $actualReason
             error_sorting_pass_forced_by_fail_gate = $actualForced
+            strict_ci_fail_gates_enabled = $actualStrictCi
+            fail_on_error_sorting_blocking_patterns = $actualFailOnBlocking
+            fail_on_error_sorting_noise_fail = $actualFailOnNoiseFail
             summary_path = if (Test-Path -LiteralPath $summaryPath -PathType Leaf) { (Resolve-Path -LiteralPath $summaryPath).Path } else { "" }
             case_log_path = if (Test-Path -LiteralPath $caseLogPath -PathType Leaf) { (Resolve-Path -LiteralPath $caseLogPath).Path } else { "" }
             checks = @($checks.ToArray())
@@ -197,7 +243,7 @@ Write-Host "-----------------------------"
 Write-Host ("Cases: total={0}, passed={1}, failed={2}" -f $report.total_cases, $report.passed_cases, $report.failed_cases)
 Write-Host ("Case logs directory: {0}" -f (Resolve-Path -LiteralPath $sessionDir).Path)
 Write-Host ""
-@($results.ToArray()) | Select-Object name, passed, exit_code, autopilot_failure_reason, error_sorting_pass_forced_by_fail_gate, case_log_path | Format-Table -AutoSize
+@($results.ToArray()) | Select-Object name, passed, exit_code, autopilot_failure_reason, strict_ci_fail_gates_enabled, error_sorting_pass_forced_by_fail_gate, case_log_path | Format-Table -AutoSize
 Write-Host ""
 Write-Host ("Report: {0}" -f (Resolve-Path -LiteralPath $reportPath).Path)
 
