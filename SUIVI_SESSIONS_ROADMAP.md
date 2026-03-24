@@ -4317,3 +4317,21 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Refactor de maintenance applique sur `run_roadmap_autopilot.ps1`: extraction d'une fonction unique `Invoke-ErrorSortingPass` pour supprimer la duplication des deux chemins d'execution error sorting (post-build et fallback one-shot), avec comportement conserve (status/hits/reports/exit_code/error). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$false -SummaryOutputPath .\run\pauc_reports\autopilot_refactor_no_force_probe.json` (OK attendu) et `.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingBlockingPatterns -SummaryOutputPath .\run\pauc_reports\autopilot_refactor_force_probe.json` (KO attendu, `autopilot_failure_reason=error_sorting_blocking_patterns`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 00:28:43 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Nouveau script de non-regression ajoute: `tools/test_autopilot_fail_gates.ps1`. Le self-test execute 4 cas deterministes (baseline, `FailOnErrorSortingBlockingPatterns`, `FailOnErrorSortingStatusNotPass`, `FailOnErrorSortingNoiseFail`) en environnement metrics/logs volontairement absent, valide `autopilot_failure_reason` + `error_sorting_pass_forced_by_fail_gate` et publie un rapport JSON de session. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `total=4`, `passed=4`, `failed=0`, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_002811_546/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 00:26:04 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 00:26:21 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
