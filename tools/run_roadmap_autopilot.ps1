@@ -120,6 +120,7 @@ if ($ErrorSortingNoiseFailHitsTotal -lt $ErrorSortingNoiseWarnHitsTotal) {
 
 $strictCiSummaryOutputDefaulted = $false
 $strictCiSummaryOutputCompressForced = $false
+$errorSortingPassForcedByFailGate = $false
 if ($EnableStrictCiFailGates) {
     $FailOnStartupSyncStaleCacheBlock = $true
     $FailOnPendingMetricsDecision = $true
@@ -147,6 +148,16 @@ if ($EnableStrictCiFailGates) {
         $SummaryOutputCompress = $true
         $strictCiSummaryOutputCompressForced = $true
     }
+}
+
+$errorSortingFailGateRequested = [bool]$FailOnErrorSortingReportMissing -or `
+    [bool]$FailOnErrorSortingStatusNotPass -or `
+    [bool]$FailOnErrorSortingNoiseWarn -or `
+    [bool]$FailOnErrorSortingBlockingPatterns -or `
+    [bool]$FailOnErrorSortingNoiseFail
+if ($errorSortingFailGateRequested -and -not [bool]$RunErrorSortingPass) {
+    $RunErrorSortingPass = $true
+    $errorSortingPassForcedByFailGate = $true
 }
 
 function Get-LastExitCodeOrZero {
@@ -2084,6 +2095,7 @@ $result = [PSCustomObject]@{
         strict_ci_summary_output_defaulted = [bool]$strictCiSummaryOutputDefaulted
         strict_ci_summary_output_path = $StrictCiSummaryOutputPath
         strict_ci_summary_output_compress_forced = [bool]$strictCiSummaryOutputCompressForced
+        error_sorting_pass_forced_by_fail_gate = [bool]$errorSortingPassForcedByFailGate
         active_fail_gate_count = $activeFailGates.Count
         active_fail_gates = @($activeFailGates)
         triggered_fail_gate_count = 0
