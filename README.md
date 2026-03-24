@@ -555,6 +555,7 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnErrorSortingStatusNotPass` force un `exit` en erreur si `error_sorting_status` n'est pas `pass` (`not_run`, `missing_output`, `error`, `fail`).
 - Pour CI stricte, `-FailOnErrorSortingNoiseWarn` force un `exit` en erreur si `error_sorting_known_noise_status` vaut `warn`, `fail` ou `error`, et echoue aussi si ce statut n'est pas disponible (`not_run`, `missing_output`).
 - Pour CI stricte, `-FailOnErrorSortingNoiseFail` force un `exit` en erreur si `error_sorting_known_noise_status=fail`, et echoue aussi si ce statut est indisponible (`not_run`, `missing_output`, `error`).
+- Si une gate error sorting est active (`FailOnErrorSorting*`) alors `RunErrorSortingPass` est force automatiquement pour eviter un statut `not_run` ambigu (`error_sorting_pass_forced_by_fail_gate=true`).
 - Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
 - Pour CI stricte, `-FailOnMissingSummaryOutput` force un `exit` en erreur si aucun JSON resume n'est produit (`summary_output_path` vide ou `summary_output_written=false`).
 - Pour CI stricte, `-FailOnSummaryIntegrityMissing` force un `exit` en erreur si l'artefact resume est incomplet (`summary_output_written=false`, `summary_output_size_bytes<=0` ou `summary_output_sha256` vide) quand `SummaryOutputPath` est renseigne.
@@ -569,6 +570,7 @@ Notes autopilot cache/retry:
 - `strict_ci_fail_gates_enabled` indique si le bundle strict a ete active (`EnableStrictCiFailGates`).
 - `strict_ci_summary_output_defaulted` indique si `SummaryOutputPath` a ete injecte automatiquement par le mode strict (chemin source dans `strict_ci_summary_output_path`).
 - `strict_ci_summary_output_compress_forced` indique si `SummaryOutputCompress` a ete active automatiquement par le mode strict.
+- `error_sorting_pass_forced_by_fail_gate` indique si `RunErrorSortingPass` a ete active automatiquement parce qu'une gate error sorting etait demandee.
 - `error_sorting_report_md_exists`, `error_sorting_report_json_exists`, `error_sorting_reports_present` permettent de verifier la disponibilite des artefacts error sorting.
 - `error_sorting_exit_code` et `error_sorting_error` exposent le code retour et l'erreur brute du passage `run_error_sorting_pass` pour debug CI.
 - `git_context_available`, `git_context_error`, `git_branch`, `git_commit`, `git_is_dirty`, `git_status_entry_count` permettent d'auditer l'etat git du run.
