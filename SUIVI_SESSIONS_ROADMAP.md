@@ -4311,3 +4311,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Coherence error sorting durcie: quand une gate `FailOnErrorSorting*` est demandee, `RunErrorSortingPass` est force automatiquement (`error_sorting_pass_forced_by_fail_gate=true`) pour eviter les faux statuts `not_run`; resume enrichi avec ce flag. Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingStatusNotPass -SummaryOutputPath .\run\pauc_reports\autopilot_error_sorting_force_probe.json` (KO attendu, run force, `error_sorting_status=error`, `autopilot_failure_reason=error_sorting_status_not_pass`) et `.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$false -SummaryOutputPath .\run\pauc_reports\autopilot_error_sorting_no_force_probe.json` (OK attendu, `error_sorting_status=not_run`, `error_sorting_pass_forced_by_fail_gate=false`).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 00:23:54 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Refactor de maintenance applique sur `run_roadmap_autopilot.ps1`: extraction d'une fonction unique `Invoke-ErrorSortingPass` pour supprimer la duplication des deux chemins d'execution error sorting (post-build et fallback one-shot), avec comportement conserve (status/hits/reports/exit_code/error). Validation reelle executee: `.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$false -SummaryOutputPath .\run\pauc_reports\autopilot_refactor_no_force_probe.json` (OK attendu) et `.\tools\run_roadmap_autopilot.ps1 -OneShot -RunErrorSortingPass:$false -FailOnErrorSortingBlockingPatterns -SummaryOutputPath .\run\pauc_reports\autopilot_refactor_force_probe.json` (KO attendu, `autopilot_failure_reason=error_sorting_blocking_patterns`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
