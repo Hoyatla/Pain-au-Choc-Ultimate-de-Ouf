@@ -4347,3 +4347,416 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 13:43:54 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates durci dans `tools/test_autopilot_fail_gates.ps1`: le cas `strict_bundle_enables_error_sorting_gates` verifie maintenant aussi l'activation complete des flags `fail_on_*` du bundle `EnableStrictCiFailGates` et l'inventaire `active_fail_gates`/`active_fail_gate_count`, avec lecture robuste des proprietes JSON (`Get-ObjectPropertyValue`, `Get-ObjectStringArrayProperty`). Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `5/5` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_134326_042/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 13:45:36 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test encore etendue avec le cas `strict_bundle_defaults_summary_and_compress`, qui valide en mode `EnableStrictCiFailGates` le fallback auto `StrictCiSummaryOutputPath` (`strict_ci_summary_output_defaulted=true`) et la compression forcee (`strict_ci_summary_output_compress_forced=true`, `summary_output_compressed=true`) quand `SummaryOutputPath` n'est pas fourni.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 13:54:08 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates renforce sur l'integrite des resumes autopilot: assertions ajoutees pour la coherence `active_fail_gates`/`active_fail_gate_count`, `triggered_fail_gates`/`triggered_fail_gate_count`, alignement `autopilot_failed` vs `autopilot_failure_reason`, et presence de la reason dans `triggered_fail_gates`. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `6/6` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_135358_581/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 13:58:32 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test etendue a 9 cas avec gates resume deterministes (`FailOnMissingSummaryOutput`, `FailOnSummaryOutputWriteError`, `FailOnSummaryIntegrityMissing`) et gestion robuste des cas sans JSON (inference `autopilot_failure_reason` depuis le message d'exception quand l'artefact resume est absent/impossible a ecrire).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:00:56 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates etendu a 12 cas avec ajout des gates decision/qualite deterministes (`FailOnPendingMetricsDecision`, `FailOnLatestMetricsNotFresh`, `FailOnGitDirtyWorktree`). Correctif autopilot applique dans `tools/run_roadmap_autopilot.ps1`: evaluation `FailOnGitDirtyWorktree` deplacee avant l'ecriture du JSON resume pour eviter les incoherences fichier/console sur `autopilot_failure_reason`. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `12/12` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_140043_442/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:03:24 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Coherence `triggered_fail_gates` corrigee dans `tools/run_roadmap_autopilot.ps1`: retrait du trigger precoce `summary_integrity_missing` (evaluation des gates de resume laissee au bloc post-ecriture pour eviter les faux positifs quand le JSON est bien ecrit). Self-test ajuste avec assertion negative `forbidden_triggered_fail_gates` sur les cas stricts pour verrouiller cette non-regression.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:05:36 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Ecriture resume autopilot ajustee: `summary_output_written=true` + `summary_output_written_utc` sont maintenant injectes avant serialisation du JSON pour aligner le contenu fichier avec l'etat reel d'ecriture. Self-test mis a jour pour assert cette coherence sur tous les cas avec resume present; validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `12/12` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_140520_730/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:07:32 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test portee a 16 cas avec fixtures `AutopilotStatePath` par cas pour valider les gates de decision effective/cache (`FailOnNoEffectiveDecision`, `FailOnNonFreshEffectiveDecision`, `FailOnCachedDecisionSource`, `FailOnEffectiveDecisionNotReadyForBeta`) en plus des gates deja couvertes. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `16/16` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_140720_004/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:14:11 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test etendue a 20 cas en ajoutant les gates `FailOnErrorSortingReportMissing`, `FailOnErrorSortingNoiseWarn`, `FailOnPrismJarSyncNotSynced` et `FailOnStartupSyncStaleCacheBlock` (fixtures stale cache + startup sync force), avec validation des `autopilot_failure_reason` attendues pour chaque scenario.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:20:07 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test rendu deterministe pour `FailOnGitDirtyWorktree`: creation/suppression automatique d'un probe fichier temporaire (`autopilot_fail_gate_selftest_git_dirty_*.tmp`) autour du cas de test, afin de ne plus dependre d'un worktree deja dirty au lancement.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 14:43:56 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test fail-gates portee a 23 cas avec ajout du scenario deterministe `git_context_unavailable` (override temporaire `PATH` pendant l'invocation autopilot) pour valider explicitement la reason `autopilot_failure_reason=git_context_unavailable` quand `FailOnGitDirtyWorktree` est active et que `git` est indisponible. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `23/23` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_144323_630/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 15:00:20 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test fail-gates portee a 26 cas avec ajout des scenarios de succes pour les gates resume (`FailOnMissingSummaryOutput`, `FailOnSummaryOutputWriteError`, `FailOnSummaryIntegrityMissing`) quand `SummaryOutputPath` est valide, afin de verrouiller l'absence de faux positifs et de verifier les inventaires `active_fail_gates`/flags `fail_on_*` en mode gate active + run sain. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `26/26` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_150003_251/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 15:28:04 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test fail-gates portee a 29 cas avec ajout des scenarios de priorite/composition des gates resume: `summary_output_write_error` prioritaire quand `FailOnSummaryOutputWriteError + FailOnMissingSummaryOutput + FailOnSummaryIntegrityMissing` sont co-actives sur chemin invalide, `missing_summary_output` prioritaire sur `summary_integrity_missing` quand `SummaryOutputPath` est absent, et confirmation qu'`FailOnSummaryIntegrityMissing` seul ne casse pas le run sans `SummaryOutputPath`. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `29/29` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_152745_008/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 15:53:54 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates durci sur l'inventaire des echecs effectifs: ajout d'assertions `expected_triggered_fail_gates` (comparaison exacte) pour les cas resume critiques, et fallback de lecture `active_fail_gates`/`triggered_fail_gates` depuis les logs de cas quand le JSON resume est absent (ex: `SummaryOutputPath` invalide). Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `29/29` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_155335_591/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 15:55:31 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture d'inventaire completee sur les cas resume sans JSON: ajout d'`expected_active_fail_gates` pour `missing_summary_output`/`summary_output_write_error`/`summary_integrity_missing` (incluant les combinaisons de priorite), en s'appuyant sur le fallback de lecture logs. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `29/29` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_155512_231/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 17:06:12 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates etendu a 30 cas avec scenario supplementaire `summary_gate_priority_missing_without_path_even_with_write_error` pour verrouiller qu'en absence de `SummaryOutputPath`, la reason reste `missing_summary_output` meme si `FailOnSummaryOutputWriteError` est active. Correctif annexe: regex de fallback `Get-CaseLogScalarField` resserree pour eviter la capture de la ligne suivante quand la valeur est vide. Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `30/30` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_170551_702/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 17:21:17 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test durci sur les bundles stricts avec support `required_triggered_fail_gates` (subset obligatoire) et activation de checks minimaux sur les cas `strict_bundle_*` (`pending_metrics_decision`, freshness/effective decision, report/status/noise error-sorting). Rapport de self-test enrichi: chaque resultat inclut maintenant les listes `active_fail_gates` et `triggered_fail_gates` en plus des compteurs pour diagnostic CI plus rapide.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `30/30` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_172053_299/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 17:26:19 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Determinisme des cas stricts complete: `strict_bundle_enables_error_sorting_gates` et `strict_bundle_defaults_summary_and_compress` forcent maintenant un probe git dirty local (`force_git_dirty_probe`) pour stabiliser la presence de `git_dirty_worktree` dans les `triggered_fail_gates` quel que soit l'etat initial du repo; assertions renforcees avec `required_triggered_fail_gates` incluant `git_dirty_worktree` et `expected_active_fail_gates` explicite sur les deux cas stricts.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `30/30` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_172553_554/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 18:36:42 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture stricte git etendue avec un cas dedie `strict_bundle_git_context_unavailable` (strict bundle + `PATH` vide) pour valider que `git_context_unavailable` est bien trigger sans faux positif `git_dirty_worktree`, tout en conservant la reason prioritaire `pending_metrics_decision`. Le lot self-test couvre desormais 31 cas.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `31/31` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_183614_952/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 18:39:06 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Invariant structurel self-test ajoute: chaque entree `triggered_fail_gates` doit avoir une gate active compatible via mapping `triggered -> active` (incluant aliases `git_context_unavailable -> git_dirty_worktree`, `error_sorting_noise_status_unavailable_for_fail -> error_sorting_noise_fail`, etc.), afin d'eviter les desalignements entre inventaires actifs et declenches.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `31/31` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_183847_488/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 18:48:24 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test etendue a 33 cas avec scenarios "gate active mais non declenchee" pour verrouiller l'absence de faux positifs sur:
+  - `FailOnPrismJarSyncNotSynced` quand `AutoSyncModJarToPrism=false` (`prism_sync_gate_pass_when_auto_sync_disabled`),
+  - `FailOnStartupSyncStaleCacheBlock` quand aucun cache stale ne bloque le startup sync (`startup_sync_gate_pass_without_stale_cached_candidate`).
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `33/33` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_184805_678/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 18:55:35 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test portee a 35 cas avec ajout de:
+  - `summary_write_error_gate_without_summary_path_pass` (gate `FailOnSummaryOutputWriteError` active sans `SummaryOutputPath`, pas de trigger attendu),
+  - `startup_sync_gate_pass_when_freshness_enforcement_disabled` (gate startup stale active mais enforcement freshness desactive, pas de trigger attendu).
+- Correctif harnais: parsing fallback des logs rendu robuste aux fins de ligne `CRLF`/`CR`/`LF` pour fiabiliser la lecture `autopilot_failure_reason`, `fail_on_*`, `active_fail_gates`, `triggered_fail_gates` quand le JSON resume est absent.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `35/35` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_185514_062/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 19:29:32 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test portee a 39 cas avec ajout de 4 scenarios error-sorting "gate active mais non declenchee" pour verrouiller les chemins passants avec fixtures logs propres:
+  - `blocking_gate_pass_with_status_pass`,
+  - `status_gate_pass_with_status_pass`,
+  - `noise_warn_gate_pass_with_noise_pass`,
+  - `noise_fail_gate_pass_with_noise_warn_status` (status bruit `warn` non bloquant pour gate `FailOnErrorSortingNoiseFail`).
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `39/39` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_192840_677/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 20:10:36 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates encore durci:
+  - ajout d'un cas deterministe `noise_warn_gate_detects_real_noise_warn` pour valider le declenchement `autopilot_failure_reason=error_sorting_noise_warn_or_worse` quand `error_sorting_known_noise_status=warn`,
+  - renforcement des assertions sur les cas single-gate error-sorting (checks explicites `fail_on_*`, `expected_active_fail_gates`, `expected_triggered_fail_gates`) pour `blocking`, `report_missing`, `status`, `noise_warn`, `noise_fail`.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `40/40` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_201009_939/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 20:24:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test etendue a 44 cas avec scenarios de priorite multi-gates error sorting:
+  - `error_sorting_priority_report_missing_over_blocking_status_and_noise`,
+  - `error_sorting_priority_blocking_over_status`,
+  - `error_sorting_priority_status_over_noise_warn`,
+  - `errsort_priority_noise_fail_over_warn`.
+- Les assertions `expected_triggered_fail_gates` valident maintenant explicitement la precedence de `autopilot_failure_reason` sur la chaine error sorting (`report_missing > blocking > status > noise_fail > noise_warn`) tout en conservant l'inventaire complet des gates declenchees.
+- Correctif fiabilite harnais: renommage du dernier cas (nom raccourci) pour eviter un echec Windows lie a un chemin quarantine trop long dans les fixtures Prism.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `44/44` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_202413_522/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 20:38:42 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Assertions d'ordre des gates declenchees ajoutees dans le self-test:
+  - nouveau champ de cas `expected_triggered_fail_gates_in_order` pour valider la sequence exacte des triggers sur les scenarios de priorite multi-gates error sorting,
+  - invariant global additionnel (quand resume JSON disponible): `autopilot_failure_reason` doit correspondre a la premiere entree de `triggered_fail_gates`.
+- Correctif harnais associe: normalisation du check "first triggered gate" sur tableau explicite (`@(...)`) pour eviter un faux negatif PowerShell sur les cas mono-element.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `44/44` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_203842_749/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 21:16:02 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Durcissement path-safety du harnais `tools/test_autopilot_fail_gates.ps1`:
+  - generation d'un `case_artifact_token` court et stable (index + slug tronque + hash SHA-256 court),
+  - remplacement des noms d'artefacts derives de `case.name` pour `summary/log/autopilot_state` et dossiers fixtures Prism,
+  - objectif: eviter les echecs Windows lies aux chemins trop longs tout en gardant un mapping explicite dans le rapport (`name` + `case_artifact_token`).
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `44/44` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_211533_763/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 21:36:40 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Garde-fous path-safety completes dans le harnais self-test:
+  - verification d'unicite des `case_artifact_token` pour prevenir toute collision d'artefacts,
+  - assertions pre-run de longueur de chemin (limite preventive `240`) sur `summary/log/autopilot_state/prism_fixture_root`,
+  - objectif: fail-fast explicite avant execution autopilot en cas de depassement.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `44/44` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_213612_832/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 22:33:14 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Couverture self-test portee a 45 cas avec scenario de priorite additionnel `errsort_priority_noise_unavail_over_warn` pour verrouiller la precedence `error_sorting_noise_status_unavailable_for_fail` sur `error_sorting_noise_warn_or_worse` quand les gates noise fail + noise warn sont co-actives et que le statut noise est indisponible (`error`).
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `45/45` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_223252_122/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 22:37:16 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Cohérence harnais encore durcie:
+  - detection explicite des doublons dans `active_fail_gates` et `triggered_fail_gates`,
+  - obligation d'un mapping `triggered -> active` present et non vide pour chaque gate declenchee,
+  - objectif: eviter toute derive silencieuse si de nouvelles reasons/gates sont introduites.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `45/45` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_223646_470/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 22:40:01 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Garde-fous pre-run finalises dans le harnais:
+  - verification de la couverture complete des reasons de fail connues dans le mapping `triggered -> active`,
+  - rejet explicite des noms de cas dupliques pour maintenir un mapping stable `name -> artefacts`.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `45/45` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_223938_608/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 22:55:59 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Anti-derive script/harnais ajoute dans `tools/test_autopilot_fail_gates.ps1`:
+  - extraction automatique des `autopilot_failure_reason` depuis `tools/run_roadmap_autopilot.ps1`,
+  - verification pre-run que chaque reason declaree dans l'autopilot est couverte par la liste interne de reasons connues et par le mapping `triggered -> active`.
+- Validation reelle executee: `.\tools\test_autopilot_fail_gates.ps1` (OK, `45/45` pass, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_225526_187/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-24 23:49:38 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Validation de cloture rejouee sans regression:
+  - self-test fail-gates complet `45/45` OK avec rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260324_234857_886/autopilot_fail_gate_selftest_summary.json`,
+  - controle `.\tools\verify_doc_freshness.ps1 -MaxAgeMinutes 180` repasse au vert apres mise a jour du suivi.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:20:03 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Validation candidate elargie executee sur le dernier artefact:
+  - commande `.\tools\verify_beta_candidate.ps1 -CandidateDir run/beta_candidates/beta_candidate_20260323_185611_951 -PassThru`,
+  - resultat `overall_status=pass`, `issue_count=0`, `warning_count=0` (1 jar, 1 rapport preflight detectes).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:21:01 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Validation build/test projet executee:
+  - commande `.\gradlew.bat test`,
+  - resultat `BUILD SUCCESSFUL` (20s, `test NO-SOURCE`, aucune regression de compilation sur le scope courant),
+  - observation: avertissement Gradle deprecations a traiter avant migration Gradle 9.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:21:45 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates rejoue apres validation Gradle pour cloture de session technique:
+  - commande `.\tools\test_autopilot_fail_gates.ps1`,
+  - resultat `45/45` pass, `0` echec, rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_012120_161/autopilot_fail_gate_selftest_summary.json`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:42:04 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Correctif outillage CI applique dans `tools/verify_beta_candidate.ps1`:
+  - la sortie resume console passe maintenant par `Format-List | Out-Host` pour eviter d'injecter des objets `Format*` dans le pipeline,
+  - `-PassThru` renvoie desormais uniquement l'objet resultat brut (consommation JSON/CI stable).
+- Validation reelle executee:
+  - `.\tools\verify_beta_candidate.ps1 -CandidateDir run/beta_candidates/beta_candidate_20260323_185611_951 -PassThru | ConvertTo-Json -Depth 6` (objet JSON propre, sans pollution `Format*`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:43:50 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Garde-fou de non-regression ajoute pour la voie CI beta candidate:
+  - nouveau script `tools/test_verify_beta_candidate_passthru.ps1`,
+  - verifie que `verify_beta_candidate -PassThru` ne fuit aucun objet `Microsoft.PowerShell.Commands.Internal.Format.*`,
+  - verifie aussi les proprietes attendues du resultat et un round-trip JSON valide.
+- Validation reelle executee:
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`, `pipeline_output_count: 1`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:44:47 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Revalidation complete du lot courant apres ajout du self-test beta candidate:
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_014423_616/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`, `pipeline_output_count: 1`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:55:59 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Durcissement supplementaire de l'outillage beta candidate:
+  - nouveau self-test `tools/test_verify_beta_candidate_behaviors.ps1` avec 6 cas deterministes couvrant `pass`, `warn` (multi-jar), `fail` (missing readiness), `fail` (checksum mismatch), et throws `-FailOnIssues` sur `warn` + `fail`,
+  - fix de robustesse applique dans le harnais pour fiabiliser la construction du rapport et les fixtures multi-jar.
+- Validations reelles executees:
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `6/6` pass, rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_025524_277/verify_beta_candidate_selftest_summary.json`,
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`,
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_015532_130/autopilot_fail_gate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:57:00 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Durcissement cote packaging beta:
+  - `tools/build_beta_candidate.ps1` ne masque plus les sorties ambiguës du verifier et applique un fail-fast si `verify_beta_candidate` ne renvoie pas exactement un objet ou si la propriete `overall_status` est absente.
+- Validations reelles executees:
+  - parse syntaxique `tools/build_beta_candidate.ps1` (Parser PowerShell) OK,
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `6/6` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_025650_615/verify_beta_candidate_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 01:57:52 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Revalidation globale projet apres durcissements scripts PowerShell.
+- Validation reelle executee:
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL` (aucune regression de compilation, `test NO-SOURCE`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 02:11:28 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Evolution du schema CI de `verify_beta_candidate`:
+  - ajout des champs structures `issues_list` et `warnings_list` dans la sortie `-PassThru` (compatibilite conservee avec `issues`/`warnings` string),
+  - assertions de coherence ajoutees dans les self-tests (`count` <-> `*_list`).
+- Validations reelles executees:
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `6/6` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_031027_936/verify_beta_candidate_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`,
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_021103_061/autopilot_fail_gate_selftest_summary.json`),
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 02:13:46 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Ergonomie CI renforcee pour `verify_beta_candidate`:
+  - nouveau switch `-SuppressConsoleSummary` (silence le resume console, conserve la sortie objet `-PassThru`),
+  - self-tests `test_verify_beta_candidate_passthru.ps1` et `test_verify_beta_candidate_behaviors.ps1` bascules sur ce mode pour eviter le bruit de logs,
+  - `build_beta_candidate.ps1` passe aussi `SuppressConsoleSummary=$true` lors de la verification integree.
+- Validations reelles executees:
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `6/6` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_031314_153/verify_beta_candidate_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`,
+  - `.\tools\verify_beta_candidate.ps1 -CandidateDir <latest> -PassThru -SuppressConsoleSummary | ConvertTo-Json -Depth 6` -> JSON propre,
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_021322_102/autopilot_fail_gate_selftest_summary.json`),
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 02:18:12 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Fiabilite multi-jar de `verify_beta_candidate` renforcee:
+  - tri deterministic des jars (`Sort-Object Name`),
+  - validation `jar_name` du manifest par resolution explicite du fichier (plus de dependance a "premier jar du listing"),
+  - validation `jar_sha256` en multi-jar conditionnee a un `jar_name` resolvable (sinon issue explicite),
+  - self-test comportemental etendu avec un 7e cas `fail_multi_jar_sha_without_name`.
+- Validations reelles executees:
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `7/7` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_031730_174/verify_beta_candidate_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`,
+  - `.\tools\verify_beta_candidate.ps1 -CandidateDir <latest> -PassThru -SuppressConsoleSummary | ConvertTo-Json -Depth 6` -> JSON propre,
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_021747_206/autopilot_fail_gate_selftest_summary.json`),
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 02:19:26 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Nettoyage final du harnais comportemental `verify_beta_candidate` (lisibilite fixture manifest) sans changement fonctionnel.
+- Validation reelle executee:
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `7/7` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_031920_206/verify_beta_candidate_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 02:29:38 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Lot "contrat build->verify" termine:
+  - nouveau self-test integration `tools/test_build_beta_candidate_verification_contract.ps1`,
+  - couvre les cas verifier `0 sortie`, `sorties multiples`, `sortie sans overall_status`, `sortie valide unique`,
+  - execution reelle du flux `build_beta_candidate.ps1` avec mock verifier par cas (preflight minimal + readiness reelle + verification contractuelle).
+- Validations reelles executees:
+  - `.\tools\test_build_beta_candidate_verification_contract.ps1` -> `4/4` pass (rapport `run/pauc_reports/build_beta_candidate_contract_selftest_20260325_032907_102/build_beta_candidate_contract_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `7/7` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_032907_119/verify_beta_candidate_selftest_summary.json`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`,
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_022914_271/autopilot_fail_gate_selftest_summary.json`),
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-25 11:55:27 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Reprise de session validee sur le lot outillage/CI en cours sans regression.
+- Validations reelles executees:
+  - `.\tools\test_verify_beta_candidate_passthru.ps1` -> `status: pass`, `pipeline_output_count: 1`,
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` -> `7/7` pass (rapport `run/pauc_reports/verify_beta_candidate_selftest_20260325_125315_835/verify_beta_candidate_selftest_summary.json`),
+  - `.\tools\test_build_beta_candidate_verification_contract.ps1` -> `4/4` pass (rapport `run/pauc_reports/build_beta_candidate_contract_selftest_20260325_125320_966/build_beta_candidate_contract_selftest_summary.json`),
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260325_115328_601/autopilot_fail_gate_selftest_summary.json`),
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL` (`test NO-SOURCE`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

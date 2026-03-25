@@ -614,19 +614,25 @@ try {
             CandidateDir = $candidateDir
             PassThru = $true
             FailOnIssues = $true
+            SuppressConsoleSummary = $true
         }
         if (-not $SkipChecksums) {
             $verifyArgs.RequireExtendedArtifacts = $true
         } else {
             $verifyArgs.SkipChecksumValidation = $true
         }
-        $verificationResult = & $verifyScriptResolved @verifyArgs
+        $verificationOutput = @(& $verifyScriptResolved @verifyArgs)
         $verifyExitCode = Get-LastExitCodeOrZero
         if ($verifyExitCode -ne 0) {
             throw "Candidate verification failed with exit code $verifyExitCode"
         }
-        if ($verificationResult -is [System.Array]) {
-            $verificationResult = $verificationResult | Select-Object -Last 1
+        if ($verificationOutput.Count -ne 1) {
+            throw ("Candidate verification returned unexpected pipeline output count: {0}" -f $verificationOutput.Count)
+        }
+        $verificationResult = $verificationOutput[0]
+        if ($null -eq $verificationResult.PSObject.Properties["overall_status"]) {
+            $verificationType = if ($null -eq $verificationResult) { "<null>" } else { $verificationResult.GetType().FullName }
+            throw ("Candidate verification result is missing 'overall_status' property (type={0})" -f $verificationType)
         }
     }
 

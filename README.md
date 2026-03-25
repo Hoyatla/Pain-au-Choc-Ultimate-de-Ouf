@@ -428,6 +428,35 @@ Verification d'un dossier candidate:
 .\tools\verify_beta_candidate.ps1 -CandidateDir .\run\beta_candidates\beta_candidate_YYYYMMDD_HHMMSS_fff
 ```
 
+Mode script/CI (objet brut pour pipeline):
+
+```powershell
+.\tools\verify_beta_candidate.ps1 -CandidateDir .\run\beta_candidates\beta_candidate_YYYYMMDD_HHMMSS_fff -PassThru -SuppressConsoleSummary | ConvertTo-Json -Depth 6
+```
+
+L'objet CI expose maintenant a la fois les champs string historiques (`issues`, `warnings`) et les listes structurees (`issues_list`, `warnings_list`).
+La validation `jar_name`/`jar_sha256` du manifest est deterministe en presence de plusieurs jars: verification par nom explicite (et fail explicite si `jar_sha256` est fourni sans `jar_name` resolvable en multi-jar).
+
+Le packaging `build_beta_candidate.ps1` valide maintenant en fail-fast que la verification renvoie exactement un objet avec `overall_status` (detecte immediatement toute derive de sortie pipeline).
+
+Self-test de non-regression pipeline `-PassThru`:
+
+```powershell
+.\tools\test_verify_beta_candidate_passthru.ps1
+```
+
+Self-test comportemental complet (`pass/warn/fail` + `-FailOnIssues`):
+
+```powershell
+.\tools\test_verify_beta_candidate_behaviors.ps1
+```
+
+Self-test contrat d'integration `build_beta_candidate -> verify_beta_candidate`:
+
+```powershell
+.\tools\test_build_beta_candidate_verification_contract.ps1
+```
+
 Gate KPI roadmap (frametime/MSPT):
 
 ```powershell
@@ -583,10 +612,22 @@ Notes autopilot cache/retry:
 - `git_context_available`, `git_context_error`, `git_branch`, `git_commit`, `git_is_dirty`, `git_status_entry_count` permettent d'auditer l'etat git du run.
 - `active_fail_gate_count` et `active_fail_gates` listent les gates CI actives effectivement evaluees sur le run.
 - `triggered_fail_gate_count` et `triggered_fail_gates` listent les gates qui auraient echoue sur ce run (utile quand plusieurs gates sont en echec mais qu'une seule devient `autopilot_failure_reason`).
+- `triggered_fail_gates` n'inclut plus de faux positif `summary_integrity_missing` avant tentative d'ecriture du resume; ce gate est maintenant evalue uniquement dans le bloc post-ecriture.
 - `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_write_mode`, `summary_output_written`, `summary_output_written_utc`, `summary_output_size_bytes`, `summary_output_sha256`, `summary_output_error`).
 - Le resume JSON est ecrit en mode atomique (`summary_output_write_mode=atomic`, ecriture temp + replace) pour eviter les fichiers partiels en CI.
+- `summary_output_written` et `summary_output_written_utc` sont maintenant renseignes directement dans le JSON ecrit quand la sauvegarde reussit (meme en mode fail-gate).
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
-- `tools/test_autopilot_fail_gates.ps1` execute un lot de non-regression sur les gates autopilot critiques (baseline + error-sorting `blocking/status/noise_fail` + bundle strict `EnableStrictCiFailGates`) avec rapport JSON de session et logs par cas (`*.log`) sous `run/pauc_reports/autopilot_fail_gate_selftest_*`.
+- `tools/test_autopilot_fail_gates.ps1` execute un lot de non-regression sur les gates autopilot critiques (baseline + gates decision/qualite `pending_metrics`/`latest_metrics_freshness`/`missing_effective_decision`/`effective_decision_not_fresh`/`cached_decision_source_used`/`effective_decision_not_ready_for_beta`/`prism_jar_sync_not_synced`/`startup_sync_stale_cache_blocked`/`git_context_unavailable`/`git_dirty_worktree` + error-sorting `blocking/report_missing/status/noise_warn/noise_fail` + bundle strict `EnableStrictCiFailGates` + gates resume `missing_summary_output`/`summary_output_write_error`/`summary_integrity_missing` en mode echec/succes avec `SummaryOutputPath` valide, plus priorite de reasons `summary_output_write_error > missing_summary_output > summary_integrity_missing`, priorite de reasons error-sorting `error_sorting_report_missing > error_sorting_blocking_patterns > error_sorting_status_not_pass > error_sorting_noise_fail > error_sorting_noise_warn_or_worse`, y compris precedence explicite `error_sorting_noise_status_unavailable_for_fail` sur `error_sorting_noise_warn_or_worse` quand `FailOnErrorSortingNoiseFail + FailOnErrorSortingNoiseWarn` sont actives avec statut noise indisponible, et cas sans `SummaryOutputPath` (dont `FailOnSummaryOutputWriteError` actif) ou `missing_summary_output` reste la cause attendue, plus scenarios de non-regression "gate active mais non declenchee" pour error-sorting (`FailOnErrorSortingBlockingPatterns`, `FailOnErrorSortingStatusNotPass`, `FailOnErrorSortingNoiseWarn` en status `pass`, `FailOnErrorSortingNoiseFail` en status bruit `warn`) et scenario de declenchement deterministe `FailOnErrorSortingNoiseWarn` sur status bruit `warn`, pour `FailOnPrismJarSyncNotSynced` (auto-sync desactive) et pour `FailOnStartupSyncStaleCacheBlock` (pas de cache stale)) avec verification des flags `fail_on_*`, des inventaires `active_fail_gates`/`triggered_fail_gates` (listes + compteurs), des attentes exactes `expected_triggered_fail_gates` (y compris cas single-gate error-sorting et cas combines de priorite) et `expected_triggered_fail_gates_in_order` (ordre exact), des sous-ensembles obligatoires `required_triggered_fail_gates` (bundle strict), et invariant de coherence supplementaire (quand le JSON resume est present: `autopilot_failure_reason` doit correspondre a la premiere entree de `triggered_fail_gates`), plus fallback strict `StrictCiSummaryOutputPath`/`SummaryOutputCompress`, rapport JSON de session et logs par cas (`*.log`) sous `run/pauc_reports/autopilot_fail_gate_selftest_*`.
+- Le rapport self-test inclut maintenant les listes detaillees `active_fail_gates` et `triggered_fail_gates` par cas (en plus des compteurs) pour faciliter l'analyse CI.
+- Les artefacts de cas du self-test (`summary/log/autopilot_state` + fixtures Prism) utilisent des noms courts et stables via `case_artifact_token` (index + slug tronque + hash) pour eviter les limites de longueur de chemin sous Windows; le rapport conserve `name` + `case_artifact_token` pour le mapping explicite.
+- Garde-fous path-safety supplementaires dans le harnais: verification d'unicite des `case_artifact_token` et assertion de budget de longueur de chemin (limite preventive `240` caracteres) pour `summary/log/autopilot_state/prism_fixture_root`.
+- Quand le JSON resume d'un cas est indisponible (ex: `SummaryOutputPath` invalide), le self-test lit `active_fail_gates` et `triggered_fail_gates` directement depuis le log du cas pour conserver les assertions d'inventaire.
+- Le parsing des logs self-test normalise maintenant les fins de ligne (`CRLF`/`CR`/`LF`) pour fiabiliser les assertions fallback sur toutes plateformes (flags `fail_on_*`, `autopilot_failure_reason`, inventaires `active/triggered`).
+- Invariant structurel ajoute: chaque `triggered_fail_gate` doit correspondre a une gate active compatible (`triggered -> active` mappe explicitement, ex. `git_context_unavailable -> git_dirty_worktree`, `error_sorting_noise_status_unavailable_for_fail -> error_sorting_noise_fail`).
+- Le self-test rejette maintenant explicitement les doublons dans `active_fail_gates`/`triggered_fail_gates` et toute gate declenchee sans entree de mapping `triggered -> active` (fail-fast de coherence).
+- Le harnais valide aussi en pre-run la couverture complete du mapping `triggered -> active` pour toutes les reasons de fail connues et rejette les noms de cas dupliques.
+- Le harnais compare aussi automatiquement les `autopilot_failure_reason` declares dans `tools/run_roadmap_autopilot.ps1` avec ses listes internes (`known reasons` + mapping `triggered -> active`) pour detecter immediatement toute nouvelle reason non couverte.
+- Les cas `git_context_unavailable` (override temporaire `PATH`) et `git_dirty_worktree` (probe temporaire `autopilot_fail_gate_selftest_git_dirty_*.tmp`) sont forces de maniere deterministe dans le self-test; les scenarios `strict_bundle_*` couvrent maintenant explicitement les deux branches git (`git_dirty_worktree` via probe, `git_context_unavailable` via `PATH` vide).
 - En cas de retry strict pilote par KPI, le resume expose le probe utilise: `strict_candidate_retry_kpi_evaluated`, `strict_candidate_retry_kpi_status`, `strict_candidate_retry_kpi_report_path`.
 - Valeurs utiles de `decision_freshness`: `fresh`, `stale_metrics_cached_candidate`, `fresh_failure_cached_fallback`, `fresh_failure_cached_candidate_stale`, `fresh_failure_no_cached_candidate`, `fresh_failure_no_fallback`, `stale_candidate_ignored`.
 

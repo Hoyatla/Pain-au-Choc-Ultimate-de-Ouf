@@ -2267,13 +2267,6 @@ $result = [PSCustomObject]@{
     } elseif ([bool]$FailOnGitDirtyWorktree -and [bool]$result.git_is_dirty) {
         [void]$triggeredFailGates.Add("git_dirty_worktree")
     }
-    if ([bool]$FailOnSummaryIntegrityMissing -and `
-            -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
-            (-not [bool]$result.summary_output_written -or `
-                [int64]$result.summary_output_size_bytes -le 0 -or `
-                [string]::IsNullOrWhiteSpace($result.summary_output_sha256))) {
-        [void]$triggeredFailGates.Add("summary_integrity_missing")
-    }
     $result.triggered_fail_gate_count = $triggeredFailGates.Count
     $result.triggered_fail_gates = @($triggeredFailGates)
 
@@ -2323,6 +2316,12 @@ $result = [PSCustomObject]@{
         $result.autopilot_failure_reason = "effective_decision_not_ready_for_beta"
     } elseif ([bool]$FailOnStartupSyncStaleCacheBlock -and $startupSyncStaleCacheBlockTriggered) {
         $result.autopilot_failure_reason = "startup_sync_stale_cache_blocked"
+    } elseif ([bool]$FailOnGitDirtyWorktree -and `
+            -not [bool]$result.git_context_available) {
+        $result.autopilot_failure_reason = "git_context_unavailable"
+    } elseif ([bool]$FailOnGitDirtyWorktree -and `
+            [bool]$result.git_is_dirty) {
+        $result.autopilot_failure_reason = "git_dirty_worktree"
     } else {
         $result.autopilot_failure_reason = ""
     }
@@ -2335,6 +2334,12 @@ $result = [PSCustomObject]@{
             if (-not [string]::IsNullOrWhiteSpace($summaryOutputDir)) {
                 New-Item -ItemType Directory -Path $summaryOutputDir -Force | Out-Null
             }
+            $summaryWriteTimestampUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $result.summary_output_written = $true
+            $result.summary_output_written_utc = $summaryWriteTimestampUtc
+            $result.summary_output_size_bytes = 0
+            $result.summary_output_sha256 = ""
+            $result.summary_output_error = ""
             $summaryJson = if ($SummaryOutputCompress) {
                 $result | ConvertTo-Json -Depth 12 -Compress
             } else {
@@ -2346,7 +2351,7 @@ $result = [PSCustomObject]@{
             $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
             $summaryHash = Get-FileHash -LiteralPath $summaryOutputPathResolved -Algorithm SHA256 -ErrorAction Stop
             $result.summary_output_written = $true
-            $result.summary_output_written_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            $result.summary_output_written_utc = $summaryWriteTimestampUtc
             $result.summary_output_size_bytes = [int64]$summaryFileInfo.Length
             $result.summary_output_sha256 = [string]$summaryHash.Hash
             $result.summary_output_error = ""
@@ -2378,16 +2383,6 @@ $result = [PSCustomObject]@{
             -not [bool]$result.summary_output_written -and `
             [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
         $result.autopilot_failure_reason = "missing_summary_output"
-        $result.autopilot_failed = $true
-    } elseif ([bool]$FailOnGitDirtyWorktree -and `
-            -not [bool]$result.git_context_available -and `
-            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
-        $result.autopilot_failure_reason = "git_context_unavailable"
-        $result.autopilot_failed = $true
-    } elseif ([bool]$FailOnGitDirtyWorktree -and `
-            [bool]$result.git_is_dirty -and `
-            [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
-        $result.autopilot_failure_reason = "git_dirty_worktree"
         $result.autopilot_failed = $true
     } elseif ([bool]$FailOnSummaryIntegrityMissing -and `
             -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `

@@ -3,7 +3,8 @@ param(
     [switch]$SkipChecksumValidation,
     [switch]$RequireExtendedArtifacts,
     [switch]$FailOnIssues,
-    [switch]$PassThru
+    [switch]$PassThru,
+    [switch]$SuppressConsoleSummary
 )
 
 Set-StrictMode -Version Latest
@@ -56,7 +57,7 @@ if (-not (Test-Path -LiteralPath $readinessJsonPath)) {
     $issues.Add("missing beta_readiness.json")
 }
 
-$jarFiles = @(Get-ChildItem -LiteralPath $candidatePath -File -Filter "*.jar")
+$jarFiles = @(Get-ChildItem -LiteralPath $candidatePath -File -Filter "*.jar" | Sort-Object Name)
 if ($jarFiles.Count -eq 0) {
     $issues.Add("no jar artifact found in candidate directory")
 }
@@ -124,23 +125,35 @@ if ((Test-Path -LiteralPath $checksumsPath) -and -not $SkipChecksumValidation) {
 }
 
 if ($null -ne $manifestJson) {
+    $manifestJarName = [string]$manifestJson.jar_name
+    $manifestJarHash = [string]$manifestJson.jar_sha256
+    $manifestJarFile = $null
+
+    if (-not [string]::IsNullOrWhiteSpace($manifestJarName)) {
+        $manifestJarFile = $jarFiles | Where-Object { [string]$_.Name -eq $manifestJarName } | Select-Object -First 1
+        if ($null -eq $manifestJarFile) {
+            $issues.Add(("candidate_manifest.json jar_name not found in candidate directory ({0})" -f $manifestJarName))
+        }
+    } elseif ($jarFiles.Count -eq 1) {
+        $manifestJarFile = $jarFiles[0]
+    }
+
     if ($null -ne $readiness) {
         if ([string]$manifestJson.readiness_decision -ne [string]$readiness.decision) {
             $issues.Add("candidate_manifest.json readiness_decision differs from beta_readiness.json decision")
         }
     }
 
-    if ($jarFiles.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$manifestJson.jar_name)) {
-        $jarName = $jarFiles[0].Name
-        if ($manifestJson.jar_name -ne $jarName) {
-            $issues.Add(("candidate_manifest.json jar_name mismatch (expected {0}, got {1})" -f $jarName, $manifestJson.jar_name))
-        }
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace([string]$manifestJson.jar_sha256) -and $jarFiles.Count -gt 0) {
-        $jarHash = (Get-FileHash -LiteralPath $jarFiles[0].FullName -Algorithm SHA256).Hash.ToUpperInvariant()
-        if ($manifestJson.jar_sha256.ToUpperInvariant() -ne $jarHash) {
-            $issues.Add("candidate_manifest.json jar_sha256 mismatch")
+    if (-not [string]::IsNullOrWhiteSpace($manifestJarHash) -and $jarFiles.Count -gt 0) {
+        if ($null -eq $manifestJarFile) {
+            if ($jarFiles.Count -gt 1) {
+                $issues.Add("candidate_manifest.json jar_sha256 cannot be validated without jar_name when multiple jar files are present")
+            }
+        } else {
+            $jarHash = (Get-FileHash -LiteralPath $manifestJarFile.FullName -Algorithm SHA256).Hash.ToUpperInvariant()
+            if ($manifestJarHash.ToUpperInvariant() -ne $jarHash) {
+                $issues.Add("candidate_manifest.json jar_sha256 mismatch")
+            }
         }
     }
 }
@@ -153,22 +166,28 @@ if ($preflightReports.Count -gt 1) {
 }
 
 $overallStatus = if ($issues.Count -gt 0) { "fail" } elseif ($warnings.Count -gt 0) { "warn" } else { "pass" }
+$issuesArray = @($issues.ToArray())
+$warningsArray = @($warnings.ToArray())
 $result = [PSCustomObject]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     candidate_dir = $candidatePath
     jar_count = $jarFiles.Count
     preflight_report_count = $preflightReports.Count
-    issue_count = $issues.Count
-    warning_count = $warnings.Count
-    issues = ($issues -join "; ")
-    warnings = ($warnings -join "; ")
+    issue_count = $issuesArray.Count
+    warning_count = $warningsArray.Count
+    issues_list = $issuesArray
+    warnings_list = $warningsArray
+    issues = ($issuesArray -join "; ")
+    warnings = ($warningsArray -join "; ")
     overall_status = $overallStatus
 }
 
-Write-Host ""
-Write-Host "PauC beta candidate verification"
-Write-Host "--------------------------------"
-$result | Format-List
+if (-not $SuppressConsoleSummary) {
+    Write-Host ""
+    Write-Host "PauC beta candidate verification"
+    Write-Host "--------------------------------"
+    $result | Format-List | Out-Host
+}
 
 if ($FailOnIssues -and $overallStatus -ne "pass") {
     throw ("Candidate verification failed: status={0}; issues={1}; warnings={2}" -f $overallStatus, $result.issues, $result.warnings)
