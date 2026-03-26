@@ -5321,3 +5321,9 @@ Copier/coller le bloc suivant a chaque fin de session:
     - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$true -AutopilotAllowOneShotMetricsSignatureReplay:$true -MinMetricsDurationSecondsForCandidatePreflight 240 -CandidateMinSoakDurationSeconds 240 -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_after_extended_live_capture_all240_strict_20260326_2355.json -PassThru`,
     - resultat: candidate stricte rebuild `ready_for_beta` + error sorting `pass`; seul gate restant dans ce run: `git_dirty_worktree` (worktree local modifie pendant le developpement en cours).
 - Prochaine action: committer ce lot puis relancer strict wrapper all-240 sur worktree propre pour obtenir un run full-green exploitable.
+
+## Checkpoint 2026-03-26 22:56:29 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
