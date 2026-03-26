@@ -339,6 +339,7 @@ Notes pipeline auto:
 - `-FrameMsP95Max`, `-FrameMsP99Max` et `-MsptP95Max` sont propagees vers les etapes preflight, candidate et autopilot.
 - `-ErrorSortingNoiseWarnHitsTotal` et `-ErrorSortingNoiseFailHitsTotal` sont propagees vers l'etape autopilot.
 - `-AutopilotAllowOneShotMetricsSignatureReplay` transmet `-AllowOneShotMetricsSignatureReplay` au one-shot autopilot execute en etape 6.
+- `-AutopilotScriptPath` permet d'injecter un runner autopilot custom (hook de test CI/self-test).
 
 Self-test de non-regression pipeline auto:
 

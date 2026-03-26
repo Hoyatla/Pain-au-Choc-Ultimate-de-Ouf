@@ -26,6 +26,7 @@
   - `tools/run_capture_pipeline_auto.ps1` expose `-FrameMsP95Max`, `-FrameMsP99Max`, `-MsptP95Max`, `-ErrorSortingNoiseWarnHitsTotal` et `-ErrorSortingNoiseFailHitsTotal`.
   - ces seuils sont propages aux etapes preflight/candidate/autopilot pour conserver une seule commande de pilotage CI.
   - le contrat `-PassThru` exporte maintenant explicitement ces valeurs pour audit machine-readable.
+  - ajout de `-AutopilotScriptPath` pour permettre un runner autopilot injectable (tests CI deterministes).
 - Validation:
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).
   - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (incluant `prism_sync_gate_pass_with_dot_minecraft_layout`).
@@ -33,6 +34,7 @@
     - sans replay: `.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates ...` -> `final_decision=pending_metrics`, `allow_one_shot_metrics_signature_replay=false`, `metrics_signature_replay_used=false`,
     - avec replay: `.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates ...` -> `final_decision=ready_for_beta`, `allow_one_shot_metrics_signature_replay=true`, `metrics_signature_replay_used=true`.
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` avec contrat `-PassThru` (champ replay + seuils stricts, y compris verification des overrides).
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` couvre aussi la propagation effective des arguments autopilot via stub (`AutopilotScriptPath`).
   - smoke tests layout `.minecraft` executes sur `apply_pauc_profile`, `triage_modpack_errors`, `quarantine_modpack_data_errors`, `run_error_sorting_pass`, `validate_v3_hardware_drivers`.
   - smoke `-PassThru` (`triage`, `quarantine -DryRun`, `run_error_sorting_pass -RunQuarantine:$false`, `validate_v3_hardware_drivers`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
   - smoke `-PassThru` (`ab_campaign_status`, `ab_campaign_next`, `assess_beta_readiness`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.

@@ -5211,3 +5211,29 @@ Copier/coller le bloc suivant a chaque fin de session:
     - `decision_source=fresh_candidate`, `decision_freshness=fresh`, `metrics_signature_replay_used=true`,
     - summary: `run/pauc_reports/autopilot_summary_capture_wrapper_strict_full_20260326_2227.json`.
 - Prochaine action: poursuivre les lots d'automatisation CI et outillage release sans intervention utilisateur.
+
+## Checkpoint 2026-03-26 21:34:06 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:34:33 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:36:10 (UTC) - Codex
+
+- Statut: in_progress
+- Note: lot testabilite wrapper capture auto (autopilot injectable) finalise:
+  - `tools/run_capture_pipeline_auto.ps1` accepte `-AutopilotScriptPath` (default inchange `tools/run_roadmap_autopilot.ps1`) et expose `autopilot_script_path` en sortie `-PassThru`,
+  - `tools/test_run_capture_pipeline_auto_passthru.ps1` couvre un 3eme cas `autopilot_stub_propagation` avec stub local et verification explicite de propagation arguments (`OneShot`, `EnableStrictCiFailGates`, replay, seuils KPI/noise, `SummaryOutputPath`, compression).
+- Validations reelles executees:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_223322_201/capture_pipeline_auto_passthru_selftest_summary.json`),
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_213330_144/autopilot_fail_gate_selftest_summary.json`),
+  - probe runtime nominal (runner autopilot par defaut):
+    - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_default_runner_probe_20260326_2234.json -PassThru`,
+    - resultat: `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`, `autopilot_script_path=tools/run_roadmap_autopilot.ps1`.
+- Prochaine action: poursuivre les lots CI/autopilot sans intervention utilisateur.

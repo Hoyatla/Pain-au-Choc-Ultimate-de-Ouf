@@ -25,6 +25,7 @@ param(
     [bool]$EnableStrictCiFailGates = $true,
     [bool]$AutopilotAllowOneShotMetricsSignatureReplay = $false,
     [string]$SummaryOutputPath = "",
+    [string]$AutopilotScriptPath = "",
     [switch]$PassThru
 )
 
@@ -140,6 +141,28 @@ function Resolve-PathFromRepo {
     }
 
     return $null
+}
+
+function Resolve-ScriptPathFromRepo {
+    param(
+        [string]$ScriptPathValue,
+        [string]$DefaultRepoRelativePath,
+        [string]$RepoRoot
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ScriptPathValue)) {
+        $defaultPath = Join-Path $RepoRoot $DefaultRepoRelativePath
+        if (-not (Test-Path -LiteralPath $defaultPath -PathType Leaf)) {
+            throw ("Script not found: {0}" -f $defaultPath)
+        }
+        return (Resolve-Path -LiteralPath $defaultPath).Path
+    }
+
+    $resolved = Resolve-PathFromRepo -PathValue $ScriptPathValue -RepoRoot $RepoRoot -PathType "Leaf"
+    if ($null -eq $resolved) {
+        throw ("Script not found: {0}" -f $ScriptPathValue)
+    }
+    return $resolved
 }
 
 function Add-MetricsCandidate {
@@ -411,6 +434,10 @@ if ($null -eq $resolvedReportsDir) {
     New-Item -ItemType Directory -Path $resolvedReportsDir -Force | Out-Null
 }
 $reportsDirForScripts = Convert-ToRepoRelativePath -PathValue $resolvedReportsDir -RepoRoot $repoRoot
+$resolvedAutopilotScriptPath = Resolve-ScriptPathFromRepo `
+    -ScriptPathValue $AutopilotScriptPath `
+    -DefaultRepoRelativePath "tools\run_roadmap_autopilot.ps1" `
+    -RepoRoot $repoRoot
 
 $result = [ordered]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -441,6 +468,7 @@ $result = [ordered]@{
     autopilot_executed = $false
     autopilot_exit_code = 0
     autopilot_summary_path = ""
+    autopilot_script_path = $resolvedAutopilotScriptPath
     autopilot_allow_one_shot_metrics_signature_replay = [bool]$AutopilotAllowOneShotMetricsSignatureReplay
     autopilot_failed = $false
     autopilot_failure_reason = ""
@@ -682,7 +710,7 @@ try {
             }
 
             Reset-LastExitCode
-            $null = @(& .\tools\run_roadmap_autopilot.ps1 @autopilotArgs)
+            $null = @(& $resolvedAutopilotScriptPath @autopilotArgs)
             $result.autopilot_exit_code = Get-LastExitCodeOrZero
         } catch {
             $result.autopilot_exit_code = if (Get-LastExitCodeOrZero -ne 0) { Get-LastExitCodeOrZero } else { 1 }

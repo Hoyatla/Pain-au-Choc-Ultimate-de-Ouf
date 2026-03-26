@@ -128,6 +128,7 @@ $requiredProperties = @(
     "autopilot_executed",
     "autopilot_exit_code",
     "autopilot_summary_path",
+    "autopilot_script_path",
     "autopilot_allow_one_shot_metrics_signature_replay",
     "autopilot_failed",
     "autopilot_failure_reason",
@@ -158,6 +159,9 @@ function Add-ResultChecks {
         [double]$ExpectedMsptP95Max,
         [int]$ExpectedNoiseWarnHitsTotal,
         [int]$ExpectedNoiseFailHitsTotal,
+        [bool]$ExpectedAutopilotExecuted,
+        [string]$ExpectedAutopilotSummaryPath,
+        [string]$ExpectedAutopilotScriptPath,
         [bool]$ExpectedAllowOneShotMetricsSignatureReplay,
         [System.Collections.Generic.List[string]]$Checks
     )
@@ -195,8 +199,8 @@ function Add-ResultChecks {
     if ([bool]$result.candidate_executed) {
         Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "candidate_executed_should_be_false"
     }
-    if ([bool]$result.autopilot_executed) {
-        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "autopilot_executed_should_be_false"
+    if ([bool]$result.autopilot_executed -ne $ExpectedAutopilotExecuted) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("autopilot_executed_mismatch:{0}!={1}" -f [bool]$result.autopilot_executed, $ExpectedAutopilotExecuted)
     }
 
     if ([int]$result.preflight_exit_code -ne 0) {
@@ -207,6 +211,29 @@ function Add-ResultChecks {
     }
     if ([int]$result.autopilot_exit_code -ne 0) {
         Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("unexpected_autopilot_exit_code:{0}" -f [int]$result.autopilot_exit_code)
+    }
+    if ([bool]$result.autopilot_executed -and [string]::IsNullOrWhiteSpace([string]$result.autopilot_summary_path)) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "autopilot_summary_path_empty_when_executed"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedAutopilotSummaryPath)) {
+        if (-not (Test-Path -LiteralPath $ExpectedAutopilotSummaryPath -PathType Leaf)) {
+            Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "expected_autopilot_summary_path_missing"
+        } else {
+            $resolvedExpectedAutopilotSummaryPath = (Resolve-Path -LiteralPath $ExpectedAutopilotSummaryPath).Path
+            if (-not [string]::Equals([string]$result.autopilot_summary_path, $resolvedExpectedAutopilotSummaryPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "autopilot_summary_path_mismatch"
+            }
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedAutopilotScriptPath)) {
+        if (-not (Test-Path -LiteralPath $ExpectedAutopilotScriptPath -PathType Leaf)) {
+            Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "expected_autopilot_script_path_missing"
+        } else {
+            $resolvedExpectedAutopilotScriptPath = (Resolve-Path -LiteralPath $ExpectedAutopilotScriptPath).Path
+            if (-not [string]::Equals([string]$result.autopilot_script_path, $resolvedExpectedAutopilotScriptPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "autopilot_script_path_mismatch"
+            }
+        }
     }
     if ([double]$result.frame_ms_p95_max -ne $ExpectedFrameMsP95Max) {
         Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("frame_ms_p95_max_mismatch:{0}!={1}" -f [double]$result.frame_ms_p95_max, $ExpectedFrameMsP95Max)
@@ -297,14 +324,21 @@ function Add-ResultChecks {
             mspt_p95_max = [double]$result.mspt_p95_max
             error_sorting_noise_warn_hits_total = [int]$result.error_sorting_noise_warn_hits_total
             error_sorting_noise_fail_hits_total = [int]$result.error_sorting_noise_fail_hits_total
+            autopilot_executed = [bool]$result.autopilot_executed
+            autopilot_summary_path = [string]$result.autopilot_summary_path
+            autopilot_script_path = [string]$result.autopilot_script_path
             autopilot_allow_one_shot_metrics_signature_replay = [bool]$result.autopilot_allow_one_shot_metrics_signature_replay
         })
+
+    return $result
 }
 
 $smokeInvocationError = ""
 $smokePipelineItems = @()
 $copyInvocationError = ""
 $copyPipelineItems = @()
+$autopilotInvocationError = ""
+$autopilotPipelineItems = @()
 $defaultFrameMsP95Max = 20.0
 $defaultFrameMsP99Max = 60.0
 $defaultMsptP95Max = 60.0
@@ -320,6 +354,61 @@ $fixtureInstanceName = "ci_capture_auto_dot"
 $fixtureMinecraftDir = Join-Path (Join-Path $fixturePrismRoot $fixtureInstanceName) ".minecraft"
 New-Item -ItemType Directory -Path $fixtureMinecraftDir -Force | Out-Null
 $expectedDeployedJarPath = Join-Path (Join-Path $fixtureMinecraftDir "mods") (Split-Path -Path $resolvedJarPath -Leaf)
+$autopilotStubPath = Join-Path $sessionDir "autopilot_stub.ps1"
+$autopilotProbePath = Join-Path $sessionDir "autopilot_stub_probe.json"
+$autopilotSummaryPath = Join-Path $sessionDir "autopilot_stub_summary.json"
+
+$autopilotStubContent = @'
+param(
+    [switch]$OneShot,
+    [string]$MetricsPath = "",
+    [string]$PrismRoot = "",
+    [string]$InstanceName = "",
+    [string]$SummaryOutputPath = "",
+    [switch]$SummaryOutputCompress,
+    [double]$FrameMsP95Max = 0.0,
+    [double]$FrameMsP99Max = 0.0,
+    [double]$MsptP95Max = 0.0,
+    [int]$ErrorSortingNoiseWarnHitsTotal = 0,
+    [int]$ErrorSortingNoiseFailHitsTotal = 0,
+    [switch]$EnableStrictCiFailGates,
+    [switch]$AllowOneShotMetricsSignatureReplay
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$probePath = [Environment]::GetEnvironmentVariable("PAUC_AUTOPILOT_STUB_PROBE_PATH", "Process")
+if ([string]::IsNullOrWhiteSpace($probePath)) {
+    throw "PAUC_AUTOPILOT_STUB_PROBE_PATH is required"
+}
+
+$probe = [PSCustomObject]@{
+    one_shot = [bool]$OneShot
+    metrics_path = [string]$MetricsPath
+    prism_root = [string]$PrismRoot
+    instance_name = [string]$InstanceName
+    summary_output_path = [string]$SummaryOutputPath
+    summary_output_compress = [bool]$SummaryOutputCompress
+    frame_ms_p95_max = [double]$FrameMsP95Max
+    frame_ms_p99_max = [double]$FrameMsP99Max
+    mspt_p95_max = [double]$MsptP95Max
+    error_sorting_noise_warn_hits_total = [int]$ErrorSortingNoiseWarnHitsTotal
+    error_sorting_noise_fail_hits_total = [int]$ErrorSortingNoiseFailHitsTotal
+    strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
+    allow_one_shot_metrics_signature_replay = [bool]$AllowOneShotMetricsSignatureReplay
+}
+$probe | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $probePath -Encoding UTF8
+
+$summary = [PSCustomObject]@{
+    autopilot_failed = $false
+    autopilot_failure_reason = ""
+    effective_decision = "ready_for_beta"
+}
+$summary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $SummaryOutputPath -Encoding UTF8
+$global:LASTEXITCODE = 0
+'@
+$autopilotStubContent | Set-Content -LiteralPath $autopilotStubPath -Encoding UTF8
 
 Push-Location $repoRoot
 try {
@@ -364,6 +453,38 @@ try {
     } catch {
         $copyInvocationError = [string]$_.Exception.Message
     }
+
+    $previousStubProbePath = [Environment]::GetEnvironmentVariable("PAUC_AUTOPILOT_STUB_PROBE_PATH", "Process")
+    try {
+        [Environment]::SetEnvironmentVariable("PAUC_AUTOPILOT_STUB_PROBE_PATH", $autopilotProbePath, "Process")
+        try {
+            $autopilotPipelineItems = @(
+                & $PipelineScriptPath `
+                    -MetricsPath $resolvedMetricsPath `
+                    -JarPath $resolvedJarPath `
+                    -BuildJar:$false `
+                    -CopyJarToInstance:$false `
+                    -WaitForFreshMetrics:$false `
+                    -RunPreflight:$false `
+                    -RunCandidate:$false `
+                    -RunAutopilot:$true `
+                    -EnableStrictCiFailGates:$true `
+                    -AutopilotAllowOneShotMetricsSignatureReplay:$true `
+                    -FrameMsP95Max $overrideFrameMsP95Max `
+                    -FrameMsP99Max $overrideFrameMsP99Max `
+                    -MsptP95Max $overrideMsptP95Max `
+                    -ErrorSortingNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
+                    -ErrorSortingNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
+                    -SummaryOutputPath $autopilotSummaryPath `
+                    -AutopilotScriptPath $autopilotStubPath `
+                    -PassThru
+            )
+        } catch {
+            $autopilotInvocationError = [string]$_.Exception.Message
+        }
+    } finally {
+        [Environment]::SetEnvironmentVariable("PAUC_AUTOPILOT_STUB_PROBE_PATH", $previousStubProbePath, "Process")
+    }
 } finally {
     Pop-Location
 }
@@ -374,8 +495,11 @@ if (-not [string]::IsNullOrWhiteSpace($smokeInvocationError)) {
 if (-not [string]::IsNullOrWhiteSpace($copyInvocationError)) {
     Add-CaseCheck -Checks $checks -CaseName "copy_dot_minecraft" -Message ("invocation_error:{0}" -f $copyInvocationError)
 }
+if (-not [string]::IsNullOrWhiteSpace($autopilotInvocationError)) {
+    Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message ("invocation_error:{0}" -f $autopilotInvocationError)
+}
 
-Add-ResultChecks `
+$smokeResult = Add-ResultChecks `
     -CaseName "smoke_no_copy" `
     -PipelineItems $smokePipelineItems `
     -ExpectedJarPath $resolvedJarPath `
@@ -387,10 +511,13 @@ Add-ResultChecks `
     -ExpectedMsptP95Max $defaultMsptP95Max `
     -ExpectedNoiseWarnHitsTotal $defaultNoiseWarnHitsTotal `
     -ExpectedNoiseFailHitsTotal $defaultNoiseFailHitsTotal `
+    -ExpectedAutopilotExecuted $false `
+    -ExpectedAutopilotSummaryPath "" `
+    -ExpectedAutopilotScriptPath "" `
     -ExpectedAllowOneShotMetricsSignatureReplay $false `
     -Checks $checks
 
-Add-ResultChecks `
+$copyResult = Add-ResultChecks `
     -CaseName "copy_dot_minecraft" `
     -PipelineItems $copyPipelineItems `
     -ExpectedJarPath $resolvedJarPath `
@@ -402,8 +529,84 @@ Add-ResultChecks `
     -ExpectedMsptP95Max $overrideMsptP95Max `
     -ExpectedNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
     -ExpectedNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
+    -ExpectedAutopilotExecuted $false `
+    -ExpectedAutopilotSummaryPath "" `
+    -ExpectedAutopilotScriptPath "" `
     -ExpectedAllowOneShotMetricsSignatureReplay $true `
     -Checks $checks
+
+$autopilotResult = Add-ResultChecks `
+    -CaseName "autopilot_stub_propagation" `
+    -PipelineItems $autopilotPipelineItems `
+    -ExpectedJarPath $resolvedJarPath `
+    -RequiredProperties $requiredProperties `
+    -ExpectJarCopy $false `
+    -ExpectedJarDeployedPath "" `
+    -ExpectedFrameMsP95Max $overrideFrameMsP95Max `
+    -ExpectedFrameMsP99Max $overrideFrameMsP99Max `
+    -ExpectedMsptP95Max $overrideMsptP95Max `
+    -ExpectedNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
+    -ExpectedNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
+    -ExpectedAutopilotExecuted $true `
+    -ExpectedAutopilotSummaryPath $autopilotSummaryPath `
+    -ExpectedAutopilotScriptPath $autopilotStubPath `
+    -ExpectedAllowOneShotMetricsSignatureReplay $true `
+    -Checks $checks
+
+if ($null -eq $autopilotResult) {
+    Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "missing_autopilot_result"
+} else {
+    if ([bool]$autopilotResult.autopilot_failed) {
+        Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "autopilot_failed_should_be_false"
+    }
+    if (-not [string]::Equals([string]$autopilotResult.autopilot_effective_decision, "ready_for_beta", [System.StringComparison]::OrdinalIgnoreCase)) {
+        Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message ("autopilot_effective_decision_mismatch:{0}" -f [string]$autopilotResult.autopilot_effective_decision)
+    }
+}
+
+if (-not (Test-Path -LiteralPath $autopilotProbePath -PathType Leaf)) {
+    Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "autopilot_probe_missing"
+} else {
+    try {
+        $autopilotProbe = Get-Content -LiteralPath $autopilotProbePath -Raw | ConvertFrom-Json
+        $resolvedExpectedAutopilotSummaryPath = (Resolve-Path -LiteralPath $autopilotSummaryPath).Path
+        if (-not [bool]$autopilotProbe.one_shot) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_one_shot_should_be_true"
+        }
+        if (-not [bool]$autopilotProbe.summary_output_compress) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_summary_output_compress_should_be_true"
+        }
+        if (-not [bool]$autopilotProbe.strict_ci_fail_gates_enabled) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_strict_ci_fail_gates_should_be_true"
+        }
+        if (-not [bool]$autopilotProbe.allow_one_shot_metrics_signature_replay) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_allow_replay_should_be_true"
+        }
+        if ([double]$autopilotProbe.frame_ms_p95_max -ne $overrideFrameMsP95Max) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_frame_ms_p95_max_mismatch"
+        }
+        if ([double]$autopilotProbe.frame_ms_p99_max -ne $overrideFrameMsP99Max) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_frame_ms_p99_max_mismatch"
+        }
+        if ([double]$autopilotProbe.mspt_p95_max -ne $overrideMsptP95Max) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_mspt_p95_max_mismatch"
+        }
+        if ([int]$autopilotProbe.error_sorting_noise_warn_hits_total -ne $overrideNoiseWarnHitsTotal) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_noise_warn_hits_total_mismatch"
+        }
+        if ([int]$autopilotProbe.error_sorting_noise_fail_hits_total -ne $overrideNoiseFailHitsTotal) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_noise_fail_hits_total_mismatch"
+        }
+        if (-not [string]::Equals([string]$autopilotProbe.metrics_path, $resolvedMetricsPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_metrics_path_mismatch"
+        }
+        if (-not [string]::Equals([string]$autopilotProbe.summary_output_path, $resolvedExpectedAutopilotSummaryPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_summary_output_path_mismatch"
+        }
+    } catch {
+        Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message ("autopilot_probe_parse_error:{0}" -f $_.Exception.Message)
+    }
+}
 
 $passed = ($checks.Count -eq 0)
 $report = [PSCustomObject]@{
@@ -413,9 +616,13 @@ $report = [PSCustomObject]@{
     jar_path = $resolvedJarPath
     smoke_pipeline_output_count = $smokePipelineItems.Count
     copy_pipeline_output_count = $copyPipelineItems.Count
+    autopilot_pipeline_output_count = $autopilotPipelineItems.Count
     fixture_prism_root = $fixturePrismRoot
     fixture_instance_name = $fixtureInstanceName
     fixture_expected_jar_deployed_path = $expectedDeployedJarPath
+    autopilot_stub_path = $autopilotStubPath
+    autopilot_probe_path = $autopilotProbePath
+    autopilot_summary_path = $autopilotSummaryPath
     cases = @($caseSummaries.ToArray())
     passed = $passed
     checks = @($checks.ToArray())
