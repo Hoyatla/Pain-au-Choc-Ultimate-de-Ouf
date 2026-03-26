@@ -5265,3 +5265,11 @@ Copier/coller le bloc suivant a chaque fin de session:
     - `decision_source=fresh_candidate`, `decision_freshness=fresh`, `metrics_signature_replay_used=true`,
     - summary: `run/pauc_reports/autopilot_summary_capture_post_hook_strict_20260326_2240.json`.
 - Prochaine action: poursuivre les lots CI/autopilot sans intervention utilisateur.
+
+## Checkpoint 2026-03-26 21:41:52 (UTC) - Codex
+
+- Statut: in_progress
+- Note: verification build globale post-lots outillage CI.
+- Validations reelles executees:
+  - `.\gradlew.bat compileJava -x test` -> `BUILD SUCCESSFUL` (`compileJava UP-TO-DATE`).
+- Prochaine action: poursuite des lots automate possible; prochaine dependance utilisateur uniquement pour produire de la telemetrie gameplay nouvelle si on veut reevaluer des tendances KPI en donnees fraiches.
