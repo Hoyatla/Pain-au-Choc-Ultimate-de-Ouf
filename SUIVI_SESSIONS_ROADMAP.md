@@ -5089,3 +5089,31 @@ Copier/coller le bloc suivant a chaque fin de session:
     - `.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_replay_probe_20260326_210449_731.json`
     - resultat: `final_decision=ready_for_beta`, `decision_source=fresh_candidate`, `allow_one_shot_metrics_signature_replay=true`, `metrics_signature_replay_used=true`, blocage restant uniquement `git_dirty_worktree` (worktree local dirty pendant dev).
 - Prochaine action: committer ce lot puis relancer strict CI full (worktree propre) avec `-AllowOneShotMetricsSignatureReplay` pour disposer d'une commande unique de reprise one-shot.
+
+## Checkpoint 2026-03-26 21:08:30 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:08:56 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:10:40 (UTC) - Codex
+
+- Statut: in_progress
+- Note: validation stricte finale du lot replay one-shot sur worktree propre.
+- Validations reelles executees:
+  - commit lot: `6341c9b` (`feat(ci): allow one-shot replay of latest metrics signature`),
+  - strict CI one-shot avec replay active:
+    - `.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -InstanceName test -EnableStrictCiFailGates -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_replay_strict_ok_20260326_210824_335.json`,
+    - resultat: `EXIT_CODE=0`,
+    - `autopilot_failed=false`, `triggered_fail_gates={}`,
+    - `allow_one_shot_metrics_signature_replay=true`, `metrics_signature_replay_used=true`,
+    - `decision_source=fresh_candidate`, `effective_decision=ready_for_beta`, `decision_freshness=fresh`,
+    - candidate final: `run/beta_candidates/beta_candidate_20260326_211018_111`,
+    - Prism sync SHA256: `10F628964E64169E841EE6CD7B2843548AF7352F75333665ADDCA3FDDBAD53CA`.
+- Prochaine action: conserver ce mode de reprise pour les relances CI one-shot quand la telemetrie est stable mais deja traitee.
