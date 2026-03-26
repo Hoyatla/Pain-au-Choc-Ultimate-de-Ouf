@@ -123,6 +123,7 @@ $requiredProperties = @(
     "autopilot_executed",
     "autopilot_exit_code",
     "autopilot_summary_path",
+    "autopilot_allow_one_shot_metrics_signature_replay",
     "autopilot_failed",
     "autopilot_failure_reason",
     "autopilot_effective_decision",

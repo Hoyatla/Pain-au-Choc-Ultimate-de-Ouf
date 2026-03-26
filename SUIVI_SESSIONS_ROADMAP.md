@@ -5117,3 +5117,17 @@ Copier/coller le bloc suivant a chaque fin de session:
     - candidate final: `run/beta_candidates/beta_candidate_20260326_211018_111`,
     - Prism sync SHA256: `10F628964E64169E841EE6CD7B2843548AF7352F75333665ADDCA3FDDBAD53CA`.
 - Prochaine action: conserver ce mode de reprise pour les relances CI one-shot quand la telemetrie est stable mais deja traitee.
+
+## Checkpoint 2026-03-26 21:13:08 (UTC) - Codex
+
+- Statut: in_progress
+- Note: lot wrapper capture auto aligne sur replay one-shot autopilot:
+  - `tools/run_capture_pipeline_auto.ps1` expose `-AutopilotAllowOneShotMetricsSignatureReplay` et propage le flag vers `run_roadmap_autopilot` en etape 6,
+  - l'objet `-PassThru` inclut maintenant `autopilot_allow_one_shot_metrics_signature_replay`,
+  - doc usage mise a jour (`README.md`) + changelog (`2.0.6`).
+- Validations reelles executees:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_221306_928/capture_pipeline_auto_passthru_selftest_summary.json`),
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_211308_472/autopilot_fail_gate_selftest_summary.json`),
+  - strict replay one-shot reference maintenue verte:
+    - `run/pauc_reports/autopilot_summary_ci_replay_strict_ok_20260326_210824_335.json` (`EXIT_CODE=0`, `autopilot_failed=false`, `metrics_signature_replay_used=true`).
+- Prochaine action: enchainement prochain lot roadmap outillage CI sans intervention utilisateur.

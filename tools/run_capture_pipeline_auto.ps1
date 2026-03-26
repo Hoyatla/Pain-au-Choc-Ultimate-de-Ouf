@@ -18,6 +18,7 @@ param(
     [int]$MetricsWarmupTrimSeconds = 120,
     [int]$MaxMetricsAgeMinutes = 240,
     [bool]$EnableStrictCiFailGates = $true,
+    [bool]$AutopilotAllowOneShotMetricsSignatureReplay = $false,
     [string]$SummaryOutputPath = "",
     [switch]$PassThru
 )
@@ -412,6 +413,7 @@ $result = [ordered]@{
     autopilot_executed = $false
     autopilot_exit_code = 0
     autopilot_summary_path = ""
+    autopilot_allow_one_shot_metrics_signature_replay = [bool]$AutopilotAllowOneShotMetricsSignatureReplay
     autopilot_failed = $false
     autopilot_failure_reason = ""
     autopilot_effective_decision = ""
@@ -635,6 +637,9 @@ try {
             }
             if ($EnableStrictCiFailGates) {
                 $autopilotArgs.EnableStrictCiFailGates = $true
+            }
+            if ($AutopilotAllowOneShotMetricsSignatureReplay) {
+                $autopilotArgs.AllowOneShotMetricsSignatureReplay = $true
             }
 
             Reset-LastExitCode
