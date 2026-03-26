@@ -5183,3 +5183,31 @@ Copier/coller le bloc suivant a chaque fin de session:
     - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_thresholds_probe_20260326_2222.json -PassThru`,
     - resultat: `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`, `metrics_signature_replay_used=true`, seuils cibles confirms dans le JSON autopilot (`target_frame_ms_p95_max=450`, `target_frame_ms_p99_max=1000`, `target_mspt_p95_max=60`, noise warn/fail `3000/5000`).
 - Prochaine action: enchainement du lot suivant CI/autopilot sans intervention utilisateur.
+
+## Checkpoint 2026-03-26 21:26:25 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:26:51 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:28:20 (UTC) - Codex
+
+- Statut: in_progress
+- Note: validation stricte complete via wrapper capture auto (commande unique CI).
+- Validations reelles executees:
+  - commande:
+    - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$true -AutopilotAllowOneShotMetricsSignatureReplay:$true -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_wrapper_strict_full_20260326_2227.json -PassThru`,
+  - resultat wrapper:
+    - `autopilot_executed=true`, `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`,
+    - seuils passthru confirms: `frame_ms_p95_max=450`, `frame_ms_p99_max=1000`, `mspt_p95_max=60`, `error_sorting_noise_warn_hits_total=3000`, `error_sorting_noise_fail_hits_total=5000`,
+  - resultat autopilot strict:
+    - `strict_ci_fail_gates_enabled=true`, `triggered_fail_gates_count=0`,
+    - `decision_source=fresh_candidate`, `decision_freshness=fresh`, `metrics_signature_replay_used=true`,
+    - summary: `run/pauc_reports/autopilot_summary_capture_wrapper_strict_full_20260326_2227.json`.
+- Prochaine action: poursuivre les lots d'automatisation CI et outillage release sans intervention utilisateur.
