@@ -5273,3 +5273,51 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Validations reelles executees:
   - `.\gradlew.bat compileJava -x test` -> `BUILD SUCCESSFUL` (`compileJava UP-TO-DATE`).
 - Prochaine action: poursuite des lots automate possible; prochaine dependance utilisateur uniquement pour produire de la telemetrie gameplay nouvelle si on veut reevaluer des tendances KPI en donnees fraiches.
+
+## Checkpoint 2026-03-26 22:22:35 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 22:23:24 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 22:23:48 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 22:28:55 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 22:54:30 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 22:56:10 (UTC) - Codex
+
+- Statut: in_progress
+- Note: capture gameplay live + extension des overrides stricts sur pipeline auto:
+  - capture live executee via `run_capture_pipeline_auto` (wait-only) avec nouvelles lignes telemetry (`+240`, puis `+300`),
+  - ajout de `MinSoakDurationSeconds` dans `tools/build_beta_candidate.ps1` (default `480`, override possible),
+  - ajout de `CandidateMinSoakDurationSeconds` dans `tools/run_roadmap_autopilot.ps1` et propagation dans la construction candidate stricte,
+  - ajout de `MinMetricsDurationSecondsForCandidatePreflight` dans `tools/run_capture_pipeline_auto.ps1` avec propagation vers autopilot,
+  - self-test passthru etendu pour verifier les deux nouveaux knobs (`min_metrics_duration_seconds_for_candidate_preflight`, `candidate_min_soak_duration_seconds`) y compris via stub autopilot.
+- Validations reelles executees:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_235347_615/capture_pipeline_auto_passthru_selftest_summary.json`),
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_225347_628/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_build_beta_candidate_verification_contract.ps1` -> `4/4` pass (rapport `run/pauc_reports/build_beta_candidate_contract_selftest_20260326_235347_592/build_beta_candidate_contract_selftest_summary.json`),
+  - strict runtime with all-240 overrides:
+    - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$true -AutopilotAllowOneShotMetricsSignatureReplay:$true -MinMetricsDurationSecondsForCandidatePreflight 240 -CandidateMinSoakDurationSeconds 240 -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_after_extended_live_capture_all240_strict_20260326_2355.json -PassThru`,
+    - resultat: candidate stricte rebuild `ready_for_beta` + error sorting `pass`; seul gate restant dans ce run: `git_dirty_worktree` (worktree local modifie pendant le developpement en cours).
+- Prochaine action: committer ce lot puis relancer strict wrapper all-240 sur worktree propre pour obtenir un run full-green exploitable.

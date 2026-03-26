@@ -28,6 +28,7 @@ param(
     [double]$FrameMsP99Max = 60.0,
     [double]$MsptP95Max = 60.0,
     [int]$CandidateMetricsWarmupTrimSeconds = 60,
+    [int]$CandidateMinSoakDurationSeconds = 480,
     [int]$CandidateMetricsTailSeconds = 0,
     [int]$CandidateMetricsTailSamples = 0,
     [switch]$CandidateUseFullMetricsHistory,
@@ -88,6 +89,9 @@ if ($MinMetricsDurationSecondsForCandidatePreflight -lt 0) {
 }
 if ($CandidateMetricsWarmupTrimSeconds -lt 0) {
     throw "CandidateMetricsWarmupTrimSeconds must be >= 0"
+}
+if ($CandidateMinSoakDurationSeconds -lt 0) {
+    throw "CandidateMinSoakDurationSeconds must be >= 0"
 }
 if ($CandidateMetricsTailSeconds -lt 0) {
     throw "CandidateMetricsTailSeconds must be >= 0"
@@ -1716,6 +1720,7 @@ try {
                         FrameMsP95Max = $FrameMsP95Max
                         FrameMsP99Max = $FrameMsP99Max
                         MsptP95Max = $MsptP95Max
+                        MinSoakDurationSeconds = $CandidateMinSoakDurationSeconds
                     }
                     if ($DisableAutoMetricsDiscovery) {
                         $candidateArgsBase.DisableAutoMetricsDiscovery = $true
@@ -2150,6 +2155,7 @@ $result = [PSCustomObject]@{
         target_frame_ms_p99_max = $FrameMsP99Max
         target_mspt_p95_max = $MsptP95Max
         candidate_metrics_warmup_trim_seconds = $CandidateMetricsWarmupTrimSeconds
+        candidate_min_soak_duration_seconds = $CandidateMinSoakDurationSeconds
         candidate_metrics_tail_seconds = $CandidateMetricsTailSeconds
         candidate_metrics_tail_samples = $CandidateMetricsTailSamples
         candidate_use_full_metrics_history = [bool]$CandidateUseFullMetricsHistory

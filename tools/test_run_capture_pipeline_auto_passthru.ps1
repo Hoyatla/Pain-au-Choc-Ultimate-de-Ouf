@@ -112,6 +112,8 @@ $requiredProperties = @(
     "frame_ms_p95_max",
     "frame_ms_p99_max",
     "mspt_p95_max",
+    "min_metrics_duration_seconds_for_candidate_preflight",
+    "candidate_min_soak_duration_seconds",
     "error_sorting_noise_warn_hits_total",
     "error_sorting_noise_fail_hits_total",
     "jar_path",
@@ -157,6 +159,8 @@ function Add-ResultChecks {
         [double]$ExpectedFrameMsP95Max,
         [double]$ExpectedFrameMsP99Max,
         [double]$ExpectedMsptP95Max,
+        [int]$ExpectedMinMetricsDurationSecondsForCandidatePreflight,
+        [int]$ExpectedCandidateMinSoakDurationSeconds,
         [int]$ExpectedNoiseWarnHitsTotal,
         [int]$ExpectedNoiseFailHitsTotal,
         [bool]$ExpectedAutopilotExecuted,
@@ -244,6 +248,12 @@ function Add-ResultChecks {
     if ([double]$result.mspt_p95_max -ne $ExpectedMsptP95Max) {
         Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("mspt_p95_max_mismatch:{0}!={1}" -f [double]$result.mspt_p95_max, $ExpectedMsptP95Max)
     }
+    if ([int]$result.min_metrics_duration_seconds_for_candidate_preflight -ne $ExpectedMinMetricsDurationSecondsForCandidatePreflight) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("min_metrics_duration_seconds_for_candidate_preflight_mismatch:{0}!={1}" -f [int]$result.min_metrics_duration_seconds_for_candidate_preflight, $ExpectedMinMetricsDurationSecondsForCandidatePreflight)
+    }
+    if ([int]$result.candidate_min_soak_duration_seconds -ne $ExpectedCandidateMinSoakDurationSeconds) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("candidate_min_soak_duration_seconds_mismatch:{0}!={1}" -f [int]$result.candidate_min_soak_duration_seconds, $ExpectedCandidateMinSoakDurationSeconds)
+    }
     if ([int]$result.error_sorting_noise_warn_hits_total -ne $ExpectedNoiseWarnHitsTotal) {
         Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("error_sorting_noise_warn_hits_total_mismatch:{0}!={1}" -f [int]$result.error_sorting_noise_warn_hits_total, $ExpectedNoiseWarnHitsTotal)
     }
@@ -322,6 +332,8 @@ function Add-ResultChecks {
             frame_ms_p95_max = [double]$result.frame_ms_p95_max
             frame_ms_p99_max = [double]$result.frame_ms_p99_max
             mspt_p95_max = [double]$result.mspt_p95_max
+            min_metrics_duration_seconds_for_candidate_preflight = [int]$result.min_metrics_duration_seconds_for_candidate_preflight
+            candidate_min_soak_duration_seconds = [int]$result.candidate_min_soak_duration_seconds
             error_sorting_noise_warn_hits_total = [int]$result.error_sorting_noise_warn_hits_total
             error_sorting_noise_fail_hits_total = [int]$result.error_sorting_noise_fail_hits_total
             autopilot_executed = [bool]$result.autopilot_executed
@@ -342,11 +354,15 @@ $autopilotPipelineItems = @()
 $defaultFrameMsP95Max = 20.0
 $defaultFrameMsP99Max = 60.0
 $defaultMsptP95Max = 60.0
+$defaultMinMetricsDurationSecondsForCandidatePreflight = 480
+$defaultCandidateMinSoakDurationSeconds = 480
 $defaultNoiseWarnHitsTotal = 500
 $defaultNoiseFailHitsTotal = 2000
 $overrideFrameMsP95Max = 33.0
 $overrideFrameMsP99Max = 77.0
 $overrideMsptP95Max = 88.0
+$overrideMinMetricsDurationSecondsForCandidatePreflight = 240
+$overrideCandidateMinSoakDurationSeconds = 240
 $overrideNoiseWarnHitsTotal = 123
 $overrideNoiseFailHitsTotal = 456
 $fixturePrismRoot = Join-Path $sessionDir "prism_fixture"
@@ -369,6 +385,8 @@ param(
     [double]$FrameMsP95Max = 0.0,
     [double]$FrameMsP99Max = 0.0,
     [double]$MsptP95Max = 0.0,
+    [int]$MinMetricsDurationSecondsForCandidatePreflight = 0,
+    [int]$CandidateMinSoakDurationSeconds = 0,
     [int]$ErrorSortingNoiseWarnHitsTotal = 0,
     [int]$ErrorSortingNoiseFailHitsTotal = 0,
     [switch]$EnableStrictCiFailGates,
@@ -393,6 +411,8 @@ $probe = [PSCustomObject]@{
     frame_ms_p95_max = [double]$FrameMsP95Max
     frame_ms_p99_max = [double]$FrameMsP99Max
     mspt_p95_max = [double]$MsptP95Max
+    min_metrics_duration_seconds_for_candidate_preflight = [int]$MinMetricsDurationSecondsForCandidatePreflight
+    candidate_min_soak_duration_seconds = [int]$CandidateMinSoakDurationSeconds
     error_sorting_noise_warn_hits_total = [int]$ErrorSortingNoiseWarnHitsTotal
     error_sorting_noise_fail_hits_total = [int]$ErrorSortingNoiseFailHitsTotal
     strict_ci_fail_gates_enabled = [bool]$EnableStrictCiFailGates
@@ -445,6 +465,8 @@ try {
                 -FrameMsP95Max $overrideFrameMsP95Max `
                 -FrameMsP99Max $overrideFrameMsP99Max `
                 -MsptP95Max $overrideMsptP95Max `
+                -MinMetricsDurationSecondsForCandidatePreflight $overrideMinMetricsDurationSecondsForCandidatePreflight `
+                -CandidateMinSoakDurationSeconds $overrideCandidateMinSoakDurationSeconds `
                 -ErrorSortingNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
                 -ErrorSortingNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
                 -AutopilotAllowOneShotMetricsSignatureReplay:$true `
@@ -473,6 +495,8 @@ try {
                     -FrameMsP95Max $overrideFrameMsP95Max `
                     -FrameMsP99Max $overrideFrameMsP99Max `
                     -MsptP95Max $overrideMsptP95Max `
+                    -MinMetricsDurationSecondsForCandidatePreflight $overrideMinMetricsDurationSecondsForCandidatePreflight `
+                    -CandidateMinSoakDurationSeconds $overrideCandidateMinSoakDurationSeconds `
                     -ErrorSortingNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
                     -ErrorSortingNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
                     -SummaryOutputPath $autopilotSummaryPath `
@@ -509,6 +533,8 @@ $smokeResult = Add-ResultChecks `
     -ExpectedFrameMsP95Max $defaultFrameMsP95Max `
     -ExpectedFrameMsP99Max $defaultFrameMsP99Max `
     -ExpectedMsptP95Max $defaultMsptP95Max `
+    -ExpectedMinMetricsDurationSecondsForCandidatePreflight $defaultMinMetricsDurationSecondsForCandidatePreflight `
+    -ExpectedCandidateMinSoakDurationSeconds $defaultCandidateMinSoakDurationSeconds `
     -ExpectedNoiseWarnHitsTotal $defaultNoiseWarnHitsTotal `
     -ExpectedNoiseFailHitsTotal $defaultNoiseFailHitsTotal `
     -ExpectedAutopilotExecuted $false `
@@ -527,6 +553,8 @@ $copyResult = Add-ResultChecks `
     -ExpectedFrameMsP95Max $overrideFrameMsP95Max `
     -ExpectedFrameMsP99Max $overrideFrameMsP99Max `
     -ExpectedMsptP95Max $overrideMsptP95Max `
+    -ExpectedMinMetricsDurationSecondsForCandidatePreflight $overrideMinMetricsDurationSecondsForCandidatePreflight `
+    -ExpectedCandidateMinSoakDurationSeconds $overrideCandidateMinSoakDurationSeconds `
     -ExpectedNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
     -ExpectedNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
     -ExpectedAutopilotExecuted $false `
@@ -545,6 +573,8 @@ $autopilotResult = Add-ResultChecks `
     -ExpectedFrameMsP95Max $overrideFrameMsP95Max `
     -ExpectedFrameMsP99Max $overrideFrameMsP99Max `
     -ExpectedMsptP95Max $overrideMsptP95Max `
+    -ExpectedMinMetricsDurationSecondsForCandidatePreflight $overrideMinMetricsDurationSecondsForCandidatePreflight `
+    -ExpectedCandidateMinSoakDurationSeconds $overrideCandidateMinSoakDurationSeconds `
     -ExpectedNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
     -ExpectedNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
     -ExpectedAutopilotExecuted $true `
@@ -590,6 +620,12 @@ if (-not (Test-Path -LiteralPath $autopilotProbePath -PathType Leaf)) {
         }
         if ([double]$autopilotProbe.mspt_p95_max -ne $overrideMsptP95Max) {
             Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_mspt_p95_max_mismatch"
+        }
+        if ([int]$autopilotProbe.min_metrics_duration_seconds_for_candidate_preflight -ne $overrideMinMetricsDurationSecondsForCandidatePreflight) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_min_metrics_duration_seconds_for_candidate_preflight_mismatch"
+        }
+        if ([int]$autopilotProbe.candidate_min_soak_duration_seconds -ne $overrideCandidateMinSoakDurationSeconds) {
+            Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_candidate_min_soak_duration_seconds_mismatch"
         }
         if ([int]$autopilotProbe.error_sorting_noise_warn_hits_total -ne $overrideNoiseWarnHitsTotal) {
             Add-CaseCheck -Checks $checks -CaseName "autopilot_stub_propagation" -Message "probe_noise_warn_hits_total_mismatch"

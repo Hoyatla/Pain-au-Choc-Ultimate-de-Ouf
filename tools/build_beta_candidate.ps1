@@ -30,6 +30,7 @@ param(
     [double]$FrameMsP95Max = 20.0,
     [double]$FrameMsP99Max = 60.0,
     [double]$MsptP95Max = 60.0,
+    [int]$MinSoakDurationSeconds = 480,
     [switch]$StrictPreflight,
     [switch]$StrictReadiness,
     [switch]$SkipPreflight,
@@ -58,6 +59,9 @@ if ($FrameMsP99Max -le 0.0) {
 }
 if ($MsptP95Max -le 0.0) {
     throw "MsptP95Max must be > 0"
+}
+if ($MinSoakDurationSeconds -lt 0) {
+    throw "MinSoakDurationSeconds must be >= 0"
 }
 if ($MetricsTailSeconds -lt 0) {
     throw "MetricsTailSeconds must be >= 0"
@@ -216,6 +220,7 @@ try {
             FrameMsP95Max = $FrameMsP95Max
             FrameMsP99Max = $FrameMsP99Max
             MsptP95Max = $MsptP95Max
+            MinSoakDurationSeconds = $MinSoakDurationSeconds
             ResultsPath = $ResultsPath
                 PrismRoot = $PrismRoot
                 PrismInstanceName = $PrismInstanceName

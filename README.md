@@ -328,6 +328,8 @@ Pipeline capture auto (build/deploy/wait/preflight/candidate/autopilot):
 .\tools\run_capture_pipeline_auto.ps1 -MetricsPath .\run\pauc_telemetry\runtime_metrics.csv -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$false -PassThru
 .\tools\run_capture_pipeline_auto.ps1 -InstanceName test -WaitForFreshMetrics:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -EnableStrictCiFailGates
 .\tools\run_capture_pipeline_auto.ps1 -InstanceName test -WaitForFreshMetrics:$false -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -AutopilotAllowOneShotMetricsSignatureReplay:$true -EnableStrictCiFailGates
+.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -WaitForFreshMetrics:$false -CandidateMinSoakDurationSeconds 240 -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -AutopilotAllowOneShotMetricsSignatureReplay:$true -EnableStrictCiFailGates
+.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -WaitForFreshMetrics:$false -MinMetricsDurationSecondsForCandidatePreflight 240 -CandidateMinSoakDurationSeconds 240 -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -AutopilotAllowOneShotMetricsSignatureReplay:$true -EnableStrictCiFailGates
 ```
 
 Notes pipeline auto:
@@ -337,6 +339,8 @@ Notes pipeline auto:
 - Mode smoke test disponible en desactivant les etapes lourdes (`BuildJar/CopyJarToInstance/WaitForFreshMetrics/RunPreflight/RunCandidate/RunAutopilot`).
 - Avec `-PassThru`, le script renvoie un objet machine-readable (etats des etapes, exit codes, paths, erreurs).
 - `-FrameMsP95Max`, `-FrameMsP99Max` et `-MsptP95Max` sont propagees vers les etapes preflight, candidate et autopilot.
+- `-MinMetricsDurationSecondsForCandidatePreflight` pilote le seuil minimal de duree de session avant lancement candidate dans autopilot (default `480s`).
+- `-CandidateMinSoakDurationSeconds` est propage vers preflight/candidate/autopilot (default strict: `480s`).
 - `-ErrorSortingNoiseWarnHitsTotal` et `-ErrorSortingNoiseFailHitsTotal` sont propagees vers l'etape autopilot.
 - `-AutopilotAllowOneShotMetricsSignatureReplay` transmet `-AllowOneShotMetricsSignatureReplay` au one-shot autopilot execute en etape 6.
 - `-AutopilotScriptPath` permet d'injecter un runner autopilot custom (hook de test CI/self-test).

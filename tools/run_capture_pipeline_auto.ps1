@@ -20,6 +20,8 @@ param(
     [double]$FrameMsP95Max = 20.0,
     [double]$FrameMsP99Max = 60.0,
     [double]$MsptP95Max = 60.0,
+    [int]$MinMetricsDurationSecondsForCandidatePreflight = 480,
+    [int]$CandidateMinSoakDurationSeconds = 480,
     [int]$ErrorSortingNoiseWarnHitsTotal = 500,
     [int]$ErrorSortingNoiseFailHitsTotal = 2000,
     [bool]$EnableStrictCiFailGates = $true,
@@ -55,6 +57,12 @@ if ($FrameMsP99Max -le 0.0) {
 }
 if ($MsptP95Max -le 0.0) {
     throw "MsptP95Max must be > 0"
+}
+if ($MinMetricsDurationSecondsForCandidatePreflight -lt 0) {
+    throw "MinMetricsDurationSecondsForCandidatePreflight must be >= 0"
+}
+if ($CandidateMinSoakDurationSeconds -lt 0) {
+    throw "CandidateMinSoakDurationSeconds must be >= 0"
 }
 if ($ErrorSortingNoiseWarnHitsTotal -lt 0) {
     throw "ErrorSortingNoiseWarnHitsTotal must be >= 0"
@@ -452,6 +460,8 @@ $result = [ordered]@{
     frame_ms_p95_max = $FrameMsP95Max
     frame_ms_p99_max = $FrameMsP99Max
     mspt_p95_max = $MsptP95Max
+    min_metrics_duration_seconds_for_candidate_preflight = $MinMetricsDurationSecondsForCandidatePreflight
+    candidate_min_soak_duration_seconds = $CandidateMinSoakDurationSeconds
     error_sorting_noise_warn_hits_total = $ErrorSortingNoiseWarnHitsTotal
     error_sorting_noise_fail_hits_total = $ErrorSortingNoiseFailHitsTotal
     jar_path = ""
@@ -572,6 +582,7 @@ try {
                 FrameMsP95Max = $FrameMsP95Max
                 FrameMsP99Max = $FrameMsP99Max
                 MsptP95Max = $MsptP95Max
+                MinSoakDurationSeconds = $CandidateMinSoakDurationSeconds
                 ReportAsJson = $true
             }
             if (-not [string]::IsNullOrWhiteSpace($InstanceName)) {
@@ -623,6 +634,7 @@ try {
                 FrameMsP95Max = $FrameMsP95Max
                 FrameMsP99Max = $FrameMsP99Max
                 MsptP95Max = $MsptP95Max
+                MinSoakDurationSeconds = $CandidateMinSoakDurationSeconds
                 StrictReadiness = $true
             }
             if (-not [string]::IsNullOrWhiteSpace($InstanceName)) {
@@ -696,6 +708,8 @@ try {
                 FrameMsP95Max = $FrameMsP95Max
                 FrameMsP99Max = $FrameMsP99Max
                 MsptP95Max = $MsptP95Max
+                MinMetricsDurationSecondsForCandidatePreflight = $MinMetricsDurationSecondsForCandidatePreflight
+                CandidateMinSoakDurationSeconds = $CandidateMinSoakDurationSeconds
                 ErrorSortingNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
                 ErrorSortingNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
             }

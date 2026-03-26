@@ -24,6 +24,8 @@
   - `tools/run_capture_pipeline_auto.ps1` expose maintenant `-AutopilotAllowOneShotMetricsSignatureReplay` pour propager ce mode vers l'etape autopilot.
 - Harmonisation des seuils stricts via le wrapper capture auto:
   - `tools/run_capture_pipeline_auto.ps1` expose `-FrameMsP95Max`, `-FrameMsP99Max`, `-MsptP95Max`, `-ErrorSortingNoiseWarnHitsTotal` et `-ErrorSortingNoiseFailHitsTotal`.
+  - ajout de `-MinMetricsDurationSecondsForCandidatePreflight` pour piloter le gate amont `waiting_candidate_metrics` en one-shot strict.
+  - `tools/run_capture_pipeline_auto.ps1` expose aussi `-CandidateMinSoakDurationSeconds` pour aligner le gate soak strict sur les scenarios de capture.
   - ces seuils sont propages aux etapes preflight/candidate/autopilot pour conserver une seule commande de pilotage CI.
   - le contrat `-PassThru` exporte maintenant explicitement ces valeurs pour audit machine-readable.
   - ajout de `-AutopilotScriptPath` pour permettre un runner autopilot injectable (tests CI deterministes).
@@ -34,7 +36,7 @@
     - sans replay: `.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates ...` -> `final_decision=pending_metrics`, `allow_one_shot_metrics_signature_replay=false`, `metrics_signature_replay_used=false`,
     - avec replay: `.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates ...` -> `final_decision=ready_for_beta`, `allow_one_shot_metrics_signature_replay=true`, `metrics_signature_replay_used=true`.
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` avec contrat `-PassThru` (champ replay + seuils stricts, y compris verification des overrides).
-  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` couvre aussi la propagation effective des arguments autopilot via stub (`AutopilotScriptPath`).
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` couvre aussi la propagation effective des arguments autopilot via stub (`AutopilotScriptPath`), y compris `MinMetricsDurationSecondsForCandidatePreflight` et `CandidateMinSoakDurationSeconds`.
   - smoke tests layout `.minecraft` executes sur `apply_pauc_profile`, `triage_modpack_errors`, `quarantine_modpack_data_errors`, `run_error_sorting_pass`, `validate_v3_hardware_drivers`.
   - smoke `-PassThru` (`triage`, `quarantine -DryRun`, `run_error_sorting_pass -RunQuarantine:$false`, `validate_v3_hardware_drivers`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
   - smoke `-PassThru` (`ab_campaign_status`, `ab_campaign_next`, `assess_beta_readiness`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
