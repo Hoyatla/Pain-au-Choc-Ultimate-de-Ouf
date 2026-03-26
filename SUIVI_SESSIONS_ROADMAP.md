@@ -5237,3 +5237,31 @@ Copier/coller le bloc suivant a chaque fin de session:
     - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_default_runner_probe_20260326_2234.json -PassThru`,
     - resultat: `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`, `autopilot_script_path=tools/run_roadmap_autopilot.ps1`.
 - Prochaine action: poursuivre les lots CI/autopilot sans intervention utilisateur.
+
+## Checkpoint 2026-03-26 21:38:13 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:38:39 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:40:12 (UTC) - Codex
+
+- Statut: in_progress
+- Note: verification stricte post-hook `AutopilotScriptPath` sur flux nominal.
+- Validations reelles executees:
+  - commande:
+    - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$true -AutopilotAllowOneShotMetricsSignatureReplay:$true -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_post_hook_strict_20260326_2240.json -PassThru`,
+  - resultat wrapper:
+    - `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`,
+    - `autopilot_script_path=tools/run_roadmap_autopilot.ps1` (runner nominal),
+  - resultat autopilot strict:
+    - `strict_ci_fail_gates_enabled=true`, `triggered_fail_gates_count=0`,
+    - `decision_source=fresh_candidate`, `decision_freshness=fresh`, `metrics_signature_replay_used=true`,
+    - summary: `run/pauc_reports/autopilot_summary_capture_post_hook_strict_20260326_2240.json`.
+- Prochaine action: poursuivre les lots CI/autopilot sans intervention utilisateur.
