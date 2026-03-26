@@ -5030,3 +5030,32 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:56:53 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:57:20 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:59:05 (UTC) - Codex
+
+- Statut: in_progress
+- Note: cloture du lot strict CI avec gate git corrigee et run full strict valide:
+  - `tools/run_roadmap_autopilot.ps1` ignore desormais `SUIVI_SESSIONS_ROADMAP.md` dans le gate `FailOnGitDirtyWorktree` (fichier de checkpoint ecrit pendant run),
+  - self-test fail-gates relance apres correctif: `46/46` pass (`run/pauc_reports/autopilot_fail_gate_selftest_20260326_205500_191/autopilot_fail_gate_selftest_summary.json`),
+  - relance strict CI complete avec etat autopilot dedie pour forcer un nouveau cycle candidate sur la telemetrie courante:
+    - `.\tools\run_roadmap_autopilot.ps1 -OneShot -InstanceName test -EnableStrictCiFailGates -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -AutopilotStatePath .\run\pauc_telemetry\roadmap_autopilot_state_ci_recheck_20260326_205647_584.json -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_strict_fullgreen_20260326_205647_584.json`.
+- Validations reelles executees:
+  - resultat strict CI: `EXIT_CODE=0`,
+  - `autopilot_failed=false`, `triggered_fail_gates={}`,
+  - `decision_source=fresh_candidate`, `effective_decision=ready_for_beta`, `decision_freshness=fresh`,
+  - `strict_candidate_attempts_summary=primary:failed(exit=1); full_history_retry:success(exit=0)`,
+  - candidate final: `run/beta_candidates/beta_candidate_20260326_205842_811`,
+  - Prism sync SHA256: `A64BC005E1D4C30BFC0E81C9CEB6FAA40E2989BF78DB40383D32B854B6CAFB03`.
+- Prochaine action: maintenir la cadence capture gameplay fresh pour eviter les blocages `pending_metrics_decision` sur la state-path par defaut.
