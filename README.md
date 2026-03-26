@@ -327,6 +327,7 @@ Pipeline capture auto (build/deploy/wait/preflight/candidate/autopilot):
 .\tools\run_capture_pipeline_auto.ps1 -InstanceName test -PassThru | ConvertTo-Json -Depth 8
 .\tools\run_capture_pipeline_auto.ps1 -MetricsPath .\run\pauc_telemetry\runtime_metrics.csv -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$false -PassThru
 .\tools\run_capture_pipeline_auto.ps1 -InstanceName test -WaitForFreshMetrics:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -EnableStrictCiFailGates
+.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -WaitForFreshMetrics:$false -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -AutopilotAllowOneShotMetricsSignatureReplay:$true -EnableStrictCiFailGates
 ```
 
 Notes pipeline auto:
@@ -335,6 +336,8 @@ Notes pipeline auto:
 - le deploiement jar Prism resout automatiquement le layout instance (`.minecraft` ou `minecraft`) avant copie vers `mods/`.
 - Mode smoke test disponible en desactivant les etapes lourdes (`BuildJar/CopyJarToInstance/WaitForFreshMetrics/RunPreflight/RunCandidate/RunAutopilot`).
 - Avec `-PassThru`, le script renvoie un objet machine-readable (etats des etapes, exit codes, paths, erreurs).
+- `-FrameMsP95Max`, `-FrameMsP99Max` et `-MsptP95Max` sont propagees vers les etapes preflight, candidate et autopilot.
+- `-ErrorSortingNoiseWarnHitsTotal` et `-ErrorSortingNoiseFailHitsTotal` sont propagees vers l'etape autopilot.
 - `-AutopilotAllowOneShotMetricsSignatureReplay` transmet `-AllowOneShotMetricsSignatureReplay` au one-shot autopilot execute en etape 6.
 
 Self-test de non-regression pipeline auto:

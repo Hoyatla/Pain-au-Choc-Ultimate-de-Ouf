@@ -5156,3 +5156,30 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:22:50 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:23:15 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:24:40 (UTC) - Codex
+
+- Statut: in_progress
+- Note: lot wrapper capture auto et seuils stricts unifies:
+  - `tools/run_capture_pipeline_auto.ps1` expose/propage maintenant les seuils `FrameMsP95Max`, `FrameMsP99Max`, `MsptP95Max`, `ErrorSortingNoiseWarnHitsTotal`, `ErrorSortingNoiseFailHitsTotal`,
+  - contrat `-PassThru` et self-test etendus pour verifier ces champs (presence + overrides), y compris le flag `autopilot_allow_one_shot_metrics_signature_replay`,
+  - documentation usage enrichie (`README.md`) + changelog (`2.0.6`).
+- Validations reelles executees:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_222209_842/capture_pipeline_auto_passthru_selftest_summary.json`),
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_212209_842/autopilot_fail_gate_selftest_summary.json`),
+  - probe runtime wrapper (instance `test`, daemon actif):
+    - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_thresholds_probe_20260326_2222.json -PassThru`,
+    - resultat: `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`, `metrics_signature_replay_used=true`, seuils cibles confirms dans le JSON autopilot (`target_frame_ms_p95_max=450`, `target_frame_ms_p99_max=1000`, `target_mspt_p95_max=60`, noise warn/fail `3000/5000`).
+- Prochaine action: enchainement du lot suivant CI/autopilot sans intervention utilisateur.

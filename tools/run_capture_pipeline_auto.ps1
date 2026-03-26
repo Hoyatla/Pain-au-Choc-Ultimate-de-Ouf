@@ -17,6 +17,11 @@ param(
     [bool]$StrictPreflight = $true,
     [int]$MetricsWarmupTrimSeconds = 120,
     [int]$MaxMetricsAgeMinutes = 240,
+    [double]$FrameMsP95Max = 20.0,
+    [double]$FrameMsP99Max = 60.0,
+    [double]$MsptP95Max = 60.0,
+    [int]$ErrorSortingNoiseWarnHitsTotal = 500,
+    [int]$ErrorSortingNoiseFailHitsTotal = 2000,
     [bool]$EnableStrictCiFailGates = $true,
     [bool]$AutopilotAllowOneShotMetricsSignatureReplay = $false,
     [string]$SummaryOutputPath = "",
@@ -40,6 +45,24 @@ if ($MetricsWarmupTrimSeconds -lt 0) {
 }
 if ($MaxMetricsAgeMinutes -lt 0) {
     throw "MaxMetricsAgeMinutes must be >= 0"
+}
+if ($FrameMsP95Max -le 0.0) {
+    throw "FrameMsP95Max must be > 0"
+}
+if ($FrameMsP99Max -le 0.0) {
+    throw "FrameMsP99Max must be > 0"
+}
+if ($MsptP95Max -le 0.0) {
+    throw "MsptP95Max must be > 0"
+}
+if ($ErrorSortingNoiseWarnHitsTotal -lt 0) {
+    throw "ErrorSortingNoiseWarnHitsTotal must be >= 0"
+}
+if ($ErrorSortingNoiseFailHitsTotal -lt 0) {
+    throw "ErrorSortingNoiseFailHitsTotal must be >= 0"
+}
+if ($ErrorSortingNoiseFailHitsTotal -lt $ErrorSortingNoiseWarnHitsTotal) {
+    throw "ErrorSortingNoiseFailHitsTotal must be >= ErrorSortingNoiseWarnHitsTotal"
 }
 
 function Get-LastExitCodeOrZero {
@@ -399,6 +422,11 @@ $result = [ordered]@{
     metrics_rows_before = 0
     metrics_rows_after = 0
     metrics_new_rows = 0
+    frame_ms_p95_max = $FrameMsP95Max
+    frame_ms_p99_max = $FrameMsP99Max
+    mspt_p95_max = $MsptP95Max
+    error_sorting_noise_warn_hits_total = $ErrorSortingNoiseWarnHitsTotal
+    error_sorting_noise_fail_hits_total = $ErrorSortingNoiseFailHitsTotal
     jar_path = ""
     jar_sha256 = ""
     jar_copied_to_mods = $false
@@ -513,6 +541,9 @@ try {
                 PrismRoot = $PrismRoot
                 MetricsWarmupTrimSeconds = $MetricsWarmupTrimSeconds
                 MaxMetricsAgeMinutes = $MaxMetricsAgeMinutes
+                FrameMsP95Max = $FrameMsP95Max
+                FrameMsP99Max = $FrameMsP99Max
+                MsptP95Max = $MsptP95Max
                 ReportAsJson = $true
             }
             if (-not [string]::IsNullOrWhiteSpace($InstanceName)) {
@@ -561,6 +592,9 @@ try {
                 PrismRoot = $PrismRoot
                 MetricsWarmupTrimSeconds = $MetricsWarmupTrimSeconds
                 MaxMetricsAgeMinutes = $MaxMetricsAgeMinutes
+                FrameMsP95Max = $FrameMsP95Max
+                FrameMsP99Max = $FrameMsP99Max
+                MsptP95Max = $MsptP95Max
                 StrictReadiness = $true
             }
             if (-not [string]::IsNullOrWhiteSpace($InstanceName)) {
@@ -631,6 +665,11 @@ try {
                 PrismRoot = $PrismRoot
                 SummaryOutputPath = $summaryPathResolved
                 SummaryOutputCompress = $true
+                FrameMsP95Max = $FrameMsP95Max
+                FrameMsP99Max = $FrameMsP99Max
+                MsptP95Max = $MsptP95Max
+                ErrorSortingNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
+                ErrorSortingNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
             }
             if (-not [string]::IsNullOrWhiteSpace($InstanceName)) {
                 $autopilotArgs.InstanceName = $InstanceName

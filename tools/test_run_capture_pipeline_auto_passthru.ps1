@@ -109,6 +109,11 @@ $requiredProperties = @(
     "metrics_rows_before",
     "metrics_rows_after",
     "metrics_new_rows",
+    "frame_ms_p95_max",
+    "frame_ms_p99_max",
+    "mspt_p95_max",
+    "error_sorting_noise_warn_hits_total",
+    "error_sorting_noise_fail_hits_total",
     "jar_path",
     "jar_sha256",
     "jar_copied_to_mods",
@@ -148,6 +153,12 @@ function Add-ResultChecks {
         [string[]]$RequiredProperties,
         [bool]$ExpectJarCopy,
         [string]$ExpectedJarDeployedPath,
+        [double]$ExpectedFrameMsP95Max,
+        [double]$ExpectedFrameMsP99Max,
+        [double]$ExpectedMsptP95Max,
+        [int]$ExpectedNoiseWarnHitsTotal,
+        [int]$ExpectedNoiseFailHitsTotal,
+        [bool]$ExpectedAllowOneShotMetricsSignatureReplay,
         [System.Collections.Generic.List[string]]$Checks
     )
 
@@ -196,6 +207,27 @@ function Add-ResultChecks {
     }
     if ([int]$result.autopilot_exit_code -ne 0) {
         Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("unexpected_autopilot_exit_code:{0}" -f [int]$result.autopilot_exit_code)
+    }
+    if ([double]$result.frame_ms_p95_max -ne $ExpectedFrameMsP95Max) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("frame_ms_p95_max_mismatch:{0}!={1}" -f [double]$result.frame_ms_p95_max, $ExpectedFrameMsP95Max)
+    }
+    if ([double]$result.frame_ms_p99_max -ne $ExpectedFrameMsP99Max) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("frame_ms_p99_max_mismatch:{0}!={1}" -f [double]$result.frame_ms_p99_max, $ExpectedFrameMsP99Max)
+    }
+    if ([double]$result.mspt_p95_max -ne $ExpectedMsptP95Max) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("mspt_p95_max_mismatch:{0}!={1}" -f [double]$result.mspt_p95_max, $ExpectedMsptP95Max)
+    }
+    if ([int]$result.error_sorting_noise_warn_hits_total -ne $ExpectedNoiseWarnHitsTotal) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("error_sorting_noise_warn_hits_total_mismatch:{0}!={1}" -f [int]$result.error_sorting_noise_warn_hits_total, $ExpectedNoiseWarnHitsTotal)
+    }
+    if ([int]$result.error_sorting_noise_fail_hits_total -ne $ExpectedNoiseFailHitsTotal) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("error_sorting_noise_fail_hits_total_mismatch:{0}!={1}" -f [int]$result.error_sorting_noise_fail_hits_total, $ExpectedNoiseFailHitsTotal)
+    }
+    if ([int]$result.error_sorting_noise_fail_hits_total -lt [int]$result.error_sorting_noise_warn_hits_total) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message "error_sorting_noise_fail_hits_total_lt_warn_total"
+    }
+    if ([bool]$result.autopilot_allow_one_shot_metrics_signature_replay -ne $ExpectedAllowOneShotMetricsSignatureReplay) {
+        Add-CaseCheck -Checks $Checks -CaseName $CaseName -Message ("autopilot_allow_one_shot_metrics_signature_replay_mismatch:{0}!={1}" -f [bool]$result.autopilot_allow_one_shot_metrics_signature_replay, $ExpectedAllowOneShotMetricsSignatureReplay)
     }
 
     $expectedNewRows = [Math]::Max(0, [int]$result.metrics_rows_after - [int]$result.metrics_rows_before)
@@ -260,6 +292,12 @@ function Add-ResultChecks {
             pipeline_output_count = $PipelineItems.Count
             jar_copied_to_mods = [bool]$result.jar_copied_to_mods
             jar_deployed_path = [string]$result.jar_deployed_path
+            frame_ms_p95_max = [double]$result.frame_ms_p95_max
+            frame_ms_p99_max = [double]$result.frame_ms_p99_max
+            mspt_p95_max = [double]$result.mspt_p95_max
+            error_sorting_noise_warn_hits_total = [int]$result.error_sorting_noise_warn_hits_total
+            error_sorting_noise_fail_hits_total = [int]$result.error_sorting_noise_fail_hits_total
+            autopilot_allow_one_shot_metrics_signature_replay = [bool]$result.autopilot_allow_one_shot_metrics_signature_replay
         })
 }
 
@@ -267,6 +305,16 @@ $smokeInvocationError = ""
 $smokePipelineItems = @()
 $copyInvocationError = ""
 $copyPipelineItems = @()
+$defaultFrameMsP95Max = 20.0
+$defaultFrameMsP99Max = 60.0
+$defaultMsptP95Max = 60.0
+$defaultNoiseWarnHitsTotal = 500
+$defaultNoiseFailHitsTotal = 2000
+$overrideFrameMsP95Max = 33.0
+$overrideFrameMsP99Max = 77.0
+$overrideMsptP95Max = 88.0
+$overrideNoiseWarnHitsTotal = 123
+$overrideNoiseFailHitsTotal = 456
 $fixturePrismRoot = Join-Path $sessionDir "prism_fixture"
 $fixtureInstanceName = "ci_capture_auto_dot"
 $fixtureMinecraftDir = Join-Path (Join-Path $fixturePrismRoot $fixtureInstanceName) ".minecraft"
@@ -305,6 +353,12 @@ try {
                 -RunPreflight:$false `
                 -RunCandidate:$false `
                 -RunAutopilot:$false `
+                -FrameMsP95Max $overrideFrameMsP95Max `
+                -FrameMsP99Max $overrideFrameMsP99Max `
+                -MsptP95Max $overrideMsptP95Max `
+                -ErrorSortingNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
+                -ErrorSortingNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
+                -AutopilotAllowOneShotMetricsSignatureReplay:$true `
                 -PassThru
         )
     } catch {
@@ -328,6 +382,12 @@ Add-ResultChecks `
     -RequiredProperties $requiredProperties `
     -ExpectJarCopy $false `
     -ExpectedJarDeployedPath "" `
+    -ExpectedFrameMsP95Max $defaultFrameMsP95Max `
+    -ExpectedFrameMsP99Max $defaultFrameMsP99Max `
+    -ExpectedMsptP95Max $defaultMsptP95Max `
+    -ExpectedNoiseWarnHitsTotal $defaultNoiseWarnHitsTotal `
+    -ExpectedNoiseFailHitsTotal $defaultNoiseFailHitsTotal `
+    -ExpectedAllowOneShotMetricsSignatureReplay $false `
     -Checks $checks
 
 Add-ResultChecks `
@@ -337,6 +397,12 @@ Add-ResultChecks `
     -RequiredProperties $requiredProperties `
     -ExpectJarCopy $true `
     -ExpectedJarDeployedPath $expectedDeployedJarPath `
+    -ExpectedFrameMsP95Max $overrideFrameMsP95Max `
+    -ExpectedFrameMsP99Max $overrideFrameMsP99Max `
+    -ExpectedMsptP95Max $overrideMsptP95Max `
+    -ExpectedNoiseWarnHitsTotal $overrideNoiseWarnHitsTotal `
+    -ExpectedNoiseFailHitsTotal $overrideNoiseFailHitsTotal `
+    -ExpectedAllowOneShotMetricsSignatureReplay $true `
     -Checks $checks
 
 $passed = ($checks.Count -eq 0)
