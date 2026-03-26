@@ -53,6 +53,7 @@ param(
     [switch]$FailOnMissingSummaryOutput,
     [switch]$FailOnSummaryIntegrityMissing,
     [switch]$FailOnGitDirtyWorktree,
+    [string[]]$GitDirtyIgnorePaths = @("SUIVI_SESSIONS_ROADMAP.md"),
     [switch]$EnableStrictCiFailGates,
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
@@ -174,7 +175,8 @@ function Reset-LastExitCode {
 
 function Get-GitContext {
     param(
-        [string]$RepoRootPath
+        [string]$RepoRootPath,
+        [string[]]$IgnoredStatusPaths = @()
     )
 
     $result = [PSCustomObject]@{
@@ -184,6 +186,33 @@ function Get-GitContext {
         commit = ""
         is_dirty = $false
         status_entry_count = 0
+    }
+
+    $normalizedIgnoredPaths = New-Object "System.Collections.Generic.HashSet[string]" ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($rawIgnoredPath in @($IgnoredStatusPaths)) {
+        if ([string]::IsNullOrWhiteSpace([string]$rawIgnoredPath)) {
+            continue
+        }
+        $normalizedPath = [string]$rawIgnoredPath
+        $normalizedPath = $normalizedPath.Trim()
+        if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+            continue
+        }
+        if ([System.IO.Path]::IsPathRooted($normalizedPath)) {
+            try {
+                $normalizedPath = [System.IO.Path]::GetRelativePath($RepoRootPath, $normalizedPath)
+            } catch {
+                # Ignore normalization failures and keep the raw path.
+            }
+        }
+        $normalizedPath = $normalizedPath.Replace('\', '/')
+        while ($normalizedPath.StartsWith("./")) {
+            $normalizedPath = $normalizedPath.Substring(2)
+        }
+        $normalizedPath = $normalizedPath.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($normalizedPath)) {
+            [void]$normalizedIgnoredPaths.Add($normalizedPath)
+        }
     }
 
     try {
@@ -224,7 +253,30 @@ function Get-GitContext {
         if ((Get-LastExitCodeOrZero) -ne 0) {
             $statusOutput = @()
         }
-        $statusEntries = @($statusOutput | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+        $statusEntries = New-Object System.Collections.Generic.List[string]
+        foreach ($rawStatusEntry in @($statusOutput)) {
+            $statusEntry = [string]$rawStatusEntry
+            if ([string]::IsNullOrWhiteSpace($statusEntry)) {
+                continue
+            }
+
+            $statusPath = if ($statusEntry.Length -gt 3) {
+                $statusEntry.Substring(3).Trim()
+            } else {
+                $statusEntry.Trim()
+            }
+            if ($statusPath -match '\s->\s') {
+                $statusPath = ($statusPath -split '\s->\s')[-1].Trim()
+            }
+            $statusPath = $statusPath.Replace('\', '/')
+            while ($statusPath.StartsWith("./")) {
+                $statusPath = $statusPath.Substring(2)
+            }
+
+            if ([string]::IsNullOrWhiteSpace($statusPath) -or -not $normalizedIgnoredPaths.Contains($statusPath)) {
+                $statusEntries.Add($statusEntry)
+            }
+        }
         $result.status_entry_count = $statusEntries.Count
         $result.is_dirty = ($statusEntries.Count -gt 0)
         $result.available = $true
@@ -2041,7 +2093,7 @@ $latestMetricsFreshnessStatus = [string]$latestMetricsFreshness.status
 $errorSortingReportMdExists = -not [string]::IsNullOrWhiteSpace($errorSortingReportMdPath) -and (Test-Path -LiteralPath $errorSortingReportMdPath -PathType Leaf)
 $errorSortingReportJsonExists = -not [string]::IsNullOrWhiteSpace($errorSortingReportJsonPath) -and (Test-Path -LiteralPath $errorSortingReportJsonPath -PathType Leaf)
 $errorSortingReportsPresent = ($errorSortingReportMdExists -and $errorSortingReportJsonExists)
-$gitContext = Get-GitContext -RepoRootPath $repoRoot
+$gitContext = Get-GitContext -RepoRootPath $repoRoot -IgnoredStatusPaths $GitDirtyIgnorePaths
 $gitContextAvailable = [bool]$gitContext.available
 $gitContextError = [string]$gitContext.error
 $gitBranch = [string]$gitContext.branch

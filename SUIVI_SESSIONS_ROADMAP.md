@@ -5018,3 +5018,15 @@ Copier/coller le bloc suivant a chaque fin de session:
     - candidate final: `run/beta_candidates/beta_candidate_20260326_204651_009`,
     - Prism sync SHA256: `0712E32DAEB2D513EB295E69B9184DBCF50243981422E7DDCF452CFC1778B84C`.
 - Prochaine action: pour cloturer strict CI integralement, nettoyer/committer le worktree puis relancer `run_roadmap_autopilot -EnableStrictCiFailGates` avec les memes seuils.
+
+## Checkpoint 2026-03-26 20:51:03 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:51:29 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
