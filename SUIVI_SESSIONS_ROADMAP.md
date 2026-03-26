@@ -5131,3 +5131,28 @@ Copier/coller le bloc suivant a chaque fin de session:
   - strict replay one-shot reference maintenue verte:
     - `run/pauc_reports/autopilot_summary_ci_replay_strict_ok_20260326_210824_335.json` (`EXIT_CODE=0`, `autopilot_failed=false`, `metrics_signature_replay_used=true`).
 - Prochaine action: enchainement prochain lot roadmap outillage CI sans intervention utilisateur.
+
+## Checkpoint 2026-03-26 21:16:37 (UTC) - Codex
+
+- Statut: in_progress
+- Note: validation integration wrapper `run_capture_pipeline_auto` avec propagation replay one-shot.
+- Validations reelles executees:
+  - commande integration:
+    - `.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$true -EnableStrictCiFailGates:$false -AutopilotAllowOneShotMetricsSignatureReplay:$true -SummaryOutputPath .\run\pauc_reports\autopilot_summary_capture_replay_wrapper_probe.json -PassThru`,
+  - resultat wrapper:
+    - `autopilot_executed=true`, `autopilot_exit_code=0`, `autopilot_failed=false`, `autopilot_effective_decision=ready_for_beta`,
+    - `autopilot_allow_one_shot_metrics_signature_replay=true` present dans l'objet `-PassThru`,
+    - resume autopilot ecrit: `run/pauc_reports/autopilot_summary_capture_replay_wrapper_probe.json`.
+- Prochaine action: poursuivre les lots outillage/CI en continu sans input utilisateur.
+
+## Checkpoint 2026-03-26 21:14:42 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:15:08 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
