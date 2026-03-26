@@ -5059,3 +5059,33 @@ Copier/coller le bloc suivant a chaque fin de session:
   - candidate final: `run/beta_candidates/beta_candidate_20260326_205842_811`,
   - Prism sync SHA256: `A64BC005E1D4C30BFC0E81C9CEB6FAA40E2989BF78DB40383D32B854B6CAFB03`.
 - Prochaine action: maintenir la cadence capture gameplay fresh pour eviter les blocages `pending_metrics_decision` sur la state-path par defaut.
+
+## Checkpoint 2026-03-26 21:04:55 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:05:22 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 21:07:05 (UTC) - Codex
+
+- Statut: in_progress
+- Note: lot autonomie autopilot one-shot sans reset state:
+  - ajout de `-AllowOneShotMetricsSignatureReplay` dans `tools/run_roadmap_autopilot.ps1`,
+  - en `-OneShot`, si la signature telemetry courante est deja traitee (`waiting_candidate_metrics_new`), le script peut maintenant forcer un cycle strict candidate au lieu de rester en `pending_metrics`,
+  - le resume JSON expose `allow_one_shot_metrics_signature_replay` et `metrics_signature_replay_used` pour audit CI.
+- Validations reelles executees:
+  - non-regression gates:
+    - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_210359_444/autopilot_fail_gate_selftest_summary.json`),
+  - probe runtime sans replay (state-path par defaut):
+    - `.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_pending_probe_20260326_210426_556.json`
+    - resultat: `final_decision=pending_metrics`, `allow_one_shot_metrics_signature_replay=false`, `metrics_signature_replay_used=false`, echec gate attendu `pending_metrics_decision`,
+  - probe runtime avec replay active (meme state-path):
+    - `.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_replay_probe_20260326_210449_731.json`
+    - resultat: `final_decision=ready_for_beta`, `decision_source=fresh_candidate`, `allow_one_shot_metrics_signature_replay=true`, `metrics_signature_replay_used=true`, blocage restant uniquement `git_dirty_worktree` (worktree local dirty pendant dev).
+- Prochaine action: committer ce lot puis relancer strict CI full (worktree propre) avec `-AllowOneShotMetricsSignatureReplay` pour disposer d'une commande unique de reprise one-shot.

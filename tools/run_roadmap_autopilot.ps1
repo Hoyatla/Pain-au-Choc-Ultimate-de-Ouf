@@ -18,6 +18,7 @@ param(
     [int]$MinMetricsRowsForCandidatePreflight = 120,
     [int]$MinMetricsDurationSecondsForCandidatePreflight = 480,
     [switch]$OneShot,
+    [switch]$AllowOneShotMetricsSignatureReplay,
     [switch]$DisableAutoMetricsDiscovery,
     [bool]$AutoApplyProfileForNext = $true,
     [switch]$SyncTelemetryToRepo,
@@ -1468,6 +1469,7 @@ $strictCandidateRetrySuppressedReason = ""
 $strictCandidateRetryKpiStatus = ""
 $strictCandidateRetryKpiReportPath = ""
 $strictCandidateRetryKpiEvaluated = $false
+$metricsSignatureReplayUsed = $false
 
 Push-Location $repoRoot
 try {
@@ -1676,7 +1678,9 @@ try {
                 $finalDecision = "pending_metrics"
             } else {
                 $currentMetricsSignature = Get-MetricsSessionSignature -SessionStats $latestSessionStats
-                if (-not [string]::IsNullOrWhiteSpace($lastProcessedMetricsSignature) -and $currentMetricsSignature -eq $lastProcessedMetricsSignature) {
+                $metricsSignatureAlreadyProcessed = (-not [string]::IsNullOrWhiteSpace($lastProcessedMetricsSignature) -and $currentMetricsSignature -eq $lastProcessedMetricsSignature)
+                $canReplayOneShotMetricsSignature = ([bool]$OneShot -and [bool]$AllowOneShotMetricsSignatureReplay)
+                if ($metricsSignatureAlreadyProcessed -and -not $canReplayOneShotMetricsSignature) {
                     $latestLabel = if ([string]::IsNullOrWhiteSpace($latestMetricsTimestampUtc)) { "unknown" } else { $latestMetricsTimestampUtc }
                     Write-Host ("[Autopilot] Campaign complete but no new telemetry since last candidate attempt (latest={0}). Waiting for fresh gameplay capture." -f $latestLabel)
                     if ($cachedCandidateIsFresh -and (Write-CachedCandidateStatus `
@@ -1690,6 +1694,11 @@ try {
                     $lastAction = "waiting_candidate_metrics_new"
                     $finalDecision = "pending_metrics"
                 } else {
+                    if ($metricsSignatureAlreadyProcessed -and $canReplayOneShotMetricsSignature) {
+                        $metricsSignatureReplayUsed = $true
+                        $latestLabel = if ([string]::IsNullOrWhiteSpace($latestMetricsTimestampUtc)) { "unknown" } else { $latestMetricsTimestampUtc }
+                        Write-Host ("[Autopilot] Replaying latest telemetry signature in one-shot mode (latest={0}) due to -AllowOneShotMetricsSignatureReplay." -f $latestLabel)
+                    }
                     Write-Host "[Autopilot] Campaign complete. Running strict beta candidate pipeline."
                     $candidateArgsBase = @{
                         CandidateRoot = $CandidateRoot
@@ -2123,6 +2132,8 @@ $result = [PSCustomObject]@{
         timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         iterations = $iteration
         one_shot = [bool]$OneShot
+        allow_one_shot_metrics_signature_replay = [bool]$AllowOneShotMetricsSignatureReplay
+        metrics_signature_replay_used = [bool]$metricsSignatureReplayUsed
         last_action = $lastAction
         final_decision = $finalDecision
         final_readiness_percent = $finalReadiness

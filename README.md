@@ -585,6 +585,7 @@ Autopilot roadmap (sans confirmations manuelles entre captures/candidate):
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -StrictCiSummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_custom.json
 .\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -StrictCiForceSummaryOutputCompress:$false
+.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates
 ```
 
 Self-test rapide des fail gates autopilot:
@@ -622,6 +623,7 @@ Notes autopilot cache/retry:
 - `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/git clean/prism/error sorting status+reports+blocking+noise fail/summary write/summary required/startup stale-cache) et force `RunErrorSortingPass`.
 - En mode `EnableStrictCiFailGates`, si `SummaryOutputPath` n'est pas fourni, un export est force automatiquement vers `StrictCiSummaryOutputPath` (defaut: `.\run\pauc_reports\autopilot_summary_ci_strict.json`).
 - En mode `EnableStrictCiFailGates`, la compression du JSON resume est activee par defaut (`StrictCiForceSummaryOutputCompress=$true`, desactivable).
+- `-AllowOneShotMetricsSignatureReplay` force un cycle candidate sur la signature telemetry courante en mode `-OneShot`, meme si cette signature a deja ete traitee (utile pour relancer un strict CI sans regenerer une nouvelle session gameplay).
 - `prism_jar_sync_skip_reason` permet de distinguer les cas de skip (`stale_cached_candidate_startup_sync_blocked`, `startup_sync_not_synced`, `post_build_sync_not_synced`, `post_build_sync_error`).
 - `prism_startup_sync_blocked_by_stale_cache` indique explicitement si le blocage stale-cache a ete active au demarrage.
 - Le resume autopilot expose l'etat du cache: `cached_candidate_is_fresh`, `cached_candidate_eligible_for_use`, `cached_candidate_freshness_status`.

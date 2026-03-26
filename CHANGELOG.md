@@ -18,9 +18,15 @@
 - Hygiene `-PassThru` renforcee sur les scripts d'analyse:
   - `tools/triage_modpack_errors.ps1`, `tools/quarantine_modpack_data_errors.ps1`, `tools/run_error_sorting_pass.ps1` et `tools/validate_v3_hardware_drivers.ps1` n'injectent plus de sorties `Format-List` dans le pipeline quand `-PassThru` est active.
   - `tools/ab_campaign_status.ps1`, `tools/ab_campaign_next.ps1` et `tools/assess_beta_readiness.ps1` appliquent la meme regle pour conserver une sortie `-PassThru` proprement machine-readable.
+- One-shot autopilot plus actionnable sans reset d'etat:
+  - `tools/run_roadmap_autopilot.ps1` ajoute `-AllowOneShotMetricsSignatureReplay` pour autoriser un run strict en `-OneShot` sur la signature telemetry deja traitee (`waiting_candidate_metrics_new` contourne explicitement).
+  - le resume JSON expose `allow_one_shot_metrics_signature_replay` et `metrics_signature_replay_used` pour audit CI.
 - Validation:
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).
   - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (incluant `prism_sync_gate_pass_with_dot_minecraft_layout`).
+  - probe runtime reelle:
+    - sans replay: `.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates ...` -> `final_decision=pending_metrics`, `allow_one_shot_metrics_signature_replay=false`, `metrics_signature_replay_used=false`,
+    - avec replay: `.\tools\run_roadmap_autopilot.ps1 -OneShot -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates ...` -> `final_decision=ready_for_beta`, `allow_one_shot_metrics_signature_replay=true`, `metrics_signature_replay_used=true`.
   - smoke tests layout `.minecraft` executes sur `apply_pauc_profile`, `triage_modpack_errors`, `quarantine_modpack_data_errors`, `run_error_sorting_pass`, `validate_v3_hardware_drivers`.
   - smoke `-PassThru` (`triage`, `quarantine -DryRun`, `run_error_sorting_pass -RunQuarantine:$false`, `validate_v3_hardware_drivers`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
   - smoke `-PassThru` (`ab_campaign_status`, `ab_campaign_next`, `assess_beta_readiness`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
