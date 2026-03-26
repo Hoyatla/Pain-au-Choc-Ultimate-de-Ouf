@@ -175,7 +175,9 @@ try {
     Write-Host ""
     Write-Host "PauC A/B next step"
     Write-Host "------------------"
-    $result | Format-List
+    if (-not $PassThru) {
+        $result | Format-List
+    }
     if (-not $campaignDone) {
         Write-Host "Guidance:"
         if (-not $captureStarted) {

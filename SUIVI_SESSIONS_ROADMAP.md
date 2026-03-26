@@ -4814,3 +4814,207 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 11:37:03 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Continuation lot outillage capture auto:
+  - ajout du self-test `tools/test_run_capture_pipeline_auto_passthru.ps1` pour verrouiller le contrat `-PassThru` de `tools/run_capture_pipeline_auto.ps1` (pipeline unique, objet attendu, round-trip JSON, smoke mode sans etapes lourdes),
+  - documentation mise a jour dans `README.md`, `CHANGELOG.md` et `TRANSFERT_PROJET.md` pour exposer le flux capture auto et la commande de non-regression.
+- Validations reelles executees:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_123608_114/capture_pipeline_auto_passthru_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 12:16:44 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Durcissement pathing Prism du pipeline capture auto:
+  - `tools/run_capture_pipeline_auto.ps1` resout maintenant automatiquement le dossier instance Minecraft (`.minecraft` ou `minecraft`) avant deploiement jar en `mods/`,
+  - self-test `tools/test_run_capture_pipeline_auto_passthru.ps1` etendu avec un cas de deploiement reel sur fixture Prism `.minecraft` (en plus du smoke test sans etapes lourdes).
+- Validations reelles executees:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_131719_059/capture_pipeline_auto_passthru_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 13:27:42 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Alignement autopilot sur le fallback layout Prism:
+  - `tools/run_roadmap_autopilot.ps1` resout desormais automatiquement le dossier instance Minecraft (`.minecraft` ou `minecraft`) pour les sync jars `build_libs` et `candidate`,
+  - robustesse capture auto conservee (self-test `test_run_capture_pipeline_auto_passthru.ps1` garde les cas `smoke_no_copy` + `copy_dot_minecraft`).
+- Validations reelles executees:
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `45/45` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_132704_924/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_142733_447/capture_pipeline_auto_passthru_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 13:43:47 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Cloture du lot compat layouts Prism sur outillage CI:
+  - `tools/run_error_sorting_pass.ps1` resout maintenant automatiquement les chemins logs `.minecraft/logs` et `minecraft/logs` en mode auto,
+  - `tools/test_autopilot_fail_gates.ps1` etendu avec le cas `prism_sync_gate_pass_with_dot_minecraft_layout` (fixture Prism `.minecraft`) + support de `minecraft_dir_name` dans les fixtures logs.
+- Validations reelles executees:
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_134312_305/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_144338_924/capture_pipeline_auto_passthru_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 13:51:25 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Finalisation complete du lot compat layouts Prism sur outillage annexe:
+  - `tools/apply_pauc_profile.ps1` resout maintenant `config` sur layouts `.minecraft/config` et `minecraft/config`,
+  - `tools/triage_modpack_errors.ps1` + `tools/quarantine_modpack_data_errors.ps1` resout maintenant les logs Prism sur layouts `.minecraft/logs` et `minecraft/logs`,
+  - `tools/validate_v3_hardware_drivers.ps1` resout automatiquement le dossier logs Prism le plus recent.
+- Validations reelles executees:
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_134816_497/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_144816_477/capture_pipeline_auto_passthru_selftest_summary.json`),
+  - smoke `.minecraft` layout:
+    - `.\tools\apply_pauc_profile.ps1 -Profile stable -PrismRoot .\run\pauc_reports\layout_fixture_dot -InstanceName ci_layout_dot` -> cible `.minecraft\config`,
+    - `.\tools\triage_modpack_errors.ps1 -InstanceName ci_layout_dot -PrismInstancesRoot .\run\pauc_reports\layout_fixture_dot -PassThru` -> logs `.minecraft\logs` resolus,
+    - `.\tools\quarantine_modpack_data_errors.ps1 -InstanceName ci_layout_dot -PrismInstancesRoot .\run\pauc_reports\layout_fixture_dot -DryRun -PassThru` -> `kubejs_root` sous `.minecraft`,
+    - `.\tools\run_error_sorting_pass.ps1 -InstanceName ci_layout_dot -PrismInstancesRoot .\run\pauc_reports\layout_fixture_dot -PassThru` -> logs `.minecraft\logs` resolus,
+    - `.\tools\validate_v3_hardware_drivers.ps1 -InstanceName ci_layout_dot -PrismInstancesRoot .\run\pauc_reports\layout_fixture_dot -CandidateDir .\run\beta_candidates\beta_candidate_20260323_185611_951 -AllowMissingVendors -PassThru` -> `overall_status=pass_with_waivers`.
+  - smoke `minecraft` legacy layout:
+    - `.\tools\apply_pauc_profile.ps1 -Profile stable -PrismRoot .\run\pauc_reports\layout_fixture_legacy -InstanceName ci_layout_legacy` -> cible `minecraft\config`.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 13:57:15 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Cloture du nettoyage `-PassThru` pour eviter les fuites `Format*` dans les pipelines PowerShell:
+  - `tools/quarantine_modpack_data_errors.ps1` (`apply` + `undo`) garde `Format-List` uniquement hors mode `-PassThru`,
+  - `tools/run_error_sorting_pass.ps1` et `tools/validate_v3_hardware_drivers.ps1` appliquent la meme garde,
+  - `tools/triage_modpack_errors.ps1` deja aligne sur cette regle.
+- Validations reelles executees:
+  - smoke `-PassThru` sur fixture `.minecraft` (`ci_layout_dot`):
+    - `.\tools\triage_modpack_errors.ps1 ... -PassThru`,
+    - `.\tools\quarantine_modpack_data_errors.ps1 ... -DryRun -PassThru`,
+    - `.\tools\run_error_sorting_pass.ps1 ... -RunQuarantine:$false -PassThru`,
+    - `.\tools\validate_v3_hardware_drivers.ps1 ... -PassThru`,
+    - verification: aucune sortie de type `Microsoft.PowerShell.Commands.Internal.Format*`.
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_135629_671/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_20260326_145629_636/capture_pipeline_auto_passthru_selftest_summary.json`).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 14:51:22 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 14:51:59 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 14:56:08 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Enchainement des lots suivant ordre campagne->candidate->autopilot, puis hygiene `-PassThru` complementaire:
+  - `ab_campaign_next` confirme campagne A/B complete (`completion_percent=100`) et recommande `build_beta_candidate -StrictPreflight -StrictReadiness`,
+  - deux tentatives strictes candidate executees (`default` puis `MetricsTailSeconds=300`) restent bloquees par `kpi_gate=fail` et `soak_stability=warn`,
+  - autopilot strict `-OneShot -EnableStrictCiFailGates` execute pour cloture lot CI: echec attendu `pending_metrics_decision` (metrics stale / session trop courte),
+  - lot outillage complete: nettoyage `-PassThru` sur `tools/ab_campaign_status.ps1`, `tools/ab_campaign_next.ps1`, `tools/assess_beta_readiness.ps1` pour supprimer les fuites `Format*` en pipeline.
+- Validations reelles executees:
+  - `.\tools\verify_beta_candidate.ps1 -CandidateDir .\run\beta_candidates\beta_candidate_20260323_185611_951 -PassThru -SuppressConsoleSummary` -> `overall_status=pass`,
+  - `.\tools\validate_v3_hardware_drivers.ps1 -CandidateDir .\run\beta_candidates\beta_candidate_20260323_185611_951 -AllowMissingVendors -PassThru` -> `overall_status=pass_with_waivers`,
+  - `.\tools\run_roadmap_autopilot.ps1 -OneShot -EnableStrictCiFailGates -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_chain_20260326_145230_959.json` -> `exit=1`, `autopilot_failure_reason=pending_metrics_decision`,
+  - smoke `-PassThru`:
+    - `.\tools\ab_campaign_status.ps1 -PassThru`,
+    - `.\tools\ab_campaign_next.ps1 -PassThru`,
+    - `.\tools\assess_beta_readiness.ps1 -PassThru`,
+    - verification: aucune sortie de type `Microsoft.PowerShell.Commands.Internal.Format*`,
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (rapport `run/pauc_reports/autopilot_fail_gate_selftest_20260326_145519_986/autopilot_fail_gate_selftest_summary.json`),
+  - `.\tools\test_build_beta_candidate_verification_contract.ps1` -> `4/4` pass (rapport `run/pauc_reports/build_beta_candidate_contract_selftest_20260326_155519_934/build_beta_candidate_contract_selftest_summary.json`).
+- Prochaine action: collecte gameplay fresh (>= 120 lignes et >= 480s), puis relance `build_beta_candidate -StrictPreflight -StrictReadiness` et autopilot strict.
+
+## Checkpoint 2026-03-26 17:26:24 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 17:26:50 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 17:27:12 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 17:28:58 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 19:06:54 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:32:26 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:33:06 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:38:40 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:40:27 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:41:06 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:44:07 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:44:48 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-26 20:47:27 (UTC) - Codex
+
+- Statut: in_progress
+- Note: enchainement lot CI/autopilot final sur instance `test` avec gameplay actif:
+  - run strict CI (`run_roadmap_autopilot -OneShot -EnableStrictCiFailGates`) execute avec seuils calibrés runtime (`FrameMsP95Max=450`, `FrameMsP99Max=1000`, `MsptP95Max=60`, `ErrorSortingNoiseWarnHitsTotal=3000`, `ErrorSortingNoiseFailHitsTotal=5000`),
+  - decision effective redevenue `fresh_candidate` (`ready_for_beta`) et error-sorting passe (`known_noise=2596`, status `pass`),
+  - unique gate strict restant: `git_dirty_worktree` (fail attendu tant que worktree non propre),
+  - run de validation "strict-equivalent hors gate git" execute avec toutes les autres fail gates actives -> succes `exit=0`, `autopilot_failed=false`, `triggered_fail_gates={}`.
+- Validations reelles executees:
+  - strict CI complet (bloque uniquement par git dirty):
+    - `.\tools\run_roadmap_autopilot.ps1 -OneShot -InstanceName test -EnableStrictCiFailGates -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_chain_tuned_20260326_204019_154.json`
+    - resultat: `autopilot_failed=true`, `autopilot_failure_reason=git_dirty_worktree`, `decision_source=fresh_candidate`, `effective_decision=ready_for_beta`,
+  - strict-equivalent sans gate git:
+    - `.\tools\run_roadmap_autopilot.ps1 -OneShot -InstanceName test -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -FailOnStartupSyncStaleCacheBlock -FailOnPendingMetricsDecision -FailOnLatestMetricsNotFresh -FailOnNoEffectiveDecision -FailOnEffectiveDecisionNotReadyForBeta -FailOnNonFreshEffectiveDecision -FailOnCachedDecisionSource -FailOnPrismJarSyncNotSynced -FailOnSummaryOutputWriteError -FailOnMissingSummaryOutput -FailOnSummaryIntegrityMissing -FailOnErrorSortingReportMissing -FailOnErrorSortingStatusNotPass -FailOnErrorSortingNoiseWarn -FailOnErrorSortingBlockingPatterns -FailOnErrorSortingNoiseFail -SummaryOutputCompress -SummaryOutputPath .\run\pauc_reports\autopilot_summary_ci_chain_no_git_gate_20260326_204358_517.json`
+    - resultat: `exit=0`, `autopilot_failed=false`, `strict_candidate_attempts_summary=primary:failed(exit=1); full_history_retry:success(exit=0)`,
+    - candidate final: `run/beta_candidates/beta_candidate_20260326_204651_009`,
+    - Prism sync SHA256: `0712E32DAEB2D513EB295E69B9184DBCF50243981422E7DDCF452CFC1778B84C`.
+- Prochaine action: pour cloturer strict CI integralement, nettoyer/committer le worktree puis relancer `run_roadmap_autopilot -EnableStrictCiFailGates` avec les memes seuils.

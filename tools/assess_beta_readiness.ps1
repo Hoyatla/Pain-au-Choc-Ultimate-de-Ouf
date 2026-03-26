@@ -392,7 +392,9 @@ $result = [PSCustomObject]@{
 Write-Host ""
 Write-Host "PauC beta readiness"
 Write-Host "-------------------"
-$result | Format-List
+if (-not $PassThru) {
+    $result | Format-List
+}
 
 if (-not [string]::IsNullOrWhiteSpace($OutJsonPath)) {
     $result | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $OutJsonPath

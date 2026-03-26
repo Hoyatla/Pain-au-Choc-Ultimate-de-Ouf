@@ -119,20 +119,63 @@ function Get-CurrentHashOrEmpty {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
 
+function Resolve-PrismInstanceMinecraftDir {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return ""
+    }
+
+    $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+    $dotMinecraftDir = Join-Path $instanceRoot ".minecraft"
+    $legacyMinecraftDir = Join-Path $instanceRoot "minecraft"
+
+    if (Test-Path -LiteralPath $dotMinecraftDir -PathType Container) {
+        return $dotMinecraftDir
+    }
+    if (Test-Path -LiteralPath $legacyMinecraftDir -PathType Container) {
+        return $legacyMinecraftDir
+    }
+
+    return $legacyMinecraftDir
+}
+
+function Resolve-DefaultPrismLogPaths {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return @()
+    }
+
+    $instanceMinecraftDir = Resolve-PrismInstanceMinecraftDir -PrismRootPath $PrismRootPath -PrismInstanceName $PrismInstanceName
+    if ([string]::IsNullOrWhiteSpace($instanceMinecraftDir)) {
+        return @()
+    }
+
+    $logsRoot = Join-Path $instanceMinecraftDir "logs"
+    return @(
+        (Join-Path $logsRoot "latest.log"),
+        (Join-Path $logsRoot "debug.log")
+    )
+}
+
 if ([string]::IsNullOrWhiteSpace($PrismInstancesRoot)) {
     $PrismInstancesRoot = Join-Path $env:APPDATA "PrismLauncher\instances"
 }
 
 if ([string]::IsNullOrWhiteSpace($KubeJsRoot)) {
-    $KubeJsRoot = Join-Path $PrismInstancesRoot "$InstanceName\minecraft\kubejs"
+    $instanceMinecraftDir = Resolve-PrismInstanceMinecraftDir -PrismRootPath $PrismInstancesRoot -PrismInstanceName $InstanceName
+    $KubeJsRoot = Join-Path $instanceMinecraftDir "kubejs"
 }
 
 if ($LogPaths.Count -eq 0) {
-    $logsRoot = Join-Path $PrismInstancesRoot "$InstanceName\minecraft\logs"
-    $LogPaths = @(
-        (Join-Path $logsRoot "latest.log"),
-        (Join-Path $logsRoot "debug.log")
-    )
+    $LogPaths = Resolve-DefaultPrismLogPaths -PrismRootPath $PrismInstancesRoot -PrismInstanceName $InstanceName
 }
 
 $resolvedLogs = @(
@@ -246,7 +289,9 @@ if ($Undo) {
     Write-Host "PauC modpack quarantine (undo)"
     Write-Host "------------------------------"
     Write-Host ""
-    $undoSummary | Format-List
+    if (-not $PassThru) {
+        $undoSummary | Format-List
+    }
     Write-Host ""
     Write-Host ("Report MD:  {0}" -f (Resolve-Path -LiteralPath $undoMdPath).Path)
     Write-Host ("Report JSON:{0}" -f (Resolve-Path -LiteralPath $undoJsonPath).Path)
@@ -454,7 +499,9 @@ Write-Host ""
 Write-Host "PauC modpack quarantine (apply)"
 Write-Host "-------------------------------"
 Write-Host ""
-$summary | Format-List
+if (-not $PassThru) {
+    $summary | Format-List
+}
 Write-Host ""
 Write-Host ("Report MD:  {0}" -f (Resolve-Path -LiteralPath $reportMdPath).Path)
 Write-Host ("Report JSON:{0}" -f (Resolve-Path -LiteralPath $reportJsonPath).Path)

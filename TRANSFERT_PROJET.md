@@ -1,7 +1,7 @@
 ﻿# Transfert Projet - PauC Ultimate De Ouf
 
 Date de transfert: `2026-03-12`
-Mise a jour transfert: `2026-03-25`
+Mise a jour transfert: `2026-03-26`
 
 Ce document donne un etat de passation exploitable immediatement pour un nouveau mainteneur.
 
@@ -240,6 +240,12 @@ Regle de reprise:
 - Autopilot roadmap (v11 candidate-config-telemetry): resume one-shot enrichi avec les parametres de gating/fenetre effectivement appliques (`target_frame_ms_*`, `target_mspt_p95_max`, `candidate_metrics_*`) pour reproduction exacte des runs.
 - Autopilot roadmap (v12 strict-multi-window-retry): build candidate strict tente maintenant plusieurs fenetres metrics avant echec final (`primary` puis `full_history_retry` par defaut), expose `strict_candidate_attempt_*` dans le resume, et reste configurable via `-EnableStrictCandidateWindowRetry` / `-StrictCandidateRetryTailSeconds`.
 - Workflow capture A/B segmente: `ab_mark_start.ps1` / `ab_mark_finish.ps1` pour extraire exactement les nouvelles lignes telemetrie d'une scene avant ecriture matrice.
+- Pipeline capture auto bout-en-bout: `run_capture_pipeline_auto.ps1` (build/deploy/wait metrics/preflight/candidate/autopilot) + self-test `test_run_capture_pipeline_auto_passthru.ps1` pour verifier le contrat `-PassThru` en mode smoke (incluant le deploiement Prism layout `.minecraft`).
+- Sync jar autopilot durci: `run_roadmap_autopilot.ps1` resout maintenant aussi les layouts Prism `.minecraft` et `minecraft` pour les sync startup/post-build.
+- Error sorting durci: `run_error_sorting_pass.ps1` resout automatiquement les logs Prism sous `.minecraft/logs` et `minecraft/logs` quand `LogPaths` n'est pas fourni.
+- Triage/quarantine durcis: `triage_modpack_errors.ps1` et `quarantine_modpack_data_errors.ps1` resout automatiquement les logs Prism sous `.minecraft/logs` et `minecraft/logs`.
+- Application de profils durcie: `apply_pauc_profile.ps1` resout automatiquement le layout config Prism (`.minecraft/config` ou `minecraft/config`).
+- Validation hardware durcie: `validate_v3_hardware_drivers.ps1` resout automatiquement les logs Prism sur le layout le plus recent.
 - Suivi de progression A/B: `ab_campaign_status.ps1` + integration preflight (`-CheckAbProgress`) pour afficher completion `%` et prochaine case a remplir.
 - Orchestration campagne A/B: `ab_campaign_next.ps1` (prochaine case manquante + mapping profil launcher + start capture optionnel) + mode `ab_mark_finish.ps1 -AutoPrepareNext`.
 - Stabilisation gouverneur (Phase 1): hysteresis/cooldown des transitions de mode + compteurs F3 des transitions.

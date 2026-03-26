@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.0.6-ultimate - 2026-03-26
+
+- Couverture de non-regression ajoutee pour le pipeline capture auto:
+  - nouveau script `tools/test_run_capture_pipeline_auto_passthru.ps1`.
+  - valide le contrat `-PassThru` de `tools/run_capture_pipeline_auto.ps1` (sortie pipeline unique, objet attendu, aucune fuite `Format*`, round-trip JSON, mode smoke sans etapes lourdes).
+  - couvre aussi le deploiement jar en layout Prism `.minecraft` (non-regression pathing).
+- Robustesse de deploiement Prism renforcee:
+  - `tools/run_capture_pipeline_auto.ps1` resout maintenant automatiquement le dossier instance Minecraft (`.minecraft` ou `minecraft`) avant copie du jar vers `mods/`.
+  - `tools/run_roadmap_autopilot.ps1` applique le meme fallback `.minecraft`/`minecraft` pour les sync jars startup et post-build.
+  - `tools/run_error_sorting_pass.ps1` applique le meme fallback pour la resolution des logs (`.minecraft/logs` ou `minecraft/logs`) quand `LogPaths` n'est pas explicite.
+  - `tools/triage_modpack_errors.ps1` et `tools/quarantine_modpack_data_errors.ps1` appliquent le meme fallback pour la resolution des logs Prism.
+  - `tools/apply_pauc_profile.ps1` resout automatiquement `config` sur layout `.minecraft` ou `minecraft`.
+  - `tools/validate_v3_hardware_drivers.ps1` resout automatiquement le dossier logs Prism (selection du layout le plus recent).
+- Documentation outillage enrichie:
+  - `README.md` documente maintenant le workflow `run_capture_pipeline_auto.ps1` (mode complet + mode smoke) et la commande de self-test associee.
+- Hygiene `-PassThru` renforcee sur les scripts d'analyse:
+  - `tools/triage_modpack_errors.ps1`, `tools/quarantine_modpack_data_errors.ps1`, `tools/run_error_sorting_pass.ps1` et `tools/validate_v3_hardware_drivers.ps1` n'injectent plus de sorties `Format-List` dans le pipeline quand `-PassThru` est active.
+  - `tools/ab_campaign_status.ps1`, `tools/ab_campaign_next.ps1` et `tools/assess_beta_readiness.ps1` appliquent la meme regle pour conserver une sortie `-PassThru` proprement machine-readable.
+- Validation:
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).
+  - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (incluant `prism_sync_gate_pass_with_dot_minecraft_layout`).
+  - smoke tests layout `.minecraft` executes sur `apply_pauc_profile`, `triage_modpack_errors`, `quarantine_modpack_data_errors`, `run_error_sorting_pass`, `validate_v3_hardware_drivers`.
+  - smoke `-PassThru` (`triage`, `quarantine -DryRun`, `run_error_sorting_pass -RunQuarantine:$false`, `validate_v3_hardware_drivers`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
+  - smoke `-PassThru` (`ab_campaign_status`, `ab_campaign_next`, `assess_beta_readiness`) -> aucune fuite de types `Microsoft.PowerShell.Commands.Internal.Format*`.
+  - `.\tools\test_build_beta_candidate_verification_contract.ps1` -> `4/4` pass.
+
 ## 2.0.5-ultimate - 2026-03-20
 
 - Autopilot decision projection ajoutee pour automation:

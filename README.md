@@ -273,6 +273,7 @@ Application auto vers PrismLauncher:
 ```
 
 Si PrismLauncher n'est pas detecte, `apply_pauc_profile.ps1` bascule automatiquement sur `.\config\pauc_ultimate_de_ouf.properties` (run local dev/IDE).
+Sur Prism, `apply_pauc_profile.ps1` resout automatiquement le layout d'instance (`.minecraft/config` ou `minecraft/config`).
 
 Telemetrie runtime (Phase 0):
 
@@ -318,6 +319,27 @@ Workflow capture guidee (anti-aleatoire):
 ```
 
 Ce script impose un timer fixe, affiche un protocole scene, puis lance `ab_mark_finish` avec un seuil minimal de nouvelles lignes pour eviter les captures trop courtes ou bruites.
+
+Pipeline capture auto (build/deploy/wait/preflight/candidate/autopilot):
+
+```powershell
+.\tools\run_capture_pipeline_auto.ps1 -InstanceName test
+.\tools\run_capture_pipeline_auto.ps1 -InstanceName test -PassThru | ConvertTo-Json -Depth 8
+.\tools\run_capture_pipeline_auto.ps1 -MetricsPath .\run\pauc_telemetry\runtime_metrics.csv -BuildJar:$false -CopyJarToInstance:$false -WaitForFreshMetrics:$false -RunPreflight:$false -RunCandidate:$false -RunAutopilot:$false -PassThru
+```
+
+Notes pipeline auto:
+
+- `run_capture_pipeline_auto.ps1` detecte automatiquement `runtime_metrics.csv` (repo + PrismLauncher) si `-MetricsPath` n'est pas fourni.
+- le deploiement jar Prism resout automatiquement le layout instance (`.minecraft` ou `minecraft`) avant copie vers `mods/`.
+- Mode smoke test disponible en desactivant les etapes lourdes (`BuildJar/CopyJarToInstance/WaitForFreshMetrics/RunPreflight/RunCandidate/RunAutopilot`).
+- Avec `-PassThru`, le script renvoie un objet machine-readable (etats des etapes, exit codes, paths, erreurs).
+
+Self-test de non-regression pipeline auto:
+
+```powershell
+.\tools\test_run_capture_pipeline_auto_passthru.ps1
+```
 
 Orchestration "next step" (prochaine case manquante):
 
@@ -586,6 +608,8 @@ Notes autopilot cache/retry:
 - Pour CI stricte, `-FailOnCachedDecisionSource` force un `exit` en erreur si `decision_source` vient du cache (`cached_candidate` ou `cached_candidate_fallback`).
 - Pour CI stricte, `-FailOnGitDirtyWorktree` force un `exit` en erreur si le worktree git local n'est pas propre (ou si le contexte git est indisponible).
 - Pour CI stricte, `-FailOnPrismJarSyncNotSynced` force un `exit` en erreur si `prism_jar_sync_status` n'est pas `synced`.
+- Le sync jar Prism autopilot (startup + post-build) resout automatiquement les layouts d'instance `.minecraft` et `minecraft`.
+- `run_error_sorting_pass.ps1` resout aussi automatiquement les layouts logs Prism `.minecraft/logs` et `minecraft/logs` quand `LogPaths` n'est pas fourni.
 - Pour CI stricte, `-FailOnErrorSortingReportMissing` force un `exit` en erreur si les artefacts `error_sorting_report_md_path`/`error_sorting_report_json_path` sont absents.
 - Pour CI stricte, `-FailOnErrorSortingBlockingPatterns` force un `exit` en erreur si `error_sorting_status` n'est pas `pass` (blocking detecte ou statut indisponible).
 - Pour CI stricte, `-FailOnErrorSortingStatusNotPass` force un `exit` en erreur si `error_sorting_status` n'est pas `pass` (`not_run`, `missing_output`, `error`, `fail`).
@@ -619,6 +643,7 @@ Notes autopilot cache/retry:
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
 - `tools/test_autopilot_fail_gates.ps1` execute un lot de non-regression sur les gates autopilot critiques (baseline + gates decision/qualite `pending_metrics`/`latest_metrics_freshness`/`missing_effective_decision`/`effective_decision_not_fresh`/`cached_decision_source_used`/`effective_decision_not_ready_for_beta`/`prism_jar_sync_not_synced`/`startup_sync_stale_cache_blocked`/`git_context_unavailable`/`git_dirty_worktree` + error-sorting `blocking/report_missing/status/noise_warn/noise_fail` + bundle strict `EnableStrictCiFailGates` + gates resume `missing_summary_output`/`summary_output_write_error`/`summary_integrity_missing` en mode echec/succes avec `SummaryOutputPath` valide, plus priorite de reasons `summary_output_write_error > missing_summary_output > summary_integrity_missing`, priorite de reasons error-sorting `error_sorting_report_missing > error_sorting_blocking_patterns > error_sorting_status_not_pass > error_sorting_noise_fail > error_sorting_noise_warn_or_worse`, y compris precedence explicite `error_sorting_noise_status_unavailable_for_fail` sur `error_sorting_noise_warn_or_worse` quand `FailOnErrorSortingNoiseFail + FailOnErrorSortingNoiseWarn` sont actives avec statut noise indisponible, et cas sans `SummaryOutputPath` (dont `FailOnSummaryOutputWriteError` actif) ou `missing_summary_output` reste la cause attendue, plus scenarios de non-regression "gate active mais non declenchee" pour error-sorting (`FailOnErrorSortingBlockingPatterns`, `FailOnErrorSortingStatusNotPass`, `FailOnErrorSortingNoiseWarn` en status `pass`, `FailOnErrorSortingNoiseFail` en status bruit `warn`) et scenario de declenchement deterministe `FailOnErrorSortingNoiseWarn` sur status bruit `warn`, pour `FailOnPrismJarSyncNotSynced` (auto-sync desactive) et pour `FailOnStartupSyncStaleCacheBlock` (pas de cache stale)) avec verification des flags `fail_on_*`, des inventaires `active_fail_gates`/`triggered_fail_gates` (listes + compteurs), des attentes exactes `expected_triggered_fail_gates` (y compris cas single-gate error-sorting et cas combines de priorite) et `expected_triggered_fail_gates_in_order` (ordre exact), des sous-ensembles obligatoires `required_triggered_fail_gates` (bundle strict), et invariant de coherence supplementaire (quand le JSON resume est present: `autopilot_failure_reason` doit correspondre a la premiere entree de `triggered_fail_gates`), plus fallback strict `StrictCiSummaryOutputPath`/`SummaryOutputCompress`, rapport JSON de session et logs par cas (`*.log`) sous `run/pauc_reports/autopilot_fail_gate_selftest_*`.
 - Le rapport self-test inclut maintenant les listes detaillees `active_fail_gates` et `triggered_fail_gates` par cas (en plus des compteurs) pour faciliter l'analyse CI.
+- Le harnais couvre aussi le cas `prism_sync_gate_pass_with_dot_minecraft_layout` pour verrouiller la compatibilite auto-sync jar sur layout Prism `.minecraft`.
 - Les artefacts de cas du self-test (`summary/log/autopilot_state` + fixtures Prism) utilisent des noms courts et stables via `case_artifact_token` (index + slug tronque + hash) pour eviter les limites de longueur de chemin sous Windows; le rapport conserve `name` + `case_artifact_token` pour le mapping explicite.
 - Garde-fous path-safety supplementaires dans le harnais: verification d'unicite des `case_artifact_token` et assertion de budget de longueur de chemin (limite preventive `240` caracteres) pour `summary/log/autopilot_state/prism_fixture_root`.
 - Quand le JSON resume d'un cas est indisponible (ex: `SummaryOutputPath` invalide), le self-test lit `active_fail_gates` et `triggered_fail_gates` directement depuis le log du cas pour conserver les assertions d'inventaire.
@@ -639,3 +664,5 @@ Passe auto de tri des erreurs (triage + signatures bloquantes + quarantine):
 .\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings -KnownNoiseWarnHitsTotal 500 -KnownNoiseFailHitsTotal 2000
 .\tools\run_error_sorting_pass.ps1 -InstanceName test -IncludeWarnings -FailOnNoiseFail
 ```
+
+Par defaut (sans `-LogPaths`), `run_error_sorting_pass.ps1`, `triage_modpack_errors.ps1` et `quarantine_modpack_data_errors.ps1` resout automatiquement les logs Prism en layout `.minecraft/logs` ou `minecraft/logs`.

@@ -109,9 +109,13 @@ $summary = [PSCustomObject]@{
 Write-Host ""
 Write-Host "PauC A/B campaign status"
 Write-Host "------------------------"
-$matrixRows | Format-Table -AutoSize
+if (-not $PassThru) {
+    $matrixRows | Format-Table -AutoSize
+}
 Write-Host ""
-$summary | Format-List
+if (-not $PassThru) {
+    $summary | Format-List
+}
 
 if (-not [string]::IsNullOrWhiteSpace($OutCsvPath)) {
     $exportExists = Test-Path -LiteralPath $OutCsvPath

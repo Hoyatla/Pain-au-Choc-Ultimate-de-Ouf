@@ -561,6 +561,30 @@ function Get-GradlePropertyValue {
     return $DefaultValue
 }
 
+function Resolve-PrismInstanceMinecraftDir {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return ""
+    }
+
+    $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+    $dotMinecraftDir = Join-Path $instanceRoot ".minecraft"
+    $legacyMinecraftDir = Join-Path $instanceRoot "minecraft"
+
+    if (Test-Path -LiteralPath $dotMinecraftDir -PathType Container) {
+        return $dotMinecraftDir
+    }
+    if (Test-Path -LiteralPath $legacyMinecraftDir -PathType Container) {
+        return $legacyMinecraftDir
+    }
+
+    return ""
+}
+
 function Sync-LatestModJarToPrism {
     param(
         [string]$RepoRoot,
@@ -579,9 +603,12 @@ function Sync-LatestModJarToPrism {
         }
     }
 
-    $instanceMinecraftDir = Join-Path (Join-Path $PrismRootPath $PrismInstanceName) "minecraft"
-    if (-not (Test-Path -LiteralPath $instanceMinecraftDir -PathType Container)) {
-        Write-Warning ("[Autopilot] Jar sync skipped: instance path not found: {0}" -f $instanceMinecraftDir)
+    $instanceMinecraftDir = Resolve-PrismInstanceMinecraftDir -PrismRootPath $PrismRootPath -PrismInstanceName $PrismInstanceName
+    if ([string]::IsNullOrWhiteSpace($instanceMinecraftDir)) {
+        $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+        Write-Warning ("[Autopilot] Jar sync skipped: instance path not found: {0} or {1}" -f `
+                (Join-Path $instanceRoot ".minecraft"),
+                (Join-Path $instanceRoot "minecraft"))
         return [PSCustomObject]@{
             synced = $false
             source = "build_libs"
@@ -680,9 +707,12 @@ function Sync-CandidateModJarToPrism {
         }
     }
 
-    $instanceMinecraftDir = Join-Path (Join-Path $PrismRootPath $PrismInstanceName) "minecraft"
-    if (-not (Test-Path -LiteralPath $instanceMinecraftDir -PathType Container)) {
-        Write-Warning ("[Autopilot] Candidate jar sync skipped: instance path not found: {0}" -f $instanceMinecraftDir)
+    $instanceMinecraftDir = Resolve-PrismInstanceMinecraftDir -PrismRootPath $PrismRootPath -PrismInstanceName $PrismInstanceName
+    if ([string]::IsNullOrWhiteSpace($instanceMinecraftDir)) {
+        $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+        Write-Warning ("[Autopilot] Candidate jar sync skipped: instance path not found: {0} or {1}" -f `
+                (Join-Path $instanceRoot ".minecraft"),
+                (Join-Path $instanceRoot "minecraft"))
         return [PSCustomObject]@{
             synced = $false
             source = "candidate"

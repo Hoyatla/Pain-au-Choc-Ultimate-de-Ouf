@@ -37,16 +37,44 @@ function Normalize-Message {
     return $m
 }
 
+function Resolve-DefaultPrismLogPaths {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return @()
+    }
+
+    $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+    $candidateLogRoots = @(
+        (Join-Path (Join-Path $instanceRoot ".minecraft") "logs"),
+        (Join-Path (Join-Path $instanceRoot "minecraft") "logs")
+    )
+
+    foreach ($candidateRoot in $candidateLogRoots) {
+        if (Test-Path -LiteralPath $candidateRoot -PathType Container) {
+            return @(
+                (Join-Path $candidateRoot "latest.log"),
+                (Join-Path $candidateRoot "debug.log")
+            )
+        }
+    }
+
+    $fallbackRoot = $candidateLogRoots[0]
+    return @(
+        (Join-Path $fallbackRoot "latest.log"),
+        (Join-Path $fallbackRoot "debug.log")
+    )
+}
+
 if ([string]::IsNullOrWhiteSpace($PrismInstancesRoot)) {
     $PrismInstancesRoot = Join-Path $env:APPDATA "PrismLauncher\instances"
 }
 
 if ($LogPaths.Count -eq 0) {
-    $logsRoot = Join-Path $PrismInstancesRoot "$InstanceName\minecraft\logs"
-    $LogPaths = @(
-        (Join-Path $logsRoot "latest.log"),
-        (Join-Path $logsRoot "debug.log")
-    )
+    $LogPaths = Resolve-DefaultPrismLogPaths -PrismRootPath $PrismInstancesRoot -PrismInstanceName $InstanceName
 }
 
 $resolvedLogs = @($LogPaths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
@@ -181,7 +209,9 @@ Write-Host ""
 Write-Host "PauC modpack error triage"
 Write-Host "-------------------------"
 Write-Host ""
-$summary | Format-List
+if (-not $PassThru) {
+    $summary | Format-List
+}
 Write-Host ""
 Write-Host ("Report MD:  {0}" -f (Resolve-Path -LiteralPath $mdPath).Path)
 Write-Host ("Report CSV: {0}" -f (Resolve-Path -LiteralPath $csvPath).Path)

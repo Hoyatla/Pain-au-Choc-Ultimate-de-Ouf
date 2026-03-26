@@ -219,6 +219,58 @@ function Resolve-InstanceNameFromMetricsPath {
     return [string]$match.Groups["instance"].Value
 }
 
+function Resolve-MinecraftDirPreferenceFromMetricsPath {
+    param([string]$MetricsPath)
+
+    if ([string]::IsNullOrWhiteSpace($MetricsPath)) {
+        return ""
+    }
+
+    if ([regex]::IsMatch($MetricsPath, "[\\/]\\.minecraft[\\/]", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        return "dot"
+    }
+    if ([regex]::IsMatch($MetricsPath, "[\\/]minecraft[\\/]", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) {
+        return "legacy"
+    }
+    return ""
+}
+
+function Resolve-PrismInstanceMinecraftDir {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName,
+        [string]$PreferredStyle
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return $null
+    }
+
+    $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+    $dotMinecraftDir = Join-Path $instanceRoot ".minecraft"
+    $legacyMinecraftDir = Join-Path $instanceRoot "minecraft"
+    $normalizedStyle = if ([string]::IsNullOrWhiteSpace($PreferredStyle)) { "" } else { $PreferredStyle.Trim().ToLowerInvariant() }
+
+    if ($normalizedStyle -eq "dot" -and (Test-Path -LiteralPath $dotMinecraftDir -PathType Container)) {
+        return $dotMinecraftDir
+    }
+    if ($normalizedStyle -eq "legacy" -and (Test-Path -LiteralPath $legacyMinecraftDir -PathType Container)) {
+        return $legacyMinecraftDir
+    }
+
+    if (Test-Path -LiteralPath $dotMinecraftDir -PathType Container) {
+        return $dotMinecraftDir
+    }
+    if (Test-Path -LiteralPath $legacyMinecraftDir -PathType Container) {
+        return $legacyMinecraftDir
+    }
+
+    if ($normalizedStyle -eq "dot") {
+        return $dotMinecraftDir
+    }
+    return $legacyMinecraftDir
+}
+
 function Get-MetricsSnapshot {
     param([string]$Path)
 
@@ -407,7 +459,15 @@ try {
         if ([string]::IsNullOrWhiteSpace($InstanceName)) {
             throw "InstanceName could not be inferred from metrics path; pass -InstanceName explicitly to deploy jar."
         }
-        $modsDir = Join-Path (Join-Path $PrismRoot $InstanceName) "minecraft\mods"
+        $minecraftDirPreference = Resolve-MinecraftDirPreferenceFromMetricsPath -MetricsPath $resolvedMetricsPath
+        $instanceMinecraftDir = Resolve-PrismInstanceMinecraftDir `
+            -PrismRootPath $PrismRoot `
+            -PrismInstanceName $InstanceName `
+            -PreferredStyle $minecraftDirPreference
+        if ($null -eq $instanceMinecraftDir -or [string]::IsNullOrWhiteSpace($instanceMinecraftDir)) {
+            throw "Unable to resolve Prism instance minecraft directory."
+        }
+        $modsDir = Join-Path $instanceMinecraftDir "mods"
         New-Item -ItemType Directory -Path $modsDir -Force | Out-Null
         $deployedJarPath = Join-Path $modsDir (Split-Path -Path $resolvedJarPath -Leaf)
         Write-Host ""

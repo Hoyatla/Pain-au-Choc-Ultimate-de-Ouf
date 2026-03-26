@@ -115,6 +115,59 @@ function Get-GlInfoEntries {
     return $entries.ToArray()
 }
 
+function Resolve-PrismInstanceLogsDir {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return ""
+    }
+
+    $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+    $dotLogsDir = Join-Path (Join-Path $instanceRoot ".minecraft") "logs"
+    $legacyLogsDir = Join-Path (Join-Path $instanceRoot "minecraft") "logs"
+
+    $candidates = @()
+    if (Test-Path -LiteralPath $dotLogsDir -PathType Container) {
+        $dotLatestWrite = [datetime]::MinValue
+        $dotLatestFile = Get-ChildItem -LiteralPath $dotLogsDir -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($null -ne $dotLatestFile) {
+            $dotLatestWrite = $dotLatestFile.LastWriteTimeUtc
+        }
+        $candidates += [PSCustomObject]@{
+            path = $dotLogsDir
+            last_write_utc = $dotLatestWrite
+            priority = 0
+        }
+    }
+    if (Test-Path -LiteralPath $legacyLogsDir -PathType Container) {
+        $legacyLatestWrite = [datetime]::MinValue
+        $legacyLatestFile = Get-ChildItem -LiteralPath $legacyLogsDir -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+        if ($null -ne $legacyLatestFile) {
+            $legacyLatestWrite = $legacyLatestFile.LastWriteTimeUtc
+        }
+        $candidates += [PSCustomObject]@{
+            path = $legacyLogsDir
+            last_write_utc = $legacyLatestWrite
+            priority = 1
+        }
+    }
+
+    if ($candidates.Count -gt 0) {
+        return [string](
+            $candidates |
+                Sort-Object -Property `
+                    @{ Expression = "last_write_utc"; Descending = $true }, `
+                    @{ Expression = "priority"; Descending = $false } |
+                Select-Object -First 1
+        ).path
+    }
+
+    return $legacyLogsDir
+}
+
 if ([string]::IsNullOrWhiteSpace($PrismInstancesRoot)) {
     $PrismInstancesRoot = Join-Path $env:APPDATA "PrismLauncher\instances"
 }
@@ -142,7 +195,7 @@ $candidateDecision = [string]$candidateManifest.readiness_decision
 $candidateReadiness = [int]$candidateManifest.readiness_percent
 $candidateJarHash = [string]$candidateManifest.jar_sha256
 
-$logsDir = Join-Path $PrismInstancesRoot "$InstanceName\minecraft\logs"
+$logsDir = Resolve-PrismInstanceLogsDir -PrismRootPath $PrismInstancesRoot -PrismInstanceName $InstanceName
 $glInfoEntries = Get-GlInfoEntries -LogsDir $logsDir
 
 $videoAdapters = @(Get-CimInstance Win32_VideoController | Select-Object Name, DriverVersion, DriverDate, AdapterCompatibility, VideoProcessor)
@@ -289,7 +342,9 @@ Write-Host ""
 Write-Host "PauC V3 hardware/drivers validation"
 Write-Host "-----------------------------------"
 Write-Host ""
-$summary | Format-List
+if (-not $PassThru) {
+    $summary | Format-List
+}
 Write-Host ""
 Write-Host ("Report JSON: {0}" -f (Resolve-Path -LiteralPath $jsonPath).Path)
 Write-Host ("Report MD:   {0}" -f (Resolve-Path -LiteralPath $mdPath).Path)

@@ -162,14 +162,22 @@ function Initialize-PrismLogFixture {
         [string]$PrismRootPath,
         [string]$InstanceName,
         [string[]]$LatestLines,
-        [string[]]$DebugLines
+        [string[]]$DebugLines,
+        [string]$MinecraftDirName = "minecraft"
     )
 
     if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($InstanceName)) {
         return
     }
 
-    $logsDir = Join-Path (Join-Path $PrismRootPath "$InstanceName\minecraft") "logs"
+    $normalizedMinecraftDirName = if ([string]::IsNullOrWhiteSpace($MinecraftDirName)) {
+        "minecraft"
+    } else {
+        [string]$MinecraftDirName.Trim()
+    }
+    $instanceRoot = Join-Path $PrismRootPath $InstanceName
+    $instanceMinecraftDir = Join-Path $instanceRoot $normalizedMinecraftDirName
+    $logsDir = Join-Path $instanceMinecraftDir "logs"
     New-Item -Path $logsDir -ItemType Directory -Force | Out-Null
 
     $latestPath = Join-Path $logsDir "latest.log"
@@ -1834,6 +1842,45 @@ $cases = @(
         )
     },
     [PSCustomObject]@{
+        name = "prism_sync_gate_pass_with_dot_minecraft_layout"
+        gate_args = @{
+            FailOnPrismJarSyncNotSynced = $true
+            AutoSyncModJarToPrism = $true
+            RunErrorSortingPass = $true
+        }
+        prism_log_fixture = [ordered]@{
+            minecraft_dir_name = ".minecraft"
+            latest_lines = @(
+                "[00:00:00] [Render thread/INFO]: PauC self-test fixture prism dot layout latest"
+            )
+            debug_lines = @(
+                "[00:00:00] [Render thread/INFO]: PauC self-test fixture prism dot layout debug"
+            )
+        }
+        expected_reason = ""
+        expect_failed = $false
+        expect_exit_nonzero = $false
+        expect_forced_error_sorting = $false
+        expected_strict_ci = $null
+        expected_fail_on_error_sorting_blocking_patterns = $null
+        expected_fail_on_error_sorting_noise_fail = $null
+        expected_fail_gate_flags = [ordered]@{
+            fail_on_prism_jar_sync_not_synced = $true
+        }
+        expected_active_fail_gates = @(
+            "prism_jar_sync_not_synced"
+        )
+        use_explicit_summary_output_path = $true
+        use_summary_path_as_strict_output = $false
+        expected_strict_ci_summary_output_defaulted = $false
+        expected_strict_ci_summary_output_compress_forced = $false
+        expected_summary_output_compressed = $false
+        expected_triggered_fail_gates = @()
+        forbidden_triggered_fail_gates = @(
+            "prism_jar_sync_not_synced"
+        )
+    },
+    [PSCustomObject]@{
         name = "startup_sync_stale_cache_block_gate"
         gate_args = @{
             FailOnStartupSyncStaleCacheBlock = $true
@@ -2196,12 +2243,16 @@ foreach ($case in $cases) {
         $runArgs.PrismRoot = $casePrismFixtureRoot
         $latestFixtureLines = @()
         $debugFixtureLines = @()
+        $fixtureMinecraftDirName = "minecraft"
         if ($case.prism_log_fixture -is [System.Collections.IDictionary]) {
             if ($case.prism_log_fixture.Contains("latest_lines") -and $null -ne $case.prism_log_fixture["latest_lines"]) {
                 $latestFixtureLines = @($case.prism_log_fixture["latest_lines"] | ForEach-Object { [string]$_ })
             }
             if ($case.prism_log_fixture.Contains("debug_lines") -and $null -ne $case.prism_log_fixture["debug_lines"]) {
                 $debugFixtureLines = @($case.prism_log_fixture["debug_lines"] | ForEach-Object { [string]$_ })
+            }
+            if ($case.prism_log_fixture.Contains("minecraft_dir_name") -and $null -ne $case.prism_log_fixture["minecraft_dir_name"]) {
+                $fixtureMinecraftDirName = [string]$case.prism_log_fixture["minecraft_dir_name"]
             }
         } else {
             if ($case.prism_log_fixture.PSObject.Properties.Name -contains "latest_lines" -and $null -ne $case.prism_log_fixture.latest_lines) {
@@ -2210,12 +2261,16 @@ foreach ($case in $cases) {
             if ($case.prism_log_fixture.PSObject.Properties.Name -contains "debug_lines" -and $null -ne $case.prism_log_fixture.debug_lines) {
                 $debugFixtureLines = @($case.prism_log_fixture.debug_lines | ForEach-Object { [string]$_ })
             }
+            if ($case.prism_log_fixture.PSObject.Properties.Name -contains "minecraft_dir_name" -and $null -ne $case.prism_log_fixture.minecraft_dir_name) {
+                $fixtureMinecraftDirName = [string]$case.prism_log_fixture.minecraft_dir_name
+            }
         }
         Initialize-PrismLogFixture `
             -PrismRootPath $casePrismFixtureRoot `
             -InstanceName $runArgs.InstanceName `
             -LatestLines $latestFixtureLines `
-            -DebugLines $debugFixtureLines
+            -DebugLines $debugFixtureLines `
+            -MinecraftDirName $fixtureMinecraftDirName
     }
     $gitDirtyProbePath = ""
     if (($case.PSObject.Properties.Name -contains "force_git_dirty_probe") -and [bool]$case.force_git_dirty_probe) {

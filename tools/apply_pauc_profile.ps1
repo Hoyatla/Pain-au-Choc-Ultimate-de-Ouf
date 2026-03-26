@@ -13,6 +13,30 @@ if (!(Test-Path $profileFile)) {
     throw "Profile introuvable: $profileFile"
 }
 
+function Resolve-PrismConfigPath {
+    param(
+        [string]$PrismRootPath,
+        [string]$PrismInstanceName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PrismRootPath) -or [string]::IsNullOrWhiteSpace($PrismInstanceName)) {
+        return ""
+    }
+
+    $instanceRoot = Join-Path $PrismRootPath $PrismInstanceName
+    $dotConfigDir = Join-Path (Join-Path $instanceRoot ".minecraft") "config"
+    $legacyConfigDir = Join-Path (Join-Path $instanceRoot "minecraft") "config"
+
+    if (Test-Path -LiteralPath $dotConfigDir -PathType Container) {
+        return (Join-Path $dotConfigDir "pauc_ultimate_de_ouf.properties")
+    }
+    if (Test-Path -LiteralPath $legacyConfigDir -PathType Container) {
+        return (Join-Path $legacyConfigDir "pauc_ultimate_de_ouf.properties")
+    }
+
+    return ""
+}
+
 if (![string]::IsNullOrWhiteSpace($TargetConfigPath)) {
     if ([System.IO.Path]::IsPathRooted($TargetConfigPath)) {
         $targetConfig = $TargetConfigPath
@@ -20,9 +44,8 @@ if (![string]::IsNullOrWhiteSpace($TargetConfigPath)) {
         $targetConfig = Join-Path $projectRoot $TargetConfigPath
     }
 } else {
-    $prismConfig = Join-Path (Join-Path (Join-Path $PrismRoot $InstanceName) "minecraft\\config") "pauc_ultimate_de_ouf.properties"
-    $prismConfigDir = Split-Path -Parent $prismConfig
-    if (Test-Path $prismConfigDir) {
+    $prismConfig = Resolve-PrismConfigPath -PrismRootPath $PrismRoot -PrismInstanceName $InstanceName
+    if (-not [string]::IsNullOrWhiteSpace($prismConfig)) {
         $targetConfig = $prismConfig
     } else {
         $targetConfig = Join-Path (Join-Path $projectRoot "config") "pauc_ultimate_de_ouf.properties"
