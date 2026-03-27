@@ -4,6 +4,7 @@ param(
     [string[]]$LogPaths = @(),
     [string]$OutDir = ".\run\pauc_reports",
     [int]$TopN = 25,
+    [int]$TailLinesPerLog = 0,
     [switch]$IncludeWarnings,
     [string[]]$BlockingPatterns = @(
         "Parsing error loading recipe",
@@ -29,6 +30,9 @@ $ErrorActionPreference = "Stop"
 
 if ($TopN -lt 1) {
     throw "TopN must be >= 1"
+}
+if ($TailLinesPerLog -lt 0) {
+    throw "TailLinesPerLog must be >= 0"
 }
 if ($KnownNoiseWarnHitsTotal -lt 0) {
     throw "KnownNoiseWarnHitsTotal must be >= 0"
@@ -90,6 +94,28 @@ $resolvedLogs = @(
 $missingLogs = @($resolvedLogs | Where-Object { -not (Test-Path -LiteralPath $_) })
 if ($missingLogs.Count -gt 0) {
     throw ("Missing log files: {0}" -f ($missingLogs -join ", "))
+}
+
+$analysisLogs = @($resolvedLogs)
+$tailScopeApplied = $false
+$tailTempDir = ""
+if ($TailLinesPerLog -gt 0) {
+    $tailScopeApplied = $true
+    $tailTempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("pauc_error_sorting_tail_{0}" -f ([guid]::NewGuid().ToString("N")))
+    New-Item -Path $tailTempDir -ItemType Directory -Force | Out-Null
+
+    $scopedLogs = New-Object System.Collections.Generic.List[string]
+    foreach ($logPath in $resolvedLogs) {
+        $tailFileName = "{0}_{1}.tail.log" -f `
+            [System.IO.Path]::GetFileNameWithoutExtension($logPath), `
+            ([System.IO.Path]::GetFileName($logPath).GetHashCode().ToString("X8"))
+        $tailPath = Join-Path $tailTempDir $tailFileName
+        $tailLines = @(Get-Content -LiteralPath $logPath -Tail $TailLinesPerLog)
+        $tailLines | Set-Content -LiteralPath $tailPath -Encoding UTF8
+        $scopedLogs.Add((Resolve-Path -LiteralPath $tailPath).Path)
+    }
+
+    $analysisLogs = $scopedLogs.ToArray()
 }
 
 if (-not (Test-Path -LiteralPath $OutDir)) {
@@ -196,8 +222,9 @@ if ($RunQuarantine -and -not (Test-Path -LiteralPath $quarantineScript)) {
 $triageArgs = @{
     InstanceName = $InstanceName
     PrismInstancesRoot = $PrismInstancesRoot
-    LogPaths = $resolvedLogs
+    LogPaths = $analysisLogs
     TopN = $TopN
+    TailLinesPerLog = $TailLinesPerLog
     OutDir = $OutDir
     PassThru = $true
 }
@@ -212,8 +239,8 @@ if ($null -eq $triageSummary) {
 }
 
 $triageArtifacts = Resolve-TriageArtifactPaths -TopCsvPath ([string]$triageSummary.top_csv_path)
-$blockingRows = @(Get-PatternStats -Patterns $BlockingPatterns -Paths $resolvedLogs)
-$noiseRows = @(Get-PatternStats -Patterns $KnownNoisePatterns -Paths $resolvedLogs)
+$blockingRows = @(Get-PatternStats -Patterns $BlockingPatterns -Paths $analysisLogs)
+$noiseRows = @(Get-PatternStats -Patterns $KnownNoisePatterns -Paths $analysisLogs)
 
 $blockingHitsTotal = [int](($blockingRows | Measure-Object -Property count -Sum).Sum)
 $noiseHitsTotal = [int](($noiseRows | Measure-Object -Property count -Sum).Sum)
@@ -233,7 +260,7 @@ if ($RunQuarantine) {
     $quarantineArgs = @{
         InstanceName = $InstanceName
         PrismInstancesRoot = $PrismInstancesRoot
-        LogPaths = $resolvedLogs
+        LogPaths = $analysisLogs
         OutDir = $OutDir
         AdoptExisting = $true
         PassThru = $true
@@ -251,7 +278,10 @@ $summary = [PSCustomObject]@{
     timestamp_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     instance_name = $InstanceName
     logs = $resolvedLogs
+    analysis_logs = $analysisLogs
     include_warnings = [bool]$IncludeWarnings
+    tail_lines_per_log = [int]$TailLinesPerLog
+    tail_scope_applied = [bool]$tailScopeApplied
     report_json_path = [System.IO.Path]::GetFullPath($jsonPath)
     report_md_path = [System.IO.Path]::GetFullPath($mdPath)
     top_n = $TopN
@@ -286,6 +316,9 @@ $md.Add("")
 $md.Add(("- Timestamp UTC: {0}" -f $summary.timestamp_utc))
 $md.Add(("- Instance: {0}" -f $summary.instance_name))
 $md.Add(("- Logs: {0}" -f ($summary.logs -join " | ")))
+$md.Add(("- Analysis logs: {0}" -f ($summary.analysis_logs -join " | ")))
+$md.Add(("- Tail lines per log: {0}" -f $summary.tail_lines_per_log))
+$md.Add(("- Tail scope applied: {0}" -f $summary.tail_scope_applied))
 $md.Add(("- Overall status: {0}" -f $summary.overall_status))
 $md.Add(("- Blocking hits total: {0}" -f $summary.blocking_hits_total))
 $md.Add(("- Known-noise status: {0}" -f $summary.known_noise_status))
@@ -352,7 +385,14 @@ Write-Host ("Report MD:  {0}" -f (Resolve-Path -LiteralPath $mdPath).Path)
 Write-Host ("Report JSON:{0}" -f (Resolve-Path -LiteralPath $jsonPath).Path)
 
 if ($PassThru) {
+    if (-not [string]::IsNullOrWhiteSpace($tailTempDir) -and (Test-Path -LiteralPath $tailTempDir)) {
+        Remove-Item -LiteralPath $tailTempDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     $summary
+}
+
+if (-not [string]::IsNullOrWhiteSpace($tailTempDir) -and (Test-Path -LiteralPath $tailTempDir)) {
+    Remove-Item -LiteralPath $tailTempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($FailOnBlocking -and $overallStatus -ne "pass") {

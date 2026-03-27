@@ -3,6 +3,7 @@ param(
     [string]$PrismInstancesRoot = "",
     [string[]]$LogPaths = @(),
     [int]$TopN = 10,
+    [int]$TailLinesPerLog = 0,
     [string]$OutDir = ".\run\pauc_reports",
     [switch]$IncludeWarnings,
     [switch]$PassThru
@@ -10,6 +11,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+if ($TailLinesPerLog -lt 0) {
+    throw "TailLinesPerLog must be >= 0"
+}
 
 function Get-Bucket {
     param([string]$Signature)
@@ -86,9 +91,23 @@ if ($missingLogs.Count -gt 0) {
 $entries = New-Object System.Collections.Generic.List[object]
 
 foreach ($logPath in $resolvedLogs) {
+    $logLines = @()
+    $lineOffset = 0
+    if ($TailLinesPerLog -gt 0) {
+        $logLines = @(Get-Content -LiteralPath $logPath -Tail $TailLinesPerLog)
+        $tailCount = $logLines.Count
+        if ($tailCount -gt 0) {
+            $totalLineCount = [int]((Get-Content -LiteralPath $logPath | Measure-Object -Line).Lines)
+            $lineOffset = [Math]::Max(0, $totalLineCount - $tailCount)
+        }
+    } else {
+        $logLines = @(Get-Content -LiteralPath $logPath)
+    }
+
     $lineNumber = 0
-    foreach ($line in Get-Content -LiteralPath $logPath) {
+    foreach ($line in $logLines) {
         $lineNumber++
+        $absoluteLineNumber = $lineOffset + $lineNumber
 
         $isErrorLevel = $line -match "\[(ERROR|FATAL)\]"
         $isException = $line -match "(Exception|Caused by:)"
@@ -112,7 +131,7 @@ foreach ($logPath in $resolvedLogs) {
 
         $entries.Add([PSCustomObject]@{
                 log_file = $logPath
-                line_number = $lineNumber
+                line_number = $absoluteLineNumber
                 category = $category
                 bucket = $bucket
                 signature = $signature
@@ -164,6 +183,7 @@ $summary = [PSCustomObject]@{
     instance_name = $InstanceName
     logs = $resolvedLogs
     include_warnings = [bool]$IncludeWarnings
+    tail_lines_per_log = [int]$TailLinesPerLog
     total_events = $totalEvents
     unique_signatures = $grouped.Count
     top_n = $TopN
@@ -182,6 +202,7 @@ $md.Add(("- Logs: {0}" -f ($resolvedLogs -join " | ")))
 $md.Add(("- Total events: {0}" -f $totalEvents))
 $md.Add(("- Unique signatures: {0}" -f $grouped.Count))
 $md.Add(("- Include warnings: {0}" -f [bool]$IncludeWarnings))
+$md.Add(("- Tail lines per log: {0}" -f [int]$TailLinesPerLog))
 $md.Add("")
 $md.Add("## Bucket Summary")
 $md.Add("")

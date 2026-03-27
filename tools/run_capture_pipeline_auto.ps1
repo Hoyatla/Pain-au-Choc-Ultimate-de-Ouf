@@ -22,6 +22,7 @@ param(
     [double]$MsptP95Max = 60.0,
     [int]$MinMetricsDurationSecondsForCandidatePreflight = 480,
     [int]$CandidateMinSoakDurationSeconds = 480,
+    [int]$ErrorSortingTailLines = 0,
     [int]$ErrorSortingNoiseWarnHitsTotal = 500,
     [int]$ErrorSortingNoiseFailHitsTotal = 2000,
     [bool]$EnableStrictCiFailGates = $true,
@@ -63,6 +64,9 @@ if ($MinMetricsDurationSecondsForCandidatePreflight -lt 0) {
 }
 if ($CandidateMinSoakDurationSeconds -lt 0) {
     throw "CandidateMinSoakDurationSeconds must be >= 0"
+}
+if ($ErrorSortingTailLines -lt 0) {
+    throw "ErrorSortingTailLines must be >= 0"
 }
 if ($ErrorSortingNoiseWarnHitsTotal -lt 0) {
     throw "ErrorSortingNoiseWarnHitsTotal must be >= 0"
@@ -710,6 +714,7 @@ try {
                 MsptP95Max = $MsptP95Max
                 MinMetricsDurationSecondsForCandidatePreflight = $MinMetricsDurationSecondsForCandidatePreflight
                 CandidateMinSoakDurationSeconds = $CandidateMinSoakDurationSeconds
+                ErrorSortingTailLines = $ErrorSortingTailLines
                 ErrorSortingNoiseWarnHitsTotal = $ErrorSortingNoiseWarnHitsTotal
                 ErrorSortingNoiseFailHitsTotal = $ErrorSortingNoiseFailHitsTotal
             }

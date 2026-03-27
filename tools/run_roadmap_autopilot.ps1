@@ -60,6 +60,7 @@ param(
     [bool]$RunErrorSortingPass = $true,
     [bool]$ErrorSortingIncludeWarnings = $true,
     [int]$ErrorSortingTopN = 25,
+    [int]$ErrorSortingTailLines = 0,
     [int]$ErrorSortingNoiseWarnHitsTotal = 500,
     [int]$ErrorSortingNoiseFailHitsTotal = 2000,
     [switch]$FailOnErrorSortingReportMissing,
@@ -113,6 +114,9 @@ if ($MetricsCodeDriftToleranceMinutes -lt 0) {
 }
 if ($ErrorSortingTopN -lt 1) {
     throw "ErrorSortingTopN must be >= 1"
+}
+if ($ErrorSortingTailLines -lt 0) {
+    throw "ErrorSortingTailLines must be >= 0"
 }
 if ($ErrorSortingNoiseWarnHitsTotal -lt 0) {
     throw "ErrorSortingNoiseWarnHitsTotal must be >= 0"
@@ -522,6 +526,7 @@ function Invoke-ErrorSortingPass {
         [string]$PrismRootPath,
         [string]$OutDir,
         [int]$TopN,
+        [int]$TailLines,
         [int]$KnownNoiseWarnHitsTotal,
         [int]$KnownNoiseFailHitsTotal,
         [bool]$IncludeWarnings,
@@ -550,6 +555,7 @@ function Invoke-ErrorSortingPass {
             PrismInstancesRoot = $PrismRootPath
             OutDir = $OutDir
             TopN = $TopN
+            TailLinesPerLog = $TailLines
             KnownNoiseWarnHitsTotal = $KnownNoiseWarnHitsTotal
             KnownNoiseFailHitsTotal = $KnownNoiseFailHitsTotal
             RunQuarantine = $true
@@ -2180,6 +2186,7 @@ try {
                             -PrismRootPath $PrismRoot `
                             -OutDir $ReportsDir `
                             -TopN $ErrorSortingTopN `
+                            -TailLines $ErrorSortingTailLines `
                             -KnownNoiseWarnHitsTotal $ErrorSortingNoiseWarnHitsTotal `
                             -KnownNoiseFailHitsTotal $ErrorSortingNoiseFailHitsTotal `
                             -IncludeWarnings ([bool]$ErrorSortingIncludeWarnings) `
@@ -2248,6 +2255,7 @@ try {
             -PrismRootPath $PrismRoot `
             -OutDir $ReportsDir `
             -TopN $ErrorSortingTopN `
+            -TailLines $ErrorSortingTailLines `
             -KnownNoiseWarnHitsTotal $ErrorSortingNoiseWarnHitsTotal `
             -KnownNoiseFailHitsTotal $ErrorSortingNoiseFailHitsTotal `
             -IncludeWarnings ([bool]$ErrorSortingIncludeWarnings) `
@@ -2370,6 +2378,7 @@ $result = [PSCustomObject]@{
         error_sorting_error = $errorSortingError
         error_sorting_known_noise_warn_hits_total = $errorSortingKnownNoiseWarnHitsTotal
         error_sorting_known_noise_fail_hits_total = $errorSortingKnownNoiseFailHitsTotal
+        error_sorting_tail_lines = $ErrorSortingTailLines
         error_sorting_triage_total_events = $errorSortingTriageEvents
         error_sorting_triage_unique_signatures = $errorSortingTriageUniqueSignatures
         error_sorting_report_md_path = $errorSortingReportMdPath
