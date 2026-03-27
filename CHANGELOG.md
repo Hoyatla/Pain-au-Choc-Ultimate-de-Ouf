@@ -30,8 +30,9 @@
   - le contrat `-PassThru` exporte maintenant explicitement ces valeurs pour audit machine-readable.
   - ajout de `-AutopilotScriptPath` pour permettre un runner autopilot injectable (tests CI deterministes).
 - Coherence du summary autopilot persiste:
-  - `tools/run_roadmap_autopilot.ps1` effectue maintenant une seconde ecriture atomique du summary pour persister des champs metadata non vides (`summary_output_size_bytes`, `summary_output_sha256`) dans le JSON sur disque.
-  - `tools/test_autopilot_fail_gates.ps1` verifie maintenant explicitement cette presence metadata quand un fichier summary est produit.
+  - `tools/run_roadmap_autopilot.ps1` stabilise maintenant `summary_output_size_bytes` pour correspondre a la taille reelle du JSON persiste.
+  - le champ `summary_output_sha256` est calcule sur un payload canonicalise (`summary_output_sha256_scope=payload_without_summary_output_sha256`) pour eviter l'auto-reference impossible d'un hash de fichier se contenant lui-meme.
+  - `tools/test_autopilot_fail_gates.ps1` verifie maintenant la presence metadata (`size/sha`) et la coherence taille declaree vs taille reelle du fichier summary.
 - Validation:
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).
   - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (incluant `prism_sync_gate_pass_with_dot_minecraft_layout`).

@@ -2392,6 +2392,10 @@ foreach ($case in $cases) {
     $actualSummaryOutputSizeBytes = if ($null -eq $summary) { 0 } else { [int64](Get-ObjectPropertyValue -InputObject $summary -PropertyName "summary_output_size_bytes" -DefaultValue 0) }
     $actualSummaryOutputSha256 = if ($null -eq $summary) { "" } else { [string](Get-ObjectPropertyValue -InputObject $summary -PropertyName "summary_output_sha256" -DefaultValue "") }
     $summaryFileExists = Test-Path -LiteralPath $summaryPath -PathType Leaf
+    $summaryFileLength = 0
+    if ($summaryFileExists) {
+        $summaryFileLength = [int64](Get-Item -LiteralPath $summaryPath -ErrorAction Stop).Length
+    }
 
     $checks = New-Object System.Collections.Generic.List[string]
     $passed = $true
@@ -2594,6 +2598,10 @@ foreach ($case in $cases) {
         }
         if ($summaryFileExists -and $actualSummaryOutputWritten -and [string]::IsNullOrWhiteSpace($actualSummaryOutputSha256)) {
             $checks.Add("summary_file_metadata_sha256_missing")
+            $passed = $false
+        }
+        if ($summaryFileExists -and $actualSummaryOutputWritten -and $actualSummaryOutputSizeBytes -ne $summaryFileLength) {
+            $checks.Add("summary_file_metadata_size_mismatch")
             $passed = $false
         }
         if ($actualActiveFailGateCount -ne @($actualActiveFailGates).Count) {

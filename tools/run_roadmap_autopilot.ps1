@@ -178,6 +178,44 @@ function Reset-LastExitCode {
     Set-Variable -Name LASTEXITCODE -Scope Global -Value 0
 }
 
+function Convert-ResultToSummaryJson {
+    param(
+        [object]$SummaryResult,
+        [bool]$CompressOutput
+    )
+    if ($CompressOutput) {
+        return ($SummaryResult | ConvertTo-Json -Depth 12 -Compress)
+    }
+    return ($SummaryResult | ConvertTo-Json -Depth 12)
+}
+
+function Write-SummaryJsonAtomically {
+    param(
+        [string]$DestinationPath,
+        [string]$SummaryJson,
+        [ref]$TempPathRef
+    )
+
+    $tempPath = "{0}.tmp.{1}" -f $DestinationPath, ([guid]::NewGuid().ToString("N"))
+    $TempPathRef.Value = $tempPath
+    $SummaryJson | Set-Content -LiteralPath $tempPath -Encoding utf8
+    Move-Item -LiteralPath $tempPath -Destination $DestinationPath -Force
+    $TempPathRef.Value = ""
+}
+
+function Get-Sha256HexFromText {
+    param([string]$InputText)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputText)
+        $hashBytes = $sha256.ComputeHash($bytes)
+    } finally {
+        $sha256.Dispose()
+    }
+    return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "")
+}
+
 function Get-GitContext {
     param(
         [string]$RepoRootPath,
@@ -2253,6 +2291,7 @@ $result = [PSCustomObject]@{
         summary_output_written_utc = ""
         summary_output_size_bytes = 0
         summary_output_sha256 = ""
+        summary_output_sha256_scope = "payload_without_summary_output_sha256"
         summary_output_error = ""
         state_path = $StatePath
         autopilot_state_path = $autopilotStatePathResolved
@@ -2438,40 +2477,52 @@ $result = [PSCustomObject]@{
             $summaryWriteTimestampUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             $result.summary_output_written = $true
             $result.summary_output_written_utc = $summaryWriteTimestampUtc
+            $result.summary_output_sha256_scope = "payload_without_summary_output_sha256"
             $result.summary_output_size_bytes = 0
-            $result.summary_output_sha256 = ""
-            $result.summary_output_error = ""
-            $summaryJson = if ($SummaryOutputCompress) {
-                $result | ConvertTo-Json -Depth 12 -Compress
-            } else {
-                $result | ConvertTo-Json -Depth 12
-            }
-            $summaryOutputTempPath = "{0}.tmp.{1}" -f $summaryOutputPathResolved, ([guid]::NewGuid().ToString("N"))
-            $summaryJson | Set-Content -LiteralPath $summaryOutputTempPath -Encoding utf8
-            Move-Item -LiteralPath $summaryOutputTempPath -Destination $summaryOutputPathResolved -Force
-            $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
-            $summaryHash = Get-FileHash -LiteralPath $summaryOutputPathResolved -Algorithm SHA256 -ErrorAction Stop
-            $result.summary_output_written = $true
-            $result.summary_output_written_utc = $summaryWriteTimestampUtc
-            $result.summary_output_size_bytes = [int64]$summaryFileInfo.Length
-            $result.summary_output_sha256 = [string]$summaryHash.Hash
+            $result.summary_output_sha256 = ("0" * 64)
             $result.summary_output_error = ""
 
-            # Persist non-empty metadata fields into the summary payload itself.
-            # The metadata values reflect the first-pass file snapshot.
-            $summaryJson = if ($SummaryOutputCompress) {
-                $result | ConvertTo-Json -Depth 12 -Compress
-            } else {
-                $result | ConvertTo-Json -Depth 12
+            $maxSummarySizeIterations = 8
+            $sizeStabilized = $false
+            for ($summarySizeIteration = 0; $summarySizeIteration -lt $maxSummarySizeIterations; $summarySizeIteration++) {
+                $summaryJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
+                Write-SummaryJsonAtomically `
+                    -DestinationPath $summaryOutputPathResolved `
+                    -SummaryJson $summaryJson `
+                    -TempPathRef ([ref]$summaryOutputTempPath)
+                $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
+                $measuredSummarySize = [int64]$summaryFileInfo.Length
+                if ($result.summary_output_size_bytes -eq $measuredSummarySize) {
+                    $sizeStabilized = $true
+                    break
+                }
+                $result.summary_output_size_bytes = $measuredSummarySize
             }
-            $summaryOutputTempPath = "{0}.tmp.{1}" -f $summaryOutputPathResolved, ([guid]::NewGuid().ToString("N"))
-            $summaryJson | Set-Content -LiteralPath $summaryOutputTempPath -Encoding utf8
-            Move-Item -LiteralPath $summaryOutputTempPath -Destination $summaryOutputPathResolved -Force
+            if (-not $sizeStabilized) {
+                throw "Failed to stabilize summary output size metadata."
+            }
+
+            $result.summary_output_sha256 = ""
+            $summaryHashSourceJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
+            $summaryHash = Get-Sha256HexFromText -InputText $summaryHashSourceJson
+            $result.summary_output_sha256 = [string]$summaryHash
+
+            $summaryJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
+            Write-SummaryJsonAtomically `
+                -DestinationPath $summaryOutputPathResolved `
+                -SummaryJson $summaryJson `
+                -TempPathRef ([ref]$summaryOutputTempPath)
+            $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
+            $result.summary_output_size_bytes = [int64]$summaryFileInfo.Length
+            $result.summary_output_written = $true
+            $result.summary_output_written_utc = $summaryWriteTimestampUtc
+            $result.summary_output_error = ""
         } catch {
             $result.summary_output_written = $false
             $result.summary_output_written_utc = ""
             $result.summary_output_size_bytes = 0
             $result.summary_output_sha256 = ""
+            $result.summary_output_sha256_scope = "payload_without_summary_output_sha256"
             $result.summary_output_error = $_.Exception.Message
             Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
         } finally {
