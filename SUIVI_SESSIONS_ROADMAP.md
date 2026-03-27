@@ -5381,3 +5381,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-27 02:29:13 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Self-test fail-gates: alignement recompute hash summary en depth 32 (scope-aware).
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
