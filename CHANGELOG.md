@@ -36,6 +36,7 @@
   - le gate `FailOnSummaryIntegrityMissing` valide maintenant aussi la coherence du hash payload (`summary_output_sha256` vs recalcul scope-aware) avant de considerer le summary intègre.
   - `tools/test_autopilot_fail_gates.ps1` verifie maintenant la presence metadata (`size/sha`) et la coherence taille declaree vs taille reelle du fichier summary.
   - le self-test verifie aussi la validite du hash declare en le recalculant depuis le payload canonicalise selon `summary_output_sha256_scope`.
+  - quand un fail-gate summary ajuste le verdict apres la premiere sauvegarde, `tools/run_roadmap_autopilot.ps1` reecrit maintenant automatiquement le summary final (reason + triggered gates + metadata/hash a jour) pour eviter un JSON partiellement stale.
   - le self-test couvre explicitement le cas `summary_integrity_gate_detects_sha_mismatch` (summary corrompu volontairement) avec fallback reason/triggered sur exception quand le JSON summary est incomplet.
 - Validation:
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).

@@ -270,6 +270,103 @@ function Test-SummaryOutputSha256Integrity {
     return $result
 }
 
+function Write-SummaryOutputArtifact {
+    param(
+        [object]$SummaryResult,
+        [string]$SummaryOutputPath,
+        [bool]$CompressOutput,
+        [bool]$ForceShaMismatchForTest
+    )
+
+    $result = [PSCustomObject]@{
+        sha_integrity_valid = $false
+        sha_integrity_error = ""
+    }
+
+    $summaryOutputTempPath = ""
+    try {
+        $summaryOutputDir = Split-Path -Path $SummaryOutputPath -Parent
+        if (-not [string]::IsNullOrWhiteSpace($summaryOutputDir)) {
+            New-Item -ItemType Directory -Path $summaryOutputDir -Force | Out-Null
+        }
+
+        $summaryWriteTimestampUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        $SummaryResult.summary_output_written = $true
+        $SummaryResult.summary_output_written_utc = $summaryWriteTimestampUtc
+        $SummaryResult.summary_output_sha256_scope = "payload_without_summary_output_sha256"
+        $SummaryResult.summary_output_size_bytes = 0
+        $SummaryResult.summary_output_sha256 = ("0" * 64)
+        $SummaryResult.summary_output_error = ""
+
+        $maxSummarySizeIterations = 8
+        $sizeStabilized = $false
+        for ($summarySizeIteration = 0; $summarySizeIteration -lt $maxSummarySizeIterations; $summarySizeIteration++) {
+            $summaryJson = Convert-ResultToSummaryJson -SummaryResult $SummaryResult -CompressOutput $CompressOutput
+            Write-SummaryJsonAtomically `
+                -DestinationPath $SummaryOutputPath `
+                -SummaryJson $summaryJson `
+                -TempPathRef ([ref]$summaryOutputTempPath)
+            $summaryFileInfo = Get-Item -LiteralPath $SummaryOutputPath -ErrorAction Stop
+            $measuredSummarySize = [int64]$summaryFileInfo.Length
+            if ($SummaryResult.summary_output_size_bytes -eq $measuredSummarySize) {
+                $sizeStabilized = $true
+                break
+            }
+            $SummaryResult.summary_output_size_bytes = $measuredSummarySize
+        }
+        if (-not $sizeStabilized) {
+            throw "Failed to stabilize summary output size metadata."
+        }
+
+        $SummaryResult.summary_output_sha256 = ""
+        $summaryHashSourceJson = Convert-ResultToSummaryJson -SummaryResult $SummaryResult -CompressOutput $CompressOutput
+        $summaryHash = Get-Sha256HexFromText -InputText $summaryHashSourceJson
+        $SummaryResult.summary_output_sha256 = [string]$summaryHash
+        if ($ForceShaMismatchForTest) {
+            if ([string]::IsNullOrWhiteSpace($SummaryResult.summary_output_sha256)) {
+                $SummaryResult.summary_output_sha256 = ("0" * 64)
+            } else {
+                $replacementPrefix = if ($SummaryResult.summary_output_sha256.StartsWith("0")) { "1" } else { "0" }
+                $SummaryResult.summary_output_sha256 = ("{0}{1}" -f $replacementPrefix, $SummaryResult.summary_output_sha256.Substring(1))
+            }
+        }
+
+        $summaryJson = Convert-ResultToSummaryJson -SummaryResult $SummaryResult -CompressOutput $CompressOutput
+        Write-SummaryJsonAtomically `
+            -DestinationPath $SummaryOutputPath `
+            -SummaryJson $summaryJson `
+            -TempPathRef ([ref]$summaryOutputTempPath)
+        $summaryFileInfo = Get-Item -LiteralPath $SummaryOutputPath -ErrorAction Stop
+        $SummaryResult.summary_output_size_bytes = [int64]$summaryFileInfo.Length
+        $SummaryResult.summary_output_written = $true
+        $SummaryResult.summary_output_written_utc = $summaryWriteTimestampUtc
+        $SummaryResult.summary_output_error = ""
+
+        $summaryShaIntegrity = Test-SummaryOutputSha256Integrity -SummaryResult $SummaryResult -CompressOutput $CompressOutput
+        $result.sha_integrity_valid = [bool]$summaryShaIntegrity.valid
+        $result.sha_integrity_error = [string]$summaryShaIntegrity.error
+        if (-not [bool]$result.sha_integrity_valid) {
+            Write-Warning ("[Autopilot] Summary output hash integrity validation failed: {0}" -f $result.sha_integrity_error)
+        }
+    } catch {
+        $SummaryResult.summary_output_written = $false
+        $SummaryResult.summary_output_written_utc = ""
+        $SummaryResult.summary_output_size_bytes = 0
+        $SummaryResult.summary_output_sha256 = ""
+        $SummaryResult.summary_output_sha256_scope = "payload_without_summary_output_sha256"
+        $SummaryResult.summary_output_error = $_.Exception.Message
+        $result.sha_integrity_valid = $false
+        $result.sha_integrity_error = $_.Exception.Message
+        Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $SummaryOutputPath, $_.Exception.Message)
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($summaryOutputTempPath) -and (Test-Path -LiteralPath $summaryOutputTempPath)) {
+            Remove-Item -LiteralPath $summaryOutputTempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    return $result
+}
+
 function Get-GitContext {
     param(
         [string]$RepoRootPath,
@@ -2538,86 +2635,17 @@ $result = [PSCustomObject]@{
         Write-Warning "[Autopilot] Test hook active: forcing summary_output_sha256 mismatch."
     }
     if (-not [string]::IsNullOrWhiteSpace($summaryOutputPathResolved)) {
-        $summaryOutputTempPath = ""
-        try {
-            $summaryOutputDir = Split-Path -Path $summaryOutputPathResolved -Parent
-            if (-not [string]::IsNullOrWhiteSpace($summaryOutputDir)) {
-                New-Item -ItemType Directory -Path $summaryOutputDir -Force | Out-Null
-            }
-            $summaryWriteTimestampUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            $result.summary_output_written = $true
-            $result.summary_output_written_utc = $summaryWriteTimestampUtc
-            $result.summary_output_sha256_scope = "payload_without_summary_output_sha256"
-            $result.summary_output_size_bytes = 0
-            $result.summary_output_sha256 = ("0" * 64)
-            $result.summary_output_error = ""
-
-            $maxSummarySizeIterations = 8
-            $sizeStabilized = $false
-            for ($summarySizeIteration = 0; $summarySizeIteration -lt $maxSummarySizeIterations; $summarySizeIteration++) {
-                $summaryJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
-                Write-SummaryJsonAtomically `
-                    -DestinationPath $summaryOutputPathResolved `
-                    -SummaryJson $summaryJson `
-                    -TempPathRef ([ref]$summaryOutputTempPath)
-                $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
-                $measuredSummarySize = [int64]$summaryFileInfo.Length
-                if ($result.summary_output_size_bytes -eq $measuredSummarySize) {
-                    $sizeStabilized = $true
-                    break
-                }
-                $result.summary_output_size_bytes = $measuredSummarySize
-            }
-            if (-not $sizeStabilized) {
-                throw "Failed to stabilize summary output size metadata."
-            }
-
-            $result.summary_output_sha256 = ""
-            $summaryHashSourceJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
-            $summaryHash = Get-Sha256HexFromText -InputText $summaryHashSourceJson
-            $result.summary_output_sha256 = [string]$summaryHash
-            if ($forceSummaryShaMismatchForTest) {
-                if ([string]::IsNullOrWhiteSpace($result.summary_output_sha256)) {
-                    $result.summary_output_sha256 = ("0" * 64)
-                } else {
-                    $replacementPrefix = if ($result.summary_output_sha256.StartsWith("0")) { "1" } else { "0" }
-                    $result.summary_output_sha256 = ("{0}{1}" -f $replacementPrefix, $result.summary_output_sha256.Substring(1))
-                }
-            }
-
-            $summaryJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
-            Write-SummaryJsonAtomically `
-                -DestinationPath $summaryOutputPathResolved `
-                -SummaryJson $summaryJson `
-                -TempPathRef ([ref]$summaryOutputTempPath)
-            $summaryFileInfo = Get-Item -LiteralPath $summaryOutputPathResolved -ErrorAction Stop
-            $result.summary_output_size_bytes = [int64]$summaryFileInfo.Length
-            $result.summary_output_written = $true
-            $result.summary_output_written_utc = $summaryWriteTimestampUtc
-            $result.summary_output_error = ""
-
-            $summaryShaIntegrity = Test-SummaryOutputSha256Integrity -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
-            $summaryShaIntegrityValid = [bool]$summaryShaIntegrity.valid
-            $summaryShaIntegrityError = [string]$summaryShaIntegrity.error
-            if (-not $summaryShaIntegrityValid) {
-                Write-Warning ("[Autopilot] Summary output hash integrity validation failed: {0}" -f $summaryShaIntegrityError)
-            }
-        } catch {
-            $result.summary_output_written = $false
-            $result.summary_output_written_utc = ""
-            $result.summary_output_size_bytes = 0
-            $result.summary_output_sha256 = ""
-            $result.summary_output_sha256_scope = "payload_without_summary_output_sha256"
-            $result.summary_output_error = $_.Exception.Message
-            $summaryShaIntegrityValid = $false
-            $summaryShaIntegrityError = $_.Exception.Message
-            Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
-        } finally {
-            if (-not [string]::IsNullOrWhiteSpace($summaryOutputTempPath) -and (Test-Path -LiteralPath $summaryOutputTempPath)) {
-                Remove-Item -LiteralPath $summaryOutputTempPath -Force -ErrorAction SilentlyContinue
-            }
-        }
+        $summaryWriteResult = Write-SummaryOutputArtifact `
+            -SummaryResult $result `
+            -SummaryOutputPath $summaryOutputPathResolved `
+            -CompressOutput ([bool]$SummaryOutputCompress) `
+            -ForceShaMismatchForTest $forceSummaryShaMismatchForTest
+        $summaryShaIntegrityValid = [bool]$summaryWriteResult.sha_integrity_valid
+        $summaryShaIntegrityError = [string]$summaryWriteResult.sha_integrity_error
     }
+    $summaryGateFailureReasonBefore = [string]$result.autopilot_failure_reason
+    $summaryGateFailedBefore = [bool]$result.autopilot_failed
+    $summaryGateTriggeredBefore = @($result.triggered_fail_gates | ForEach-Object { [string]$_ })
     if ([bool]$FailOnSummaryOutputWriteError -and `
             -not [string]::IsNullOrWhiteSpace($result.summary_output_error) -and `
             [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
@@ -2665,6 +2693,21 @@ $result = [PSCustomObject]@{
             -not ($result.triggered_fail_gates -contains "summary_integrity_missing")) {
         $result.triggered_fail_gates = @($result.triggered_fail_gates + @("summary_integrity_missing"))
         $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
+    }
+    $summaryGateTriggeredAfter = @($result.triggered_fail_gates | ForEach-Object { [string]$_ })
+    $summaryGateChangesDetected = ($summaryGateFailureReasonBefore -ne [string]$result.autopilot_failure_reason) -or `
+        ($summaryGateFailedBefore -ne [bool]$result.autopilot_failed) -or `
+        ([string]::Join("|", $summaryGateTriggeredBefore) -ne [string]::Join("|", $summaryGateTriggeredAfter))
+    if ($summaryGateChangesDetected -and `
+            -not [string]::IsNullOrWhiteSpace($summaryOutputPathResolved) -and `
+            [bool]$result.summary_output_written) {
+        $summaryWriteResult = Write-SummaryOutputArtifact `
+            -SummaryResult $result `
+            -SummaryOutputPath $summaryOutputPathResolved `
+            -CompressOutput ([bool]$SummaryOutputCompress) `
+            -ForceShaMismatchForTest $forceSummaryShaMismatchForTest
+        $summaryShaIntegrityValid = [bool]$summaryWriteResult.sha_integrity_valid
+        $summaryShaIntegrityError = [string]$summaryWriteResult.sha_integrity_error
     }
 
     Reset-LastExitCode
