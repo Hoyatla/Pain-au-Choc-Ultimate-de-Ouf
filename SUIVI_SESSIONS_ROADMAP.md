@@ -5375,3 +5375,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-27 02:25:51 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
