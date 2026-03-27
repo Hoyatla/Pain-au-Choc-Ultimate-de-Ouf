@@ -29,6 +29,19 @@ function Reset-LastExitCode {
     Set-Variable -Name LASTEXITCODE -Scope Global -Value 0
 }
 
+function Get-Sha256HexFromText {
+    param([string]$InputText)
+
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputText)
+        $hashBytes = $sha256.ComputeHash($bytes)
+    } finally {
+        $sha256.Dispose()
+    }
+    return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "")
+}
+
 function Get-ObjectPropertyValue {
     param(
         [object]$InputObject,
@@ -2391,6 +2404,7 @@ foreach ($case in $cases) {
     $actualSummaryOutputWrittenUtc = if ($null -eq $summary) { "" } else { [string](Get-ObjectPropertyValue -InputObject $summary -PropertyName "summary_output_written_utc" -DefaultValue "") }
     $actualSummaryOutputSizeBytes = if ($null -eq $summary) { 0 } else { [int64](Get-ObjectPropertyValue -InputObject $summary -PropertyName "summary_output_size_bytes" -DefaultValue 0) }
     $actualSummaryOutputSha256 = if ($null -eq $summary) { "" } else { [string](Get-ObjectPropertyValue -InputObject $summary -PropertyName "summary_output_sha256" -DefaultValue "") }
+    $actualSummaryOutputSha256Scope = if ($null -eq $summary) { "" } else { [string](Get-ObjectPropertyValue -InputObject $summary -PropertyName "summary_output_sha256_scope" -DefaultValue "") }
     $summaryFileExists = Test-Path -LiteralPath $summaryPath -PathType Leaf
     $summaryFileLength = 0
     if ($summaryFileExists) {
@@ -2603,6 +2617,34 @@ foreach ($case in $cases) {
         if ($summaryFileExists -and $actualSummaryOutputWritten -and $actualSummaryOutputSizeBytes -ne $summaryFileLength) {
             $checks.Add("summary_file_metadata_size_mismatch")
             $passed = $false
+        }
+        if ($summaryFileExists -and $actualSummaryOutputWritten -and -not [string]::IsNullOrWhiteSpace($actualSummaryOutputSha256)) {
+            if ([string]::IsNullOrWhiteSpace($actualSummaryOutputSha256Scope)) {
+                $checks.Add("summary_file_metadata_sha256_scope_missing")
+                $passed = $false
+            } elseif ($actualSummaryOutputSha256Scope.Trim().ToLowerInvariant() -ne "payload_without_summary_output_sha256") {
+                $checks.Add("summary_file_metadata_sha256_scope_unknown")
+                $passed = $false
+            } else {
+                try {
+                    $summaryCloneJson = $summary | ConvertTo-Json -Depth 32
+                    $summaryForHash = $summaryCloneJson | ConvertFrom-Json
+                    $summaryForHash.summary_output_sha256 = ""
+                    $summaryHashSource = if ($actualSummaryOutputCompressed) {
+                        $summaryForHash | ConvertTo-Json -Depth 12 -Compress
+                    } else {
+                        $summaryForHash | ConvertTo-Json -Depth 12
+                    }
+                    $recomputedSummaryHash = Get-Sha256HexFromText -InputText $summaryHashSource
+                    if (-not [string]::Equals($recomputedSummaryHash, $actualSummaryOutputSha256, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $checks.Add("summary_file_metadata_sha256_mismatch")
+                        $passed = $false
+                    }
+                } catch {
+                    $checks.Add("summary_file_metadata_sha256_recompute_error")
+                    $passed = $false
+                }
+            }
         }
         if ($actualActiveFailGateCount -ne @($actualActiveFailGates).Count) {
             $checks.Add("inconsistent_active_fail_gate_count")
