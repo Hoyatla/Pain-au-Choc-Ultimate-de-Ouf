@@ -650,6 +650,7 @@ Notes autopilot cache/retry:
 - `triggered_fail_gate_count` et `triggered_fail_gates` listent les gates qui auraient echoue sur ce run (utile quand plusieurs gates sont en echec mais qu'une seule devient `autopilot_failure_reason`).
 - `triggered_fail_gates` n'inclut plus de faux positif `summary_integrity_missing` avant tentative d'ecriture du resume; ce gate est maintenant evalue uniquement dans le bloc post-ecriture.
 - `SummaryOutputPath` permet d'ecrire un JSON de resume machine-readable (`summary_output_path`, `summary_output_compressed`, `summary_output_write_mode`, `summary_output_written`, `summary_output_written_utc`, `summary_output_size_bytes`, `summary_output_sha256`, `summary_output_error`).
+- `summary_output_size_bytes` est stabilise pour correspondre a la taille reelle du fichier persiste; `summary_output_sha256_scope=payload_without_summary_output_sha256` indique que `summary_output_sha256` est calcule sur le payload canonicalise sans le champ hash lui-meme (evite l'auto-reference).
 - Le resume JSON est ecrit en mode atomique (`summary_output_write_mode=atomic`, ecriture temp + replace) pour eviter les fichiers partiels en CI.
 - `summary_output_written` et `summary_output_written_utc` sont maintenant renseignes directement dans le JSON ecrit quand la sauvegarde reussit (meme en mode fail-gate).
 - `SummaryOutputCompress` force un JSON mono-ligne compact (utile pour ingestion CI).
