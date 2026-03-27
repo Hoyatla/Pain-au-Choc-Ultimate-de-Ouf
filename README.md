@@ -629,7 +629,7 @@ Notes autopilot cache/retry:
 - Si une gate error sorting est active (`FailOnErrorSorting*`) alors `RunErrorSortingPass` est force automatiquement pour eviter un statut `not_run` ambigu (`error_sorting_pass_forced_by_fail_gate=true`).
 - Pour CI stricte, `-FailOnSummaryOutputWriteError` force un `exit` en erreur si l'ecriture du JSON de resume echoue.
 - Pour CI stricte, `-FailOnMissingSummaryOutput` force un `exit` en erreur si aucun JSON resume n'est produit (`summary_output_path` vide ou `summary_output_written=false`).
-- Pour CI stricte, `-FailOnSummaryIntegrityMissing` force un `exit` en erreur si l'artefact resume est incomplet (`summary_output_written=false`, `summary_output_size_bytes<=0` ou `summary_output_sha256` vide) quand `SummaryOutputPath` est renseigne.
+- Pour CI stricte, `-FailOnSummaryIntegrityMissing` force un `exit` en erreur si l'artefact resume est incomplet (`summary_output_written=false`, `summary_output_size_bytes<=0`, `summary_output_sha256` vide) ou si le hash payload declare ne valide pas selon `summary_output_sha256_scope`, quand `SummaryOutputPath` est renseigne.
 - `-EnableStrictCiFailGates` active d'un coup le bundle de gates CI strictes (pending/metrics fraiches/effective/fraicheur/cache/git clean/prism/error sorting status+reports+blocking+noise fail/summary write/summary required/startup stale-cache) et force `RunErrorSortingPass`.
 - En mode `EnableStrictCiFailGates`, si `SummaryOutputPath` n'est pas fourni, un export est force automatiquement vers `StrictCiSummaryOutputPath` (defaut: `.\run\pauc_reports\autopilot_summary_ci_strict.json`).
 - En mode `EnableStrictCiFailGates`, la compression du JSON resume est activee par defaut (`StrictCiForceSummaryOutputCompress=$true`, desactivable).

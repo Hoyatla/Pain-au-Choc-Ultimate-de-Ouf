@@ -216,6 +216,60 @@ function Get-Sha256HexFromText {
     return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "")
 }
 
+function Test-SummaryOutputSha256Integrity {
+    param(
+        [object]$SummaryResult,
+        [bool]$CompressOutput
+    )
+
+    $result = [PSCustomObject]@{
+        valid = $false
+        error = ""
+        computed_sha256 = ""
+    }
+
+    try {
+        if ($null -eq $SummaryResult) {
+            $result.error = "summary_result_missing"
+            return $result
+        }
+
+        $scope = [string]$SummaryResult.summary_output_sha256_scope
+        if ([string]::IsNullOrWhiteSpace($scope)) {
+            $result.error = "sha256_scope_missing"
+            return $result
+        }
+        if ($scope.Trim().ToLowerInvariant() -ne "payload_without_summary_output_sha256") {
+            $result.error = ("sha256_scope_unsupported:{0}" -f $scope)
+            return $result
+        }
+
+        $declaredSha = [string]$SummaryResult.summary_output_sha256
+        if ([string]::IsNullOrWhiteSpace($declaredSha)) {
+            $result.error = "sha256_missing"
+            return $result
+        }
+
+        $summaryCloneJson = $SummaryResult | ConvertTo-Json -Depth 32
+        $summaryForHash = $summaryCloneJson | ConvertFrom-Json
+        $summaryForHash.summary_output_sha256 = ""
+        $hashSource = Convert-ResultToSummaryJson -SummaryResult $summaryForHash -CompressOutput $CompressOutput
+        $computedSha = Get-Sha256HexFromText -InputText $hashSource
+
+        $result.computed_sha256 = $computedSha
+        if ([string]::Equals($computedSha, $declaredSha, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $result.valid = $true
+            $result.error = ""
+        } else {
+            $result.error = "sha256_mismatch"
+        }
+    } catch {
+        $result.error = $_.Exception.Message
+    }
+
+    return $result
+}
+
 function Get-GitContext {
     param(
         [string]$RepoRootPath,
@@ -2467,6 +2521,8 @@ $result = [PSCustomObject]@{
     }
     $result.autopilot_failed = -not [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)
 
+    $summaryShaIntegrityValid = $false
+    $summaryShaIntegrityError = ""
     if (-not [string]::IsNullOrWhiteSpace($summaryOutputPathResolved)) {
         $summaryOutputTempPath = ""
         try {
@@ -2517,6 +2573,13 @@ $result = [PSCustomObject]@{
             $result.summary_output_written = $true
             $result.summary_output_written_utc = $summaryWriteTimestampUtc
             $result.summary_output_error = ""
+
+            $summaryShaIntegrity = Test-SummaryOutputSha256Integrity -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
+            $summaryShaIntegrityValid = [bool]$summaryShaIntegrity.valid
+            $summaryShaIntegrityError = [string]$summaryShaIntegrity.error
+            if (-not $summaryShaIntegrityValid) {
+                Write-Warning ("[Autopilot] Summary output hash integrity validation failed: {0}" -f $summaryShaIntegrityError)
+            }
         } catch {
             $result.summary_output_written = $false
             $result.summary_output_written_utc = ""
@@ -2524,6 +2587,8 @@ $result = [PSCustomObject]@{
             $result.summary_output_sha256 = ""
             $result.summary_output_sha256_scope = "payload_without_summary_output_sha256"
             $result.summary_output_error = $_.Exception.Message
+            $summaryShaIntegrityValid = $false
+            $summaryShaIntegrityError = $_.Exception.Message
             Write-Warning ("[Autopilot] Failed to write summary output file: {0} ({1})" -f $summaryOutputPathResolved, $_.Exception.Message)
         } finally {
             if (-not [string]::IsNullOrWhiteSpace($summaryOutputTempPath) -and (Test-Path -LiteralPath $summaryOutputTempPath)) {
@@ -2551,7 +2616,8 @@ $result = [PSCustomObject]@{
             -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
             (-not [bool]$result.summary_output_written -or `
                 [int64]$result.summary_output_size_bytes -le 0 -or `
-                [string]::IsNullOrWhiteSpace($result.summary_output_sha256)) -and `
+                [string]::IsNullOrWhiteSpace($result.summary_output_sha256) -or `
+                -not [bool]$summaryShaIntegrityValid) -and `
             [string]::IsNullOrWhiteSpace($result.autopilot_failure_reason)) {
         $result.autopilot_failure_reason = "summary_integrity_missing"
         $result.autopilot_failed = $true
@@ -2572,7 +2638,8 @@ $result = [PSCustomObject]@{
             -not [string]::IsNullOrWhiteSpace($result.summary_output_path) -and `
             (-not [bool]$result.summary_output_written -or `
                 [int64]$result.summary_output_size_bytes -le 0 -or `
-                [string]::IsNullOrWhiteSpace($result.summary_output_sha256)) -and `
+                [string]::IsNullOrWhiteSpace($result.summary_output_sha256) -or `
+                -not [bool]$summaryShaIntegrityValid) -and `
             -not ($result.triggered_fail_gates -contains "summary_integrity_missing")) {
         $result.triggered_fail_gates = @($result.triggered_fail_gates + @("summary_integrity_missing"))
         $result.triggered_fail_gate_count = @($result.triggered_fail_gates).Count
@@ -2666,10 +2733,12 @@ $result = [PSCustomObject]@{
                 throw ("Git worktree is dirty (entries={0}) while FailOnGitDirtyWorktree is enabled." -f $result.git_status_entry_count)
             }
             "summary_integrity_missing" {
-                throw ("Summary output integrity is incomplete (written={0}, size_bytes={1}, sha256_present={2}) while FailOnSummaryIntegrityMissing is enabled." -f `
+                throw ("Summary output integrity is incomplete (written={0}, size_bytes={1}, sha256_present={2}, sha256_valid={3}, sha256_validation_error='{4}') while FailOnSummaryIntegrityMissing is enabled." -f `
                         $result.summary_output_written,
                         $result.summary_output_size_bytes,
-                        -not [string]::IsNullOrWhiteSpace($result.summary_output_sha256))
+                        -not [string]::IsNullOrWhiteSpace($result.summary_output_sha256),
+                        [bool]$summaryShaIntegrityValid,
+                        [string]$summaryShaIntegrityError)
             }
             "effective_decision_not_ready_for_beta" {
                 throw ("Effective decision is '{0}' while FailOnEffectiveDecisionNotReadyForBeta is enabled." -f $result.effective_decision)

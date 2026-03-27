@@ -32,6 +32,7 @@
 - Coherence du summary autopilot persiste:
   - `tools/run_roadmap_autopilot.ps1` stabilise maintenant `summary_output_size_bytes` pour correspondre a la taille reelle du JSON persiste.
   - le champ `summary_output_sha256` est calcule sur un payload canonicalise (`summary_output_sha256_scope=payload_without_summary_output_sha256`) pour eviter l'auto-reference impossible d'un hash de fichier se contenant lui-meme.
+  - le gate `FailOnSummaryIntegrityMissing` valide maintenant aussi la coherence du hash payload (`summary_output_sha256` vs recalcul scope-aware) avant de considerer le summary intègre.
   - `tools/test_autopilot_fail_gates.ps1` verifie maintenant la presence metadata (`size/sha`) et la coherence taille declaree vs taille reelle du fichier summary.
   - le self-test verifie aussi la validite du hash declare en le recalculant depuis le payload canonicalise selon `summary_output_sha256_scope`.
 - Validation:
