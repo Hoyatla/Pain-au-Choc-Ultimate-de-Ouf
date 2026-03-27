@@ -5387,3 +5387,15 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Self-test fail-gates: alignement recompute hash summary en depth 32 (scope-aware).
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-27 02:53:58 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Fail-gates: ajout d'un cas deterministe summary SHA mismatch via hook env et fallback harnais reason/triggered.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-27 02:54:18 (UTC) - Codex
+
+- Statut: in_progress
+- Note: Beta candidate preflight checkpoint.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
