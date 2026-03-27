@@ -2456,6 +2456,17 @@ $result = [PSCustomObject]@{
             $result.summary_output_size_bytes = [int64]$summaryFileInfo.Length
             $result.summary_output_sha256 = [string]$summaryHash.Hash
             $result.summary_output_error = ""
+
+            # Persist non-empty metadata fields into the summary payload itself.
+            # The metadata values reflect the first-pass file snapshot.
+            $summaryJson = if ($SummaryOutputCompress) {
+                $result | ConvertTo-Json -Depth 12 -Compress
+            } else {
+                $result | ConvertTo-Json -Depth 12
+            }
+            $summaryOutputTempPath = "{0}.tmp.{1}" -f $summaryOutputPathResolved, ([guid]::NewGuid().ToString("N"))
+            $summaryJson | Set-Content -LiteralPath $summaryOutputTempPath -Encoding utf8
+            Move-Item -LiteralPath $summaryOutputTempPath -Destination $summaryOutputPathResolved -Force
         } catch {
             $result.summary_output_written = $false
             $result.summary_output_written_utc = ""

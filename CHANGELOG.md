@@ -29,6 +29,9 @@
   - ces seuils sont propages aux etapes preflight/candidate/autopilot pour conserver une seule commande de pilotage CI.
   - le contrat `-PassThru` exporte maintenant explicitement ces valeurs pour audit machine-readable.
   - ajout de `-AutopilotScriptPath` pour permettre un runner autopilot injectable (tests CI deterministes).
+- Coherence du summary autopilot persiste:
+  - `tools/run_roadmap_autopilot.ps1` effectue maintenant une seconde ecriture atomique du summary pour persister des champs metadata non vides (`summary_output_size_bytes`, `summary_output_sha256`) dans le JSON sur disque.
+  - `tools/test_autopilot_fail_gates.ps1` verifie maintenant explicitement cette presence metadata quand un fichier summary est produit.
 - Validation:
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).
   - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (incluant `prism_sync_gate_pass_with_dot_minecraft_layout`).
