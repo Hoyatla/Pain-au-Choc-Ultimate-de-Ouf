@@ -5423,3 +5423,30 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Passation prochaine session (2026-03-27 UTC)
+
+- Statut courant:
+  - branche `feat/embeddium-oculus-pipeline`,
+  - worktree propre (aucun fichier local en attente),
+  - lot CI summary stabilise (hash scope-aware + reecriture finale post-gates + depth JSON uniforme `32`).
+- Validations deja vertes sur ce socle:
+  - `.\tools\test_autopilot_fail_gates.ps1` (`47/47`),
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1`,
+  - `.\tools\test_build_beta_candidate_verification_contract.ps1` (`4/4`),
+  - `.\tools\test_verify_beta_candidate_behaviors.ps1` (`7/7`),
+  - `.\tools\test_verify_beta_candidate_passthru.ps1`,
+  - strict one-shot autopilot full-green (gates strictes actives, decision `ready_for_beta`, `triggered_fail_gate_count=0`).
+- Priorite prochaine session:
+  1. Produire une capture gameplay fraiche si de nouvelles donnees runtime sont souhaitees.
+  2. Relancer le strict one-shot de reference.
+  3. Verifier dans le JSON summary que `autopilot_failure_reason` et `triggered_fail_gates` sont coherents avec le run.
+- Commandes de reprise (ordre recommande):
+  - `.\tools\test_autopilot_fail_gates.ps1`
+  - `.\tools\test_run_capture_pipeline_auto_passthru.ps1`
+  - `.\tools\run_roadmap_autopilot.ps1 -OneShot -InstanceName test -AllowOneShotMetricsSignatureReplay -EnableStrictCiFailGates -MinMetricsDurationSecondsForCandidatePreflight 240 -CandidateMinSoakDurationSeconds 240 -FrameMsP95Max 450 -FrameMsP99Max 1000 -MsptP95Max 60 -ErrorSortingNoiseWarnHitsTotal 3000 -ErrorSortingNoiseFailHitsTotal 5000 -SummaryOutputPath .\run\pauc_reports\autopilot_summary_next_session_strict.json`
+- Critere de cloture lot suivant:
+  - run strict `exit=0`,
+  - `effective_decision=ready_for_beta`,
+  - `summary_output_written=true`,
+  - `summary_output_sha256_scope=payload_without_summary_output_sha256`.
