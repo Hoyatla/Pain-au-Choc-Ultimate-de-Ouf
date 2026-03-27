@@ -34,6 +34,7 @@
   - le champ `summary_output_sha256` est calcule sur un payload canonicalise (`summary_output_sha256_scope=payload_without_summary_output_sha256`) pour eviter l'auto-reference impossible d'un hash de fichier se contenant lui-meme.
   - ajout du hook de test `PAUC_AUTOPILOT_TEST_FORCE_SUMMARY_SHA256_MISMATCH=1` pour forcer un mismatch SHA et valider la voie de fail-gate `summary_integrity_missing` de facon deterministe.
   - le gate `FailOnSummaryIntegrityMissing` valide maintenant aussi la coherence du hash payload (`summary_output_sha256` vs recalcul scope-aware) avant de considerer le summary intègre.
+  - la serialisation summary est maintenant uniformisee en `ConvertTo-Json -Depth 32` pour l'ecriture ET le recalcul hash (suppression d'un risque latent de divergence depth 12/32).
   - `tools/test_autopilot_fail_gates.ps1` verifie maintenant la presence metadata (`size/sha`) et la coherence taille declaree vs taille reelle du fichier summary.
   - le self-test verifie aussi la validite du hash declare en le recalculant depuis le payload canonicalise selon `summary_output_sha256_scope`.
   - quand un fail-gate summary ajuste le verdict apres la premiere sauvegarde, `tools/run_roadmap_autopilot.ps1` reecrit maintenant automatiquement le summary final (reason + triggered gates + metadata/hash a jour) pour eviter un JSON partiellement stale.

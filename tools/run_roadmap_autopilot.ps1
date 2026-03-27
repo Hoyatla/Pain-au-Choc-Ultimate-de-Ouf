@@ -184,9 +184,9 @@ function Convert-ResultToSummaryJson {
         [bool]$CompressOutput
     )
     if ($CompressOutput) {
-        return ($SummaryResult | ConvertTo-Json -Depth 12 -Compress)
+        return ($SummaryResult | ConvertTo-Json -Depth 32 -Compress)
     }
-    return ($SummaryResult | ConvertTo-Json -Depth 12)
+    return ($SummaryResult | ConvertTo-Json -Depth 32)
 }
 
 function Write-SummaryJsonAtomically {
