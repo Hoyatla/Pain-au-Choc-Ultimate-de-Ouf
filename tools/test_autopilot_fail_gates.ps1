@@ -2631,9 +2631,9 @@ foreach ($case in $cases) {
                     $summaryForHash = $summaryCloneJson | ConvertFrom-Json
                     $summaryForHash.summary_output_sha256 = ""
                     $summaryHashSource = if ($actualSummaryOutputCompressed) {
-                        $summaryForHash | ConvertTo-Json -Depth 12 -Compress
+                        $summaryForHash | ConvertTo-Json -Depth 32 -Compress
                     } else {
-                        $summaryForHash | ConvertTo-Json -Depth 12
+                        $summaryForHash | ConvertTo-Json -Depth 32
                     }
                     $recomputedSummaryHash = Get-Sha256HexFromText -InputText $summaryHashSource
                     if (-not [string]::Equals($recomputedSummaryHash, $actualSummaryOutputSha256, [System.StringComparison]::OrdinalIgnoreCase)) {
