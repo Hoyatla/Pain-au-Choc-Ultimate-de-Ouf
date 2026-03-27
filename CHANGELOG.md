@@ -32,9 +32,11 @@
 - Coherence du summary autopilot persiste:
   - `tools/run_roadmap_autopilot.ps1` stabilise maintenant `summary_output_size_bytes` pour correspondre a la taille reelle du JSON persiste.
   - le champ `summary_output_sha256` est calcule sur un payload canonicalise (`summary_output_sha256_scope=payload_without_summary_output_sha256`) pour eviter l'auto-reference impossible d'un hash de fichier se contenant lui-meme.
+  - ajout du hook de test `PAUC_AUTOPILOT_TEST_FORCE_SUMMARY_SHA256_MISMATCH=1` pour forcer un mismatch SHA et valider la voie de fail-gate `summary_integrity_missing` de facon deterministe.
   - le gate `FailOnSummaryIntegrityMissing` valide maintenant aussi la coherence du hash payload (`summary_output_sha256` vs recalcul scope-aware) avant de considerer le summary intègre.
   - `tools/test_autopilot_fail_gates.ps1` verifie maintenant la presence metadata (`size/sha`) et la coherence taille declaree vs taille reelle du fichier summary.
   - le self-test verifie aussi la validite du hash declare en le recalculant depuis le payload canonicalise selon `summary_output_sha256_scope`.
+  - le self-test couvre explicitement le cas `summary_integrity_gate_detects_sha_mismatch` (summary corrompu volontairement) avec fallback reason/triggered sur exception quand le JSON summary est incomplet.
 - Validation:
   - `.\tools\test_run_capture_pipeline_auto_passthru.ps1` -> `status: pass` (rapport `run/pauc_reports/capture_pipeline_auto_passthru_selftest_*/capture_pipeline_auto_passthru_selftest_summary.json`).
   - `.\tools\test_autopilot_fail_gates.ps1` -> `46/46` pass (incluant `prism_sync_gate_pass_with_dot_minecraft_layout`).

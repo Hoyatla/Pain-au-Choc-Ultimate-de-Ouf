@@ -1559,6 +1559,36 @@ $cases = @(
         forbidden_triggered_fail_gates = $null
     },
     [PSCustomObject]@{
+        name = "summary_integrity_gate_detects_sha_mismatch"
+        gate_args = @{
+            FailOnSummaryIntegrityMissing = $true
+        }
+        expected_reason = "summary_integrity_missing"
+        expect_failed = $true
+        expect_exit_nonzero = $true
+        expect_forced_error_sorting = $false
+        expected_strict_ci = $null
+        expected_fail_on_error_sorting_blocking_patterns = $null
+        expected_fail_on_error_sorting_noise_fail = $null
+        expected_fail_gate_flags = $null
+        expected_active_fail_gates = @(
+            "summary_integrity_missing"
+        )
+        use_explicit_summary_output_path = $true
+        use_summary_path_as_strict_output = $false
+        expected_strict_ci_summary_output_defaulted = $false
+        expected_strict_ci_summary_output_compress_forced = $false
+        expected_summary_output_compressed = $false
+        expected_triggered_fail_gates = @(
+            "summary_integrity_missing"
+        )
+        expect_summary_sha256_mismatch = $true
+        env_overrides = [ordered]@{
+            PAUC_AUTOPILOT_TEST_FORCE_SUMMARY_SHA256_MISMATCH = "1"
+        }
+        forbidden_triggered_fail_gates = $null
+    },
+    [PSCustomObject]@{
         name = "summary_integrity_gate_without_summary_path_pass"
         gate_args = @{
             FailOnSummaryIntegrityMissing = $true
@@ -2362,17 +2392,25 @@ foreach ($case in $cases) {
         }
     }
 
+    $reasonFromException = Infer-FailureReasonFromException -ExceptionMessage $exceptionMessage
     $actualReason = if ($null -eq $summary) {
-        $reasonFromException = Infer-FailureReasonFromException -ExceptionMessage $exceptionMessage
         if ([string]::IsNullOrWhiteSpace($reasonFromException)) {
             Get-CaseLogScalarField -LogPath $caseLogPath -FieldName "autopilot_failure_reason"
         } else {
             $reasonFromException
         }
     } else {
-        [string](Get-ObjectPropertyValue -InputObject $summary -PropertyName "autopilot_failure_reason" -DefaultValue "")
+        $reasonFromSummary = [string](Get-ObjectPropertyValue -InputObject $summary -PropertyName "autopilot_failure_reason" -DefaultValue "")
+        if ([string]::IsNullOrWhiteSpace($reasonFromSummary) -and -not [string]::IsNullOrWhiteSpace($reasonFromException)) {
+            $reasonFromException
+        } else {
+            $reasonFromSummary
+        }
     }
     $actualFailed = if ($null -eq $summary) { ($exitCode -ne 0) } else { [bool](Get-ObjectPropertyValue -InputObject $summary -PropertyName "autopilot_failed" -DefaultValue $false) }
+    if (-not $actualFailed -and $exitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($reasonFromException)) {
+        $actualFailed = $true
+    }
     $actualForced = if ($null -eq $summary) { $false } else { [bool](Get-ObjectPropertyValue -InputObject $summary -PropertyName "error_sorting_pass_forced_by_fail_gate" -DefaultValue $false) }
     $actualStrictCi = if ($null -eq $summary) { $false } else { [bool](Get-ObjectPropertyValue -InputObject $summary -PropertyName "strict_ci_fail_gates_enabled" -DefaultValue $false) }
     $actualFailOnBlocking = if ($null -eq $summary) { $false } else { [bool](Get-ObjectPropertyValue -InputObject $summary -PropertyName "fail_on_error_sorting_blocking_patterns" -DefaultValue $false) }
@@ -2392,10 +2430,18 @@ foreach ($case in $cases) {
     } else {
         Get-ObjectStringArrayProperty -InputObject $summary -PropertyName "triggered_fail_gates"
     }
+    $triggeredFailGatesFallbackUsed = $false
+    if (@($actualTriggeredFailGates).Count -eq 0 -and $exitCode -ne 0 -and -not [string]::IsNullOrWhiteSpace($reasonFromException)) {
+        $actualTriggeredFailGates = @([string]$reasonFromException)
+        $triggeredFailGatesFallbackUsed = $true
+    }
     $actualTriggeredFailGateCount = if ($null -eq $summary) {
         @($actualTriggeredFailGates).Count
     } else {
         [int](Get-ObjectPropertyValue -InputObject $summary -PropertyName "triggered_fail_gate_count" -DefaultValue 0)
+    }
+    if ($triggeredFailGatesFallbackUsed) {
+        $actualTriggeredFailGateCount = @($actualTriggeredFailGates).Count
     }
     $actualStrictSummaryOutputDefaulted = if ($null -eq $summary) { $false } else { [bool](Get-ObjectPropertyValue -InputObject $summary -PropertyName "strict_ci_summary_output_defaulted" -DefaultValue $false) }
     $actualStrictSummaryOutputCompressForced = if ($null -eq $summary) { $false } else { [bool](Get-ObjectPropertyValue -InputObject $summary -PropertyName "strict_ci_summary_output_compress_forced" -DefaultValue $false) }
@@ -2410,6 +2456,8 @@ foreach ($case in $cases) {
     if ($summaryFileExists) {
         $summaryFileLength = [int64](Get-Item -LiteralPath $summaryPath -ErrorAction Stop).Length
     }
+    $expectSummarySha256Mismatch = ($case.PSObject.Properties.Name -contains "expect_summary_sha256_mismatch") -and [bool]$case.expect_summary_sha256_mismatch
+    $summarySha256MismatchObserved = $false
 
     $checks = New-Object System.Collections.Generic.List[string]
     $passed = $true
@@ -2637,14 +2685,21 @@ foreach ($case in $cases) {
                     }
                     $recomputedSummaryHash = Get-Sha256HexFromText -InputText $summaryHashSource
                     if (-not [string]::Equals($recomputedSummaryHash, $actualSummaryOutputSha256, [System.StringComparison]::OrdinalIgnoreCase)) {
-                        $checks.Add("summary_file_metadata_sha256_mismatch")
-                        $passed = $false
+                        $summarySha256MismatchObserved = $true
+                        if (-not $expectSummarySha256Mismatch) {
+                            $checks.Add("summary_file_metadata_sha256_mismatch")
+                            $passed = $false
+                        }
                     }
                 } catch {
                     $checks.Add("summary_file_metadata_sha256_recompute_error")
                     $passed = $false
                 }
             }
+        }
+        if ($expectSummarySha256Mismatch -and -not $summarySha256MismatchObserved) {
+            $checks.Add("expected_summary_file_metadata_sha256_mismatch")
+            $passed = $false
         }
         if ($actualActiveFailGateCount -ne @($actualActiveFailGates).Count) {
             $checks.Add("inconsistent_active_fail_gate_count")

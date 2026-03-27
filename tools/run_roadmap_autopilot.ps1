@@ -2523,6 +2523,20 @@ $result = [PSCustomObject]@{
 
     $summaryShaIntegrityValid = $false
     $summaryShaIntegrityError = ""
+    $forceSummaryShaMismatchForTest = $false
+    $forceSummaryShaMismatchRaw = [string]$env:PAUC_AUTOPILOT_TEST_FORCE_SUMMARY_SHA256_MISMATCH
+    if (-not [string]::IsNullOrWhiteSpace($forceSummaryShaMismatchRaw)) {
+        switch ($forceSummaryShaMismatchRaw.Trim().ToLowerInvariant()) {
+            "1" { $forceSummaryShaMismatchForTest = $true }
+            "true" { $forceSummaryShaMismatchForTest = $true }
+            "yes" { $forceSummaryShaMismatchForTest = $true }
+            "on" { $forceSummaryShaMismatchForTest = $true }
+            default { $forceSummaryShaMismatchForTest = $false }
+        }
+    }
+    if ($forceSummaryShaMismatchForTest) {
+        Write-Warning "[Autopilot] Test hook active: forcing summary_output_sha256 mismatch."
+    }
     if (-not [string]::IsNullOrWhiteSpace($summaryOutputPathResolved)) {
         $summaryOutputTempPath = ""
         try {
@@ -2562,6 +2576,14 @@ $result = [PSCustomObject]@{
             $summaryHashSourceJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
             $summaryHash = Get-Sha256HexFromText -InputText $summaryHashSourceJson
             $result.summary_output_sha256 = [string]$summaryHash
+            if ($forceSummaryShaMismatchForTest) {
+                if ([string]::IsNullOrWhiteSpace($result.summary_output_sha256)) {
+                    $result.summary_output_sha256 = ("0" * 64)
+                } else {
+                    $replacementPrefix = if ($result.summary_output_sha256.StartsWith("0")) { "1" } else { "0" }
+                    $result.summary_output_sha256 = ("{0}{1}" -f $replacementPrefix, $result.summary_output_sha256.Substring(1))
+                }
+            }
 
             $summaryJson = Convert-ResultToSummaryJson -SummaryResult $result -CompressOutput ([bool]$SummaryOutputCompress)
             Write-SummaryJsonAtomically `
