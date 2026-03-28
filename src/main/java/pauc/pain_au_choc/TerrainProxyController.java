@@ -37,11 +37,14 @@ public final class TerrainProxyController {
     private static final int CELL_COUNT = CELL_GRID * CELL_GRID;
     private static final int CELL_SIZE_BLOCKS = 16 / CELL_GRID;
     private static final int RESET_SHRINK_THRESHOLD = 4096;
-    private static final int MIN_CACHE_ENTRIES = 2048;
-    private static final int MAX_CACHE_ENTRIES = 24576;
+    private static final int MIN_CACHE_ENTRIES = 1024;
+    private static final int MAX_CACHE_ENTRIES = 16384;
     private static final int STALE_SWEEP_GRACE = 12;
     private static final int CACHE_DISTANCE_SLACK = 24;
     private static final double CHUNK_SIZE = 16.0D;
+    private static final double HEAP_WARN_USAGE_RATIO = 0.78D;
+    private static final double HEAP_HIGH_USAGE_RATIO = 0.86D;
+    private static final double HEAP_CRITICAL_USAGE_RATIO = 0.92D;
 
     private static HashMap<Long, TerrainProxyChunk> proxyChunks = new HashMap<>();
     private static ArrayList<TerrainProxyChunk> renderBuffer = new ArrayList<>();
@@ -230,6 +233,10 @@ public final class TerrainProxyController {
         if (LatencyController.getPressureLevel() >= 2 || IntegratedServerLoadController.getPressureLevel() >= 2) {
             batchSize = Math.max(24, batchSize - 24);
         }
+        double heapPenalty = resolveHeapPressurePenalty();
+        if (heapPenalty < 1.0D) {
+            batchSize = Math.max(16, (int) Math.round(batchSize * heapPenalty));
+        }
 
         for (int processed = 0; processed < batchSize && captureCursor < totalCells; processed++) {
             int linearIndex = captureCursor++;
@@ -304,6 +311,8 @@ public final class TerrainProxyController {
         int managedRadius = ManagedChunkRadiusController.getManagedRadiusChunks();
         int fullDetailRadius = ManagedChunkRadiusController.getFullDetailRadiusChunks();
         boolean trimForCapacity = proxyChunks.size() > MAX_CACHE_ENTRIES;
+        double heapPenalty = resolveHeapPressurePenalty();
+        boolean trimForHeapPressure = heapPenalty <= 0.78D && proxyChunks.size() > MIN_CACHE_ENTRIES;
         lastTargetCacheEntries = resolveTargetCacheEntries();
 
         Iterator<Map.Entry<Long, TerrainProxyChunk>> iterator = proxyChunks.entrySet().iterator();
@@ -315,7 +324,10 @@ public final class TerrainProxyController {
             boolean trimByCapacity = trimForCapacity
                     && captureGeneration - proxyChunk.lastSeenGeneration() > 2
                     && distanceChunks > fullDetailRadius + 8;
-            if (outsideManagedRadius || stale || trimByCapacity) {
+            boolean trimByHeapPressure = trimForHeapPressure
+                    && captureGeneration - proxyChunk.lastSeenGeneration() > 1
+                    && distanceChunks > fullDetailRadius + 4;
+            if (outsideManagedRadius || stale || trimByCapacity || trimByHeapPressure) {
                 iterator.remove();
             }
         }
@@ -624,8 +636,30 @@ public final class TerrainProxyController {
 
         int pressure = LatencyController.getPressureLevel() + IntegratedServerLoadController.getPressureLevel();
         double pressurePenalty = 1.0D - Math.min(0.35D, pressure * 0.08D);
-        int target = (int) Math.round(baseTarget * modeMultiplier * pressurePenalty);
+        double heapPenalty = resolveHeapPressurePenalty();
+        int target = (int) Math.round(baseTarget * modeMultiplier * pressurePenalty * heapPenalty);
         return Math.max(MIN_CACHE_ENTRIES, Math.min(MAX_CACHE_ENTRIES, target));
+    }
+
+    private static double resolveHeapPressurePenalty() {
+        Runtime runtime = Runtime.getRuntime();
+        long maxBytes = runtime.maxMemory();
+        if (maxBytes <= 0L) {
+            return 1.0D;
+        }
+
+        long usedBytes = runtime.totalMemory() - runtime.freeMemory();
+        double usageRatio = usedBytes / (double) maxBytes;
+        if (usageRatio >= HEAP_CRITICAL_USAGE_RATIO) {
+            return 0.42D;
+        }
+        if (usageRatio >= HEAP_HIGH_USAGE_RATIO) {
+            return 0.60D;
+        }
+        if (usageRatio >= HEAP_WARN_USAGE_RATIO) {
+            return 0.78D;
+        }
+        return 1.0D;
     }
 
     private static void enforceCacheBudget(LocalPlayer player, ChunkAnchor captureAnchor, int fullDetailRadius) {

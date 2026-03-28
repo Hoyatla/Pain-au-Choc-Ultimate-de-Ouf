@@ -15,16 +15,21 @@ import java.util.Locale;
 public final class PauCConfigScreen extends Screen {
     private static final int CONTROL_WIDTH = 220;
     private static final int CONTROL_HEIGHT = 20;
-    private static final int CONTROL_GAP = 24;
+    private static final int DEFAULT_CONTROL_GAP = 24;
     private static final int INLINE_GAP = 4;
     private static final int TAB_WIDTH = 74;
     private static final int TAB_HEIGHT = 20;
     private static final int TAB_GAP = 4;
-    private static final int TAB_ROW_Y = 112;
-    private static final int CONTENT_TOP = 138;
 
     private final Screen parent;
     private ConfigTab selectedTab = ConfigTab.CORE;
+    private int controlWidth = CONTROL_WIDTH;
+    private int controlGap = DEFAULT_CONTROL_GAP;
+    private int tabWidth = TAB_WIDTH;
+    private int tabRowY = 112;
+    private int contentTop = 138;
+    private int doneButtonY;
+    private boolean compactLayout;
 
     private Button toggleButton;
     private Button presetButton;
@@ -62,12 +67,37 @@ public final class PauCConfigScreen extends Screen {
     }
 
     private void rebuildUi() {
+        computeLayoutMetrics();
         clearWidgets();
         resetWidgetReferences();
         buildTabButtons();
         buildTabContent();
         addDoneButton();
         refreshButtonLabels();
+    }
+
+    private void computeLayoutMetrics() {
+        this.compactLayout = this.height <= 320;
+        this.controlWidth = Math.max(140, Math.min(CONTROL_WIDTH, this.width - 24));
+
+        int tabs = ConfigTab.values().length;
+        int availableTabsWidth = Math.max(180, this.width - 24 - (tabs - 1) * TAB_GAP);
+        this.tabWidth = Math.max(48, Math.min(TAB_WIDTH, availableTabsWidth / tabs));
+
+        this.tabRowY = this.compactLayout ? 62 : 112;
+        this.contentTop = this.compactLayout ? 86 : 138;
+        this.doneButtonY = this.height - (this.compactLayout ? 24 : 28);
+
+        int maxRows = 6;
+        int contentBottom = this.doneButtonY - 8;
+        int availableHeight = Math.max(CONTROL_HEIGHT, contentBottom - this.contentTop);
+        int rawGap = (availableHeight - CONTROL_HEIGHT) / Math.max(1, maxRows - 1);
+        this.controlGap = Math.max(12, Math.min(DEFAULT_CONTROL_GAP, rawGap));
+
+        int requiredHeight = CONTROL_HEIGHT + (maxRows - 1) * this.controlGap;
+        if (this.contentTop + requiredHeight > contentBottom) {
+            this.contentTop = Math.max(this.tabRowY + TAB_HEIGHT + 4, contentBottom - requiredHeight);
+        }
     }
 
     private void resetWidgetReferences() {
@@ -99,7 +129,7 @@ public final class PauCConfigScreen extends Screen {
 
     private void buildTabButtons() {
         ConfigTab[] tabs = ConfigTab.values();
-        int totalWidth = tabs.length * TAB_WIDTH + (tabs.length - 1) * TAB_GAP;
+        int totalWidth = tabs.length * this.tabWidth + (tabs.length - 1) * TAB_GAP;
         int left = this.width / 2 - totalWidth / 2;
 
         for (ConfigTab tab : tabs) {
@@ -107,10 +137,10 @@ public final class PauCConfigScreen extends Screen {
                     Button.builder(buildTabMessage(tab), value -> {
                         this.selectedTab = tab;
                         rebuildUi();
-                    }).bounds(left, TAB_ROW_Y, TAB_WIDTH, TAB_HEIGHT).build()
+                    }).bounds(left, this.tabRowY, this.tabWidth, TAB_HEIGHT).build()
             );
             button.active = this.selectedTab != tab;
-            left += TAB_WIDTH + TAB_GAP;
+            left += this.tabWidth + TAB_GAP;
         }
     }
 
@@ -121,8 +151,8 @@ public final class PauCConfigScreen extends Screen {
     }
 
     private void buildTabContent() {
-        int left = this.width / 2 - CONTROL_WIDTH / 2;
-        int top = CONTENT_TOP;
+        int left = this.width / 2 - this.controlWidth / 2;
+        int top = this.contentTop;
         switch (this.selectedTab) {
             case CORE -> buildCoreTab(left, top);
             case RUNTIME -> buildRuntimeTab(left, top);
@@ -137,33 +167,33 @@ public final class PauCConfigScreen extends Screen {
                 Button.builder(buildToggleMessage(), button -> {
                     PauCClient.setEnabled(!PauCClient.isEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        this.qualitySlider = this.addRenderableWidget(new QualitySlider(left, top, CONTROL_WIDTH, CONTROL_HEIGHT));
+        top += this.controlGap;
+        this.qualitySlider = this.addRenderableWidget(new QualitySlider(left, top, this.controlWidth, CONTROL_HEIGHT));
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.adaptiveQualityButton = this.addRenderableWidget(
                 Button.builder(buildAdaptiveQualityMessage(), button -> {
                     PauCClient.setAdaptiveQualityEnabled(!PauCClient.isAdaptiveQualityEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        this.cpuInvolvementSlider = this.addRenderableWidget(new CpuInvolvementSlider(left, top, CONTROL_WIDTH, CONTROL_HEIGHT));
+        top += this.controlGap;
+        this.cpuInvolvementSlider = this.addRenderableWidget(new CpuInvolvementSlider(left, top, this.controlWidth, CONTROL_HEIGHT));
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.presetButton = this.addRenderableWidget(
                 Button.builder(buildPresetMessage(), button -> {
                     PauCClient.cycleUserPreset();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        int halfWidth = (CONTROL_WIDTH - INLINE_GAP) / 2;
+        top += this.controlGap;
+        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
         this.presetApplyButton = this.addRenderableWidget(
                 Button.builder(Component.literal("Apply Preset"), button -> {
                     PauCClient.applySelectedPreset();
@@ -183,44 +213,44 @@ public final class PauCConfigScreen extends Screen {
                 Button.builder(buildAuthoritativeRuntimeMessage(), button -> {
                     PauCClient.setAuthoritativeRuntimeEnabled(!PauCClient.isAuthoritativeRuntimeEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.dynamicResolutionButton = this.addRenderableWidget(
                 Button.builder(buildDynamicResolutionMessage(), button -> {
                     PauCClient.setDynamicResolutionEnabled(!PauCClient.isDynamicResolutionSettingEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.dynamicResolutionMinScaleSlider = this.addRenderableWidget(
-                new DynamicResolutionMinScaleSlider(left, top, CONTROL_WIDTH, CONTROL_HEIGHT)
+                new DynamicResolutionMinScaleSlider(left, top, this.controlWidth, CONTROL_HEIGHT)
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.adaptiveSimulationDistanceButton = this.addRenderableWidget(
                 Button.builder(buildAdaptiveSimulationDistanceMessage(), button -> {
                     PauCClient.setAdaptiveSimulationDistanceEnabled(!PauCClient.isAdaptiveSimulationDistanceSettingEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.frameTimeStabilizerButton = this.addRenderableWidget(
                 Button.builder(buildFrameTimeStabilizerMessage(), button -> {
                     PauCClient.setFrameTimeStabilizerEnabled(!PauCClient.isFrameTimeStabilizerEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.gpuBottleneckButton = this.addRenderableWidget(
                 Button.builder(buildGpuBottleneckMessage(), button -> {
                     PauCClient.setGpuBottleneckDetectorEnabled(!PauCClient.isGpuBottleneckDetectorEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
     }
 
@@ -229,11 +259,11 @@ public final class PauCConfigScreen extends Screen {
                 Button.builder(buildShaderModeMessage(), button -> {
                     PauCShaderManager.cycleShaderMode();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        int halfWidth = (CONTROL_WIDTH - INLINE_GAP) / 2;
+        top += this.controlGap;
+        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
         this.shaderReloadButton = this.addRenderableWidget(
                 Button.builder(Component.literal("Reload Shaders"), button -> {
                     PauCShaderManager.reloadExternalShaders();
@@ -246,16 +276,16 @@ public final class PauCConfigScreen extends Screen {
                         .build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.advancedSharpeningButton = this.addRenderableWidget(
                 Button.builder(buildAdvancedSharpeningMessage(), button -> {
                     PauCClient.setAdvancedSharpeningEnabled(!PauCClient.isAdvancedSharpeningEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        this.sharpenStrengthSlider = this.addRenderableWidget(new SharpenStrengthSlider(left, top, CONTROL_WIDTH, CONTROL_HEIGHT));
+        top += this.controlGap;
+        this.sharpenStrengthSlider = this.addRenderableWidget(new SharpenStrengthSlider(left, top, this.controlWidth, CONTROL_HEIGHT));
     }
 
     private void buildDeferredTab(int left, int top) {
@@ -263,19 +293,19 @@ public final class PauCConfigScreen extends Screen {
                 Button.builder(buildDeferredPackMessage(), button -> {
                     PauCDeferredShaderController.cycleShaderPack();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.deferredCompatButton = this.addRenderableWidget(
                 Button.builder(buildDeferredCompatMessage(), button -> {
                     PauCDeferredShaderController.cycleCompatibilityMode();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        int halfWidth = (CONTROL_WIDTH - INLINE_GAP) / 2;
+        top += this.controlGap;
+        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
         this.deferredReloadButton = this.addRenderableWidget(
                 Button.builder(Component.literal("Reload Pack"), button -> {
                     PauCDeferredShaderController.reloadCurrentPack();
@@ -288,12 +318,12 @@ public final class PauCConfigScreen extends Screen {
                         .build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.deferredRescanButton = this.addRenderableWidget(
                 Button.builder(Component.literal("Rescan Packs"), button -> {
                     PauCDeferredShaderController.refreshAvailablePacks();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
     }
 
@@ -302,44 +332,44 @@ public final class PauCConfigScreen extends Screen {
                 Button.builder(buildAuthoritativeRuntimeMessage(), button -> {
                     PauCClient.setAuthoritativeRuntimeEnabled(!PauCClient.isAuthoritativeRuntimeEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.dynamicResolutionButton = this.addRenderableWidget(
                 Button.builder(buildDynamicResolutionMessage(), button -> {
                     PauCClient.setDynamicResolutionEnabled(!PauCClient.isDynamicResolutionSettingEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.advancedSharpeningButton = this.addRenderableWidget(
                 Button.builder(buildAdvancedSharpeningMessage(), button -> {
                     PauCClient.setAdvancedSharpeningEnabled(!PauCClient.isAdvancedSharpeningEnabled());
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.deferredCompatButton = this.addRenderableWidget(
                 Button.builder(buildDeferredCompatMessage(), button -> {
                     PauCDeferredShaderController.cycleCompatibilityMode();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
+        top += this.controlGap;
         this.reloadAllPipelinesButton = this.addRenderableWidget(
                 Button.builder(Component.literal("Reload All Pipelines"), button -> {
                     PauCShaderManager.reloadExternalShaders();
                     PauCDeferredShaderController.reloadCurrentPack();
                     refreshButtonLabels();
-                }).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
 
-        top += CONTROL_GAP;
-        int halfWidth = (CONTROL_WIDTH - INLINE_GAP) / 2;
+        top += this.controlGap;
+        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
         this.shaderFolderButton = this.addRenderableWidget(
                 Button.builder(Component.literal("Upscale Folder"), button -> PauCShaderManager.openShaderFolder())
                         .bounds(left, top, halfWidth, CONTROL_HEIGHT)
@@ -353,60 +383,92 @@ public final class PauCConfigScreen extends Screen {
     }
 
     private void addDoneButton() {
-        int left = this.width / 2 - CONTROL_WIDTH / 2;
-        int top = this.height - 28;
+        int left = this.width / 2 - this.controlWidth / 2;
+        int top = this.doneButtonY;
         this.addRenderableWidget(
-                Button.builder(CommonComponents.GUI_DONE, button -> this.onClose()).bounds(left, top, CONTROL_WIDTH, CONTROL_HEIGHT).build()
+                Button.builder(CommonComponents.GUI_DONE, button -> this.onClose()).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
         );
     }
 
     @Override
     public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
         this.renderBackground(guiGraphics);
-        guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFF);
-        guiGraphics.drawCenteredString(this.font, Component.translatable("text.pauc.quality_hint"), this.width / 2, 26, 0xA0A0A0);
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal("Tab: " + this.selectedTab.label + " | Preset: " + PauCClient.getSelectedPreset().getDisplayLabel()),
-                this.width / 2,
-                38,
-                0xB8C6D4
-        );
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal("Authority: " + AuthoritativeRuntimeController.getStatusLabel()),
-                this.width / 2,
-                50,
-                resolveAuthorityColor()
-        );
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal(AuthoritativeRuntimeController.getDomainSummary()),
-                this.width / 2,
-                62,
-                0x909090
-        );
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal(buildRuntimeSummaryLine()),
-                this.width / 2,
-                74,
-                0x88BBD6
-        );
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal(buildDeferredSummaryLine()),
-                this.width / 2,
-                86,
-                resolveDeferredLineColor()
-        );
-        guiGraphics.drawCenteredString(
-                this.font,
-                Component.literal(buildIntegrationSummaryLine()),
-                this.width / 2,
-                98,
-                resolveIntegrationColor()
-        );
+        if (this.compactLayout) {
+            guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 8, 0xFFFFFF);
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal("Tab: " + this.selectedTab.label + " | Preset: " + PauCClient.getSelectedPreset().getDisplayLabel()),
+                    this.width / 2,
+                    20,
+                    0xB8C6D4
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal("Authority: " + AuthoritativeRuntimeController.getStatusLabel() + " | " + AuthoritativeRuntimeController.getDomainSummary()),
+                    this.width / 2,
+                    31,
+                    resolveAuthorityColor()
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(buildCompactRuntimeDeferredLine()),
+                    this.width / 2,
+                    42,
+                    0x88BBD6
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(buildCompactIntegrationLine()),
+                    this.width / 2,
+                    53,
+                    resolveIntegrationColor()
+            );
+        } else {
+            guiGraphics.drawCenteredString(this.font, this.title, this.width / 2, 14, 0xFFFFFF);
+            guiGraphics.drawCenteredString(this.font, Component.translatable("text.pauc.quality_hint"), this.width / 2, 26, 0xA0A0A0);
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal("Tab: " + this.selectedTab.label + " | Preset: " + PauCClient.getSelectedPreset().getDisplayLabel()),
+                    this.width / 2,
+                    38,
+                    0xB8C6D4
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal("Authority: " + AuthoritativeRuntimeController.getStatusLabel()),
+                    this.width / 2,
+                    50,
+                    resolveAuthorityColor()
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(AuthoritativeRuntimeController.getDomainSummary()),
+                    this.width / 2,
+                    62,
+                    0x909090
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(buildRuntimeSummaryLine()),
+                    this.width / 2,
+                    74,
+                    0x88BBD6
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(buildDeferredSummaryLine()),
+                    this.width / 2,
+                    86,
+                    resolveDeferredLineColor()
+            );
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal(buildIntegrationSummaryLine()),
+                    this.width / 2,
+                    98,
+                    resolveIntegrationColor()
+            );
+        }
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
@@ -595,6 +657,19 @@ public final class PauCConfigScreen extends Screen {
                 + " oculus=" + formatPresence(CompatibilityGuards.isOculusLoaded())
                 + " replay=" + formatPresence(CompatibilityGuards.isReplayStackLoaded())
                 + " drsYield=" + formatPresence(CompatibilityGuards.shouldDisableDynamicResolution());
+    }
+
+    private static String buildCompactRuntimeDeferredLine() {
+        return "Q=" + PauCClient.getQualityLevel()
+                + " DRS=" + (PauCClient.isDynamicResolutionSettingEnabled() ? "on" : "off")
+                + " Deferred=" + PauCDeferredShaderController.getShortLabel()
+                + " warn=" + getDeferredWarningCount();
+    }
+
+    private static String buildCompactIntegrationLine() {
+        return "Embeddium=" + formatPresence(CompatibilityGuards.isEmbeddiumLoaded())
+                + " Oculus=" + formatPresence(CompatibilityGuards.isOculusLoaded())
+                + " Replay=" + formatPresence(CompatibilityGuards.isReplayStackLoaded());
     }
 
     private static String formatPresence(boolean value) {
