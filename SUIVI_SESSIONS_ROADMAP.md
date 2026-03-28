@@ -5678,3 +5678,27 @@ Copier/coller le bloc suivant a chaque fin de session:
   - `c2fab4b` (`feat/embeddium-oculus-pipeline`) pousse vers origin.
 - Prochaine action:
   - lancer validation UX in-game live (session monde) pour verifier ergonomie/espacement a plusieurs resolutions et ajuster si besoin.
+
+## Checkpoint 2026-03-28 01:23:16 (UTC) - Codex
+
+- Statut: in_progress
+- Note: correction regression UI "options hors ecran" + lot perf/memoire immediate sur terrain proxy cache.
+- Livrables:
+  - `src/main/java/pauc/pain_au_choc/PauCConfigScreen.java`:
+    - layout responsive selon resolution/GUI scale (mode compact auto),
+    - largeur controles/onglets adaptative,
+    - espacement vertical dynamique pour garantir que les options restent visibles.
+  - `src/main/java/pauc/pain_au_choc/TerrainProxyController.java`:
+    - bornes cache proxy reduites (`1024..16384`),
+    - target cache pilotee par pression heap,
+    - trimming plus agressif en pression memoire,
+    - capture batch reduit quand heap sous tension.
+- Validation:
+  - `.\gradlew.bat compileJava` -> `BUILD SUCCESSFUL`.
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL` (`test NO-SOURCE`).
+- Commit:
+  - `dee2d0c` pousse vers `origin/feat/embeddium-oculus-pipeline`.
+- Prochaine action:
+  - validation in-game live pour confirmer:
+    - absence de clipping UI en bas sur petite hauteur,
+    - baisse de `proxy_cache_target` et stabilisation `heap_used_mb` sous charge.
