@@ -47,7 +47,7 @@ Reference planning: `ROADMAP_GOUVERNEUR_ULTIMATE_2026_2027.md`
 | 2 - Rayon gere 256 | in_progress | 49% | Streaming ring etendu + eviction proxy budgetee + upload GPU cadence adaptative + culling visible par anneaux + palier ultra-loin impostor + classification block entities off-screen + isolation VBO par section |
 | 3 - Compat OptiFine stricte | in_progress | 43% | Mode compatibilite deferred `strict/balanced/fast` + fallback auto d'activation + includes renforces + warnings pack + checker statique + gate securite DRS quand deferred interne actif |
 | 4 - Gouvernance serveur integre | in_progress | 17% | Mitigation anti-pics MSPT (tier + emergency hold) + couplage sim distance/cadence IA + observabilite runtime |
-| 5 - UI in-game complete | in_progress | 36% | F10 + raccourcis presets/recovery (F6/F7) + diagnostics actionnables + logs runtime explicites + statut sim distance/cadence |
+| 5 - UI in-game complete | in_progress | 63% | Centre de controle a onglets (Core/Runtime/Upscale/Deferred/Integration) + exposition complete des options runtime (DRS min scale, sim distance adaptive, authority runtime) + diagnostics integration Embeddium/Oculus |
 | 6 - QA hard et tuning | in_progress | 66% | Preflight QA + gate KPI + gate gouvernance serveur + gate compile chunks + gate DRS/deferred + gate compile warnings + checkpoint/freshness doc + audit A/B + readiness beta + observabilite transitions + telemetrie raisons runtime + outillage A/B upsert/fenetre + capture segmentee + progression A/B + orchestration next-step + metriques sim distance/cadence + compteurs block entities + metriques compile budget/backpressure + highlights preflight enrichis + auto-resolution metrics repo/Prism + sync telemetry externe + robustesse mono-echantillon scripts CSV + garde-fou autopilot anti-replay des memes donnees telemetry |
 | 7 - Stabilisation RC | in_progress | 36% | Script packaging `beta candidate` (preflight+readiness+jar+manifeste) + action plan deblocage + manifest/checksum/verification + presets bundles + regeneration candidate post-correctifs rendu + parametrage Prism pour preflight/candidate + transit metrics/captures vers artefacts locaux |
 
@@ -5661,3 +5661,20 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: README outillage complete: validation V3 NVIDIA-only (AllowMissingVendors) + generation bundle release via tools/create_release_bundle.ps1.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-28 00:50:03 (UTC) - Codex
+
+- Statut: in_progress
+- Note: refonte UI in-game complete en centre de controle a onglets (Core/Runtime/Upscale/Deferred/Integration) pour couvrir toutes les fonctionnalites reellement supportees.
+- Livrables:
+  - `src/main/java/pauc/pain_au_choc/PauCConfigScreen.java`: UI restructuree, nouvelles sections intuitives, expose runtime/shader/deferred/integration.
+  - `src/main/java/pauc/pain_au_choc/PauCClient.java`: setters/getters manquants ajoutes pour `dynamicResolutionEnabled`, `dynamicResolutionMinScale`, `adaptiveSimulationDistanceEnabled`, `authoritativeRuntimeEnabled`.
+  - `src/main/java/pauc/pain_au_choc/CompatibilityGuards.java`: acces public aux detections `embeddium/oculus/replay`.
+  - `src/main/resources/assets/pauc/lang/en_us.json` + `src/main/resources/assets/pauc/lang/fr_fr.json`: nouvelles cles options runtime.
+- Validation:
+  - `.\gradlew.bat compileJava` -> `BUILD SUCCESSFUL`.
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL` (`test NO-SOURCE`).
+- Commit:
+  - `c2fab4b` (`feat/embeddium-oculus-pipeline`) pousse vers origin.
+- Prochaine action:
+  - lancer validation UX in-game live (session monde) pour verifier ergonomie/espacement a plusieurs resolutions et ajuster si besoin.
