@@ -5724,3 +5724,24 @@ Copier/coller le bloc suivant a chaque fin de session:
   - `ac6487b` pousse vers `origin/feat/embeddium-oculus-pipeline`.
 - Prochaine action:
   - refaire une capture live courte apres update jar en instance pour verifier la baisse de `known/target` streaming et l'impact frametime CPU-bound.
+
+## Checkpoint 2026-03-28 02:00:44 (UTC) - Codex
+
+- Statut: in_progress
+- Note: blocage capture live diagnostique: ecriture telemetry stoppee par lock externe sur `runtime_metrics.csv`.
+- Evidence:
+  - `latest.log` contient `Failed to flush PauC telemetry file ... FileSystemException ... fichier utilise par un autre processus`.
+  - symptome observe: aucune nouvelle ligne pendant la fenetre de capture malgre session active.
+- Correctif livre:
+  - `src/main/java/pauc/pain_au_choc/PerformanceTelemetryRecorder.java`:
+    - suppression de l'echec definitif sur lock transient (`writeFailed` n'est plus force sur ce cas),
+    - retry automatique au tick suivant,
+    - throttling des logs transient,
+    - garde-fou memoire sur buffer pending rows pendant indisponibilite du fichier.
+- Validation:
+  - `.\gradlew.bat compileJava` -> `BUILD SUCCESSFUL`.
+  - `.\gradlew.bat jar` -> `BUILD SUCCESSFUL`.
+- Commit:
+  - `aec4594` pousse vers `origin/feat/embeddium-oculus-pipeline`.
+- Prochaine action:
+  - relancer une capture live apres redemarrage jeu pour charger ce patch et confirmer reprise d'ecriture continue des metrics.
