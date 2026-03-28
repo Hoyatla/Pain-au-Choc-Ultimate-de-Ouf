@@ -5702,3 +5702,25 @@ Copier/coller le bloc suivant a chaque fin de session:
   - validation in-game live pour confirmer:
     - absence de clipping UI en bas sur petite hauteur,
     - baisse de `proxy_cache_target` et stabilisation `heap_used_mb` sous charge.
+
+## Checkpoint 2026-03-28 01:37:24 (UTC) - Codex
+
+- Statut: in_progress
+- Note: capture live recue pendant session Minecraft utilisateur + lot correctif CPU/RAM sur streaming (au-dela du proxy terrain).
+- Telemetrie live (instance `test`, segment `+240` lignes):
+  - `frame_ms_p95=28.554`, `frame_ms_p99=31.498`, `fps_avg=77.1`, `fps_p5=35`,
+  - `heap_used_mb_p95=7125.5` sur `heap_max_mb~8064` (ratio p95 `0.884`),
+  - `bottleneck_state` majoritaire: `CPU_BOUND`,
+  - `proxy_cache=0` et `proxy_cache_target=0` (proxy non actif sur ce run, donc non-cause de la pression observee).
+- Livrable technique:
+  - `src/main/java/pauc/pain_au_choc/StructureStreamingController.java`:
+    - budget max chunks connus borne (`8192..98304`),
+    - penalite heap appliquee au scan batch et au target de working set,
+    - trimming overflow plus agressif (distance + age) sous pression.
+- Validation:
+  - `.\gradlew.bat compileJava` -> `BUILD SUCCESSFUL`.
+  - `.\gradlew.bat test` -> `BUILD SUCCESSFUL` (`test NO-SOURCE`).
+- Commit:
+  - `ac6487b` pousse vers `origin/feat/embeddium-oculus-pipeline`.
+- Prochaine action:
+  - refaire une capture live courte apres update jar en instance pour verifier la baisse de `known/target` streaming et l'impact frametime CPU-bound.
