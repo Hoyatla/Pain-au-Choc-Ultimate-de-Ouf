@@ -26,6 +26,11 @@ public final class StructureStreamingController {
     private static final int WORKING_SET_SLACK = 16;
     private static final int RESET_SHRINK_THRESHOLD = 512;
     private static final int ROOT_PADDING_CHUNKS = 2;
+    private static final int MIN_KNOWN_CHUNK_ENTRIES = 8192;
+    private static final int MAX_KNOWN_CHUNK_ENTRIES = 98304;
+    private static final double HEAP_WARN_USAGE_RATIO = 0.78D;
+    private static final double HEAP_HIGH_USAGE_RATIO = 0.86D;
+    private static final double HEAP_CRITICAL_USAGE_RATIO = 0.92D;
     private static final double CHUNK_SIZE = 16.0D;
 
     private static final BoxOctree<StructureChunkInfo> CHUNK_OCTREE = new BoxOctree<>(6, 5);
@@ -43,6 +48,7 @@ public final class StructureStreamingController {
     private static int sweepGeneration;
     private static int predictiveBiasChunks;
     private static int lastKnownChunkCount;
+    private static int lastKnownTargetChunkCount;
     private static int lastActiveChunkCount;
     private static int lastDeferredChunkCount;
     private static int lastFullDetailRadiusChunks;
@@ -115,6 +121,7 @@ public final class StructureStreamingController {
         sweepGeneration = 0;
         predictiveBiasChunks = 0;
         lastKnownChunkCount = 0;
+        lastKnownTargetChunkCount = MIN_KNOWN_CHUNK_ENTRIES;
         lastActiveChunkCount = 0;
         lastDeferredChunkCount = 0;
         lastFullDetailRadiusChunks = 0;
@@ -196,6 +203,7 @@ public final class StructureStreamingController {
         int mitigationTier = IntegratedServerLoadController.getMitigationTier();
         int emergencyTicks = IntegratedServerLoadController.getEmergencyHoldTicks();
         return "Streaming: known=" + lastKnownChunkCount
+                + "/" + lastKnownTargetChunkCount
                 + " active=" + lastActiveChunkCount
                 + " deferred=" + lastDeferredChunkCount
                 + " full=" + lastFullDetailRadiusChunks
@@ -246,6 +254,10 @@ public final class StructureStreamingController {
         }
         if (AuthoritativeRuntimeController.shouldDeferNonCriticalMutations()) {
             batchSize = Math.min(batchSize, 6);
+        }
+        double heapPenalty = resolveStreamingHeapPenalty();
+        if (heapPenalty < 1.0D) {
+            batchSize = Math.max(6, (int) Math.round(batchSize * heapPenalty));
         }
         batchSize = Math.min(192, batchSize);
 
@@ -373,6 +385,98 @@ public final class StructureStreamingController {
                 iterator.remove();
             }
         }
+
+        lastKnownTargetChunkCount = resolveKnownChunkTargetEntries();
+        enforceKnownChunkBudget();
+    }
+
+    private static void enforceKnownChunkBudget() {
+        int overflow = knownChunks.size() - lastKnownTargetChunkCount;
+        if (overflow <= 0) {
+            return;
+        }
+
+        int fullDetailRadius = Math.max(0, lastFullDetailRadiusChunks);
+        int outerTrimRadius = Math.max(fullDetailRadius + 8, scanRadiusChunks - 20);
+        overflow = trimKnownChunksByRadiusAndAge(overflow, outerTrimRadius, 1);
+
+        if (overflow > 0) {
+            int aggressiveRadius = Math.max(fullDetailRadius + 4, scanRadiusChunks - 12);
+            overflow = trimKnownChunksByRadiusAndAge(overflow, aggressiveRadius, 0);
+        }
+
+        if (overflow > 0) {
+            Iterator<Map.Entry<Long, StructureChunkInfo>> iterator = knownChunks.entrySet().iterator();
+            while (iterator.hasNext() && overflow > 0) {
+                StructureChunkInfo info = iterator.next().getValue();
+                int distance = Math.max(Math.abs(info.chunkX() - centerChunkX), Math.abs(info.chunkZ() - centerChunkZ));
+                if (distance <= fullDetailRadius + 2) {
+                    continue;
+                }
+                iterator.remove();
+                overflow--;
+            }
+        }
+    }
+
+    private static int trimKnownChunksByRadiusAndAge(int overflow, int minDistance, int minAge) {
+        if (overflow <= 0) {
+            return 0;
+        }
+
+        Iterator<Map.Entry<Long, StructureChunkInfo>> iterator = knownChunks.entrySet().iterator();
+        while (iterator.hasNext() && overflow > 0) {
+            StructureChunkInfo info = iterator.next().getValue();
+            int distance = Math.max(Math.abs(info.chunkX() - centerChunkX), Math.abs(info.chunkZ() - centerChunkZ));
+            int age = Math.max(0, sweepGeneration - info.lastSeenSweep());
+            if (distance >= minDistance && age >= minAge) {
+                iterator.remove();
+                overflow--;
+            }
+        }
+        return overflow;
+    }
+
+    private static int resolveKnownChunkTargetEntries() {
+        if (scanRadiusChunks < 0) {
+            return MIN_KNOWN_CHUNK_ENTRIES;
+        }
+
+        int sideLength = scanRadiusChunks * 2 + 1;
+        int baseTarget = sideLength * sideLength;
+        double modeMultiplier = switch (GlobalPerformanceGovernor.getMode()) {
+            case TRANSIT -> 1.00D;
+            case EXPLORATION -> 0.85D;
+            case COMBAT -> 0.75D;
+            case BASE -> 0.68D;
+            case CRISIS -> 0.50D;
+        };
+        int pressure = LatencyController.getPressureLevel() + IntegratedServerLoadController.getPressureLevel();
+        double pressurePenalty = 1.0D - Math.min(0.55D, pressure * 0.10D);
+        double heapPenalty = resolveStreamingHeapPenalty();
+        int target = (int) Math.round(baseTarget * modeMultiplier * pressurePenalty * heapPenalty);
+        return Math.max(MIN_KNOWN_CHUNK_ENTRIES, Math.min(MAX_KNOWN_CHUNK_ENTRIES, target));
+    }
+
+    private static double resolveStreamingHeapPenalty() {
+        Runtime runtime = Runtime.getRuntime();
+        long maxBytes = runtime.maxMemory();
+        if (maxBytes <= 0L) {
+            return 1.0D;
+        }
+
+        long usedBytes = runtime.totalMemory() - runtime.freeMemory();
+        double usageRatio = usedBytes / (double) maxBytes;
+        if (usageRatio >= HEAP_CRITICAL_USAGE_RATIO) {
+            return 0.35D;
+        }
+        if (usageRatio >= HEAP_HIGH_USAGE_RATIO) {
+            return 0.52D;
+        }
+        if (usageRatio >= HEAP_WARN_USAGE_RATIO) {
+            return 0.70D;
+        }
+        return 1.0D;
     }
 
     private static void prepareWorkingSets(int expectedSize) {
