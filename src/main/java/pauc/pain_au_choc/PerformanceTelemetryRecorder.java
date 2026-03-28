@@ -14,6 +14,8 @@ import pauc.pain_au_choc.render.shader.ShaderPackLoader;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -27,6 +29,8 @@ public final class PerformanceTelemetryRecorder {
     private static final String TELEMETRY_SCHEMA_VERSION = "20260318_shadowv2";
     private static final int SAMPLE_INTERVAL_TICKS = 20;
     private static final int FLUSH_EVERY_SAMPLES = 10;
+    private static final long TRANSIENT_FAILURE_LOG_INTERVAL_MS = 10_000L;
+    private static final int MAX_PENDING_ROWS_CHARS = 2_000_000;
     private static final Path TELEMETRY_DIR = FMLPaths.GAMEDIR.get().resolve("pauc_telemetry");
     private static final Path TELEMETRY_FILE = TELEMETRY_DIR.resolve("runtime_metrics.csv");
     private static final DateTimeFormatter TIMESTAMP_FORMATTER =
@@ -54,6 +58,7 @@ public final class PerformanceTelemetryRecorder {
     private static int tickCounter;
     private static int pendingSamples;
     private static long sessionStartMillis;
+    private static long lastTransientFailureLogMillis;
 
     private PerformanceTelemetryRecorder() {
     }
@@ -104,7 +109,14 @@ public final class PerformanceTelemetryRecorder {
             );
             pendingRows.setLength(0);
             pendingSamples = 0;
+            lastTransientFailureLogMillis = 0L;
         } catch (IOException exception) {
+            if (isTransientTelemetryLock(exception)) {
+                trimPendingRowsIfNeeded();
+                logTransientTelemetryFailure("flush", exception);
+                return;
+            }
+
             writeFailed = true;
             Pain_au_Choc.LOGGER.warn("Failed to flush PauC telemetry file {}", TELEMETRY_FILE, exception);
         }
@@ -297,10 +309,66 @@ public final class PerformanceTelemetryRecorder {
             }
             sessionStartMillis = System.currentTimeMillis();
             fileReady = true;
+            lastTransientFailureLogMillis = 0L;
         } catch (IOException exception) {
+            if (isTransientTelemetryLock(exception)) {
+                logTransientTelemetryFailure("initialize", exception);
+                return;
+            }
+
             writeFailed = true;
             Pain_au_Choc.LOGGER.warn("Failed to initialize PauC telemetry file {}", TELEMETRY_FILE, exception);
         }
+    }
+
+    private static void trimPendingRowsIfNeeded() {
+        if (pendingRows.length() <= MAX_PENDING_ROWS_CHARS) {
+            return;
+        }
+
+        int keepFrom = Math.max(0, pendingRows.length() - MAX_PENDING_ROWS_CHARS / 2);
+        int newline = pendingRows.indexOf(System.lineSeparator(), keepFrom);
+        int start = newline >= 0 ? newline + System.lineSeparator().length() : keepFrom;
+        String tail = pendingRows.substring(start);
+        pendingRows.setLength(0);
+        pendingRows.append(tail);
+        pendingSamples = 0;
+    }
+
+    private static void logTransientTelemetryFailure(String phase, IOException exception) {
+        long now = System.currentTimeMillis();
+        if (lastTransientFailureLogMillis != 0L && now - lastTransientFailureLogMillis < TRANSIENT_FAILURE_LOG_INTERVAL_MS) {
+            return;
+        }
+        lastTransientFailureLogMillis = now;
+        Pain_au_Choc.LOGGER.warn(
+                "PauC telemetry {} delayed: file is temporarily locked; will retry automatically ({})",
+                phase,
+                TELEMETRY_FILE,
+                exception
+        );
+    }
+
+    private static boolean isTransientTelemetryLock(IOException exception) {
+        Throwable cursor = exception;
+        while (cursor != null) {
+            if (cursor instanceof AccessDeniedException) {
+                return true;
+            }
+            if (cursor instanceof FileSystemException fileSystemException) {
+                String message = fileSystemException.getMessage();
+                if (message != null) {
+                    String normalized = message.toLowerCase(Locale.ROOT);
+                    if (normalized.contains("another process")
+                            || normalized.contains("autre processus")
+                            || normalized.contains("being used")) {
+                        return true;
+                    }
+                }
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
     }
 
     private static boolean hasExpectedHeader() {
