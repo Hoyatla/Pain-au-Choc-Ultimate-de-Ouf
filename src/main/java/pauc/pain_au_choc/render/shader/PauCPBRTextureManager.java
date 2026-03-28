@@ -9,9 +9,8 @@ import org.lwjgl.opengl.GL13;
 import com.mojang.logging.LogUtils;
 import org.slf4j.Logger;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -40,8 +39,16 @@ public final class PauCPBRTextureManager {
     /** Default zero-specular packed as a 1x1 texture. */
     private static int defaultSpecularTexture = -1;
 
+    private static final int MAX_CACHE_ENTRIES = 4096;
+    private static final int MID_CACHE_ENTRIES = 2048;
+    private static final int LOW_CACHE_ENTRIES = 1024;
+    private static final int CRITICAL_CACHE_ENTRIES = 512;
+    private static final double HEAP_WARN_USAGE_RATIO = 0.78D;
+    private static final double HEAP_HIGH_USAGE_RATIO = 0.86D;
+    private static final double HEAP_CRITICAL_USAGE_RATIO = 0.92D;
+
     /** Cache: base texture location → PBR info. */
-    private static final Map<ResourceLocation, PBRTextureInfo> pbrCache = new HashMap<>();
+    private static final Map<ResourceLocation, PBRTextureInfo> pbrCache = new LinkedHashMap<>(1024, 0.75F, true);
 
     /** Whether PBR detection has been enabled for the current shaderpack. */
     private static boolean pbrEnabled = false;
@@ -83,10 +90,12 @@ public final class PauCPBRTextureManager {
             return;
         }
 
+        trimCacheForHeapPressure();
         PBRTextureInfo info = pbrCache.get(baseTexture);
         if (info == null) {
             info = detectPBRTextures(baseTexture);
             pbrCache.put(baseTexture, info);
+            trimCacheForHeapPressure();
         }
 
         // Bind normal map
@@ -99,6 +108,40 @@ public final class PauCPBRTextureManager {
 
         // Restore active texture to unit 0
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
+    }
+
+    private static void trimCacheForHeapPressure() {
+        int targetSize = resolveCacheTargetSize();
+        if (pbrCache.size() <= targetSize) {
+            return;
+        }
+
+        Iterator<Map.Entry<ResourceLocation, PBRTextureInfo>> iterator = pbrCache.entrySet().iterator();
+        while (pbrCache.size() > targetSize && iterator.hasNext()) {
+            iterator.next();
+            iterator.remove();
+        }
+    }
+
+    private static int resolveCacheTargetSize() {
+        Runtime runtime = Runtime.getRuntime();
+        long maxBytes = runtime.maxMemory();
+        if (maxBytes <= 0L) {
+            return MID_CACHE_ENTRIES;
+        }
+
+        long usedBytes = runtime.totalMemory() - runtime.freeMemory();
+        double usageRatio = usedBytes / (double) maxBytes;
+        if (usageRatio >= HEAP_CRITICAL_USAGE_RATIO) {
+            return CRITICAL_CACHE_ENTRIES;
+        }
+        if (usageRatio >= HEAP_HIGH_USAGE_RATIO) {
+            return LOW_CACHE_ENTRIES;
+        }
+        if (usageRatio >= HEAP_WARN_USAGE_RATIO) {
+            return MID_CACHE_ENTRIES;
+        }
+        return MAX_CACHE_ENTRIES;
     }
 
     /**

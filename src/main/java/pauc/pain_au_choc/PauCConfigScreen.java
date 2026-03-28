@@ -7,6 +7,7 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 import pauc.pain_au_choc.render.shader.DeferredWorldRenderingPipeline;
 import pauc.pain_au_choc.render.shader.PauCDeferredShaderController;
 
@@ -16,12 +17,14 @@ public final class PauCConfigScreen extends Screen {
     private static final int CONTROL_WIDTH = 220;
     private static final int CONTROL_HEIGHT = 20;
     private static final int DEFAULT_CONTROL_GAP = 24;
+    private static final int MIN_CONTROL_STEP = CONTROL_HEIGHT + 2;
     private static final int INLINE_GAP = 4;
     private static final int TAB_WIDTH = 74;
     private static final int TAB_HEIGHT = 20;
     private static final int TAB_GAP = 4;
 
     private final Screen parent;
+    private final int[] tabPageByIndex = new int[ConfigTab.values().length];
     private ConfigTab selectedTab = ConfigTab.CORE;
     private int controlWidth = CONTROL_WIDTH;
     private int controlGap = DEFAULT_CONTROL_GAP;
@@ -29,6 +32,10 @@ public final class PauCConfigScreen extends Screen {
     private int tabRowY = 112;
     private int contentTop = 138;
     private int doneButtonY;
+    private int rowsPerPage = 1;
+    private int pageStartRow;
+    private int pageEndRowExclusive;
+    private int totalPages = 1;
     private boolean compactLayout;
 
     private Button toggleButton;
@@ -51,6 +58,10 @@ public final class PauCConfigScreen extends Screen {
     private Button dynamicResolutionButton;
     private Button adaptiveSimulationDistanceButton;
     private Button reloadAllPipelinesButton;
+    private Button previousPageButton;
+    private Button nextPageButton;
+    private Button dynamicResolutionRuntimeInfoButton;
+    private Button sharpeningRuntimeInfoButton;
     private QualitySlider qualitySlider;
     private CpuInvolvementSlider cpuInvolvementSlider;
     private SharpenStrengthSlider sharpenStrengthSlider;
@@ -84,20 +95,16 @@ public final class PauCConfigScreen extends Screen {
         int availableTabsWidth = Math.max(180, this.width - 24 - (tabs - 1) * TAB_GAP);
         this.tabWidth = Math.max(48, Math.min(TAB_WIDTH, availableTabsWidth / tabs));
 
-        this.tabRowY = this.compactLayout ? 62 : 112;
-        this.contentTop = this.compactLayout ? 86 : 138;
+        this.tabRowY = this.compactLayout ? 58 : 112;
+        this.contentTop = this.compactLayout ? 82 : 138;
         this.doneButtonY = this.height - (this.compactLayout ? 24 : 28);
 
         int maxRows = 6;
         int contentBottom = this.doneButtonY - 8;
         int availableHeight = Math.max(CONTROL_HEIGHT, contentBottom - this.contentTop);
         int rawGap = (availableHeight - CONTROL_HEIGHT) / Math.max(1, maxRows - 1);
-        this.controlGap = Math.max(12, Math.min(DEFAULT_CONTROL_GAP, rawGap));
-
-        int requiredHeight = CONTROL_HEIGHT + (maxRows - 1) * this.controlGap;
-        if (this.contentTop + requiredHeight > contentBottom) {
-            this.contentTop = Math.max(this.tabRowY + TAB_HEIGHT + 4, contentBottom - requiredHeight);
-        }
+        this.controlGap = Math.max(MIN_CONTROL_STEP, Math.min(DEFAULT_CONTROL_GAP, rawGap));
+        this.rowsPerPage = Math.max(1, 1 + Math.max(0, availableHeight - CONTROL_HEIGHT) / this.controlGap);
     }
 
     private void resetWidgetReferences() {
@@ -121,6 +128,10 @@ public final class PauCConfigScreen extends Screen {
         this.dynamicResolutionButton = null;
         this.adaptiveSimulationDistanceButton = null;
         this.reloadAllPipelinesButton = null;
+        this.previousPageButton = null;
+        this.nextPageButton = null;
+        this.dynamicResolutionRuntimeInfoButton = null;
+        this.sharpeningRuntimeInfoButton = null;
         this.qualitySlider = null;
         this.cpuInvolvementSlider = null;
         this.sharpenStrengthSlider = null;
@@ -152,241 +163,352 @@ public final class PauCConfigScreen extends Screen {
 
     private void buildTabContent() {
         int left = this.width / 2 - this.controlWidth / 2;
-        int top = this.contentTop;
+        prepareTabPagination(this.selectedTab);
         switch (this.selectedTab) {
-            case CORE -> buildCoreTab(left, top);
-            case RUNTIME -> buildRuntimeTab(left, top);
-            case UPSCALE -> buildUpscaleTab(left, top);
-            case DEFERRED -> buildDeferredTab(left, top);
-            case INTEGRATION -> buildIntegrationTab(left, top);
+            case CORE -> buildCoreTab(left);
+            case RUNTIME -> buildRuntimeTab(left);
+            case UPSCALE -> buildUpscaleTab(left);
+            case DEFERRED -> buildDeferredTab(left);
+            case INTEGRATION -> buildIntegrationTab(left);
         }
     }
 
-    private void buildCoreTab(int left, int top) {
-        this.toggleButton = this.addRenderableWidget(
-                Button.builder(buildToggleMessage(), button -> {
-                    PauCClient.setEnabled(!PauCClient.isEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+    private void buildCoreTab(int left) {
+        int row = 0;
+        if (shouldRenderRow(row)) {
+            this.toggleButton = this.addRenderableWidget(
+                    Button.builder(buildToggleMessage(), button -> {
+                        PauCClient.setEnabled(!PauCClient.isEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.qualitySlider = this.addRenderableWidget(new QualitySlider(left, top, this.controlWidth, CONTROL_HEIGHT));
+        row++;
+        if (shouldRenderRow(row)) {
+            this.qualitySlider = this.addRenderableWidget(new QualitySlider(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT));
+        }
 
-        top += this.controlGap;
-        this.adaptiveQualityButton = this.addRenderableWidget(
-                Button.builder(buildAdaptiveQualityMessage(), button -> {
-                    PauCClient.setAdaptiveQualityEnabled(!PauCClient.isAdaptiveQualityEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.adaptiveQualityButton = this.addRenderableWidget(
+                    Button.builder(buildAdaptiveQualityMessage(), button -> {
+                        PauCClient.setAdaptiveQualityEnabled(!PauCClient.isAdaptiveQualityEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.cpuInvolvementSlider = this.addRenderableWidget(new CpuInvolvementSlider(left, top, this.controlWidth, CONTROL_HEIGHT));
+        row++;
+        if (shouldRenderRow(row)) {
+            this.cpuInvolvementSlider = this.addRenderableWidget(new CpuInvolvementSlider(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT));
+        }
 
-        top += this.controlGap;
-        this.presetButton = this.addRenderableWidget(
-                Button.builder(buildPresetMessage(), button -> {
-                    PauCClient.cycleUserPreset();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.presetButton = this.addRenderableWidget(
+                    Button.builder(buildPresetMessage(), button -> {
+                        PauCClient.cycleUserPreset();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
-        this.presetApplyButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Apply Preset"), button -> {
-                    PauCClient.applySelectedPreset();
-                    refreshButtonLabels();
-                }).bounds(left, top, halfWidth, CONTROL_HEIGHT).build()
-        );
-        this.recoveryButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Recovery"), button -> {
-                    PauCClient.activateRecoveryMode();
-                    refreshButtonLabels();
-                }).bounds(left + halfWidth + INLINE_GAP, top, halfWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            int y = resolveRowY(row);
+            int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
+            this.presetApplyButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Apply Preset"), button -> {
+                        PauCClient.applySelectedPreset();
+                        refreshButtonLabels();
+                    }).bounds(left, y, halfWidth, CONTROL_HEIGHT).build()
+            );
+            this.recoveryButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Recovery"), button -> {
+                        PauCClient.activateRecoveryMode();
+                        refreshButtonLabels();
+                    }).bounds(left + halfWidth + INLINE_GAP, y, halfWidth, CONTROL_HEIGHT).build()
+            );
+        }
     }
 
-    private void buildRuntimeTab(int left, int top) {
-        this.authoritativeRuntimeButton = this.addRenderableWidget(
-                Button.builder(buildAuthoritativeRuntimeMessage(), button -> {
-                    PauCClient.setAuthoritativeRuntimeEnabled(!PauCClient.isAuthoritativeRuntimeEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+    private void buildRuntimeTab(int left) {
+        boolean dynamicResolutionBlocked = isDynamicResolutionRuntimeBlocked();
+        int row = 0;
+        if (shouldRenderRow(row)) {
+            this.authoritativeRuntimeButton = this.addRenderableWidget(
+                    Button.builder(buildAuthoritativeRuntimeMessage(), button -> {
+                        PauCClient.setAuthoritativeRuntimeEnabled(!PauCClient.isAuthoritativeRuntimeEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.dynamicResolutionButton = this.addRenderableWidget(
-                Button.builder(buildDynamicResolutionMessage(), button -> {
-                    PauCClient.setDynamicResolutionEnabled(!PauCClient.isDynamicResolutionSettingEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.dynamicResolutionButton = this.addRenderableWidget(
+                    Button.builder(buildDynamicResolutionMessage(), button -> {
+                        PauCClient.setDynamicResolutionEnabled(!PauCClient.isDynamicResolutionSettingEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            this.dynamicResolutionButton.active = !dynamicResolutionBlocked;
+        }
 
-        top += this.controlGap;
-        this.dynamicResolutionMinScaleSlider = this.addRenderableWidget(
-                new DynamicResolutionMinScaleSlider(left, top, this.controlWidth, CONTROL_HEIGHT)
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.dynamicResolutionMinScaleSlider = this.addRenderableWidget(
+                    new DynamicResolutionMinScaleSlider(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT)
+            );
+        }
 
-        top += this.controlGap;
-        this.adaptiveSimulationDistanceButton = this.addRenderableWidget(
-                Button.builder(buildAdaptiveSimulationDistanceMessage(), button -> {
-                    PauCClient.setAdaptiveSimulationDistanceEnabled(!PauCClient.isAdaptiveSimulationDistanceSettingEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.adaptiveSimulationDistanceButton = this.addRenderableWidget(
+                    Button.builder(buildAdaptiveSimulationDistanceMessage(), button -> {
+                        PauCClient.setAdaptiveSimulationDistanceEnabled(!PauCClient.isAdaptiveSimulationDistanceSettingEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.frameTimeStabilizerButton = this.addRenderableWidget(
-                Button.builder(buildFrameTimeStabilizerMessage(), button -> {
-                    PauCClient.setFrameTimeStabilizerEnabled(!PauCClient.isFrameTimeStabilizerEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.frameTimeStabilizerButton = this.addRenderableWidget(
+                    Button.builder(buildFrameTimeStabilizerMessage(), button -> {
+                        PauCClient.setFrameTimeStabilizerEnabled(!PauCClient.isFrameTimeStabilizerEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.gpuBottleneckButton = this.addRenderableWidget(
-                Button.builder(buildGpuBottleneckMessage(), button -> {
-                    PauCClient.setGpuBottleneckDetectorEnabled(!PauCClient.isGpuBottleneckDetectorEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.gpuBottleneckButton = this.addRenderableWidget(
+                    Button.builder(buildGpuBottleneckMessage(), button -> {
+                        PauCClient.setGpuBottleneckDetectorEnabled(!PauCClient.isGpuBottleneckDetectorEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
     }
 
-    private void buildUpscaleTab(int left, int top) {
-        this.shaderModeButton = this.addRenderableWidget(
-                Button.builder(buildShaderModeMessage(), button -> {
-                    PauCShaderManager.cycleShaderMode();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+    private void buildUpscaleTab(int left) {
+        int row = 0;
+        if (shouldRenderRow(row)) {
+            this.shaderModeButton = this.addRenderableWidget(
+                    Button.builder(buildShaderModeMessage(), button -> {
+                        PauCShaderManager.cycleShaderMode();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
-        this.shaderReloadButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Reload Shaders"), button -> {
-                    PauCShaderManager.reloadExternalShaders();
-                    refreshButtonLabels();
-                }).bounds(left, top, halfWidth, CONTROL_HEIGHT).build()
-        );
-        this.shaderFolderButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Open Folder"), button -> PauCShaderManager.openShaderFolder())
-                        .bounds(left + halfWidth + INLINE_GAP, top, halfWidth, CONTROL_HEIGHT)
-                        .build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            int y = resolveRowY(row);
+            int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
+            this.shaderReloadButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Reload Shaders"), button -> {
+                        PauCShaderManager.reloadExternalShaders();
+                        refreshButtonLabels();
+                    }).bounds(left, y, halfWidth, CONTROL_HEIGHT).build()
+            );
+            this.shaderFolderButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Open Folder"), button -> PauCShaderManager.openShaderFolder())
+                            .bounds(left + halfWidth + INLINE_GAP, y, halfWidth, CONTROL_HEIGHT)
+                            .build()
+            );
+        }
 
-        top += this.controlGap;
-        this.advancedSharpeningButton = this.addRenderableWidget(
-                Button.builder(buildAdvancedSharpeningMessage(), button -> {
-                    PauCClient.setAdvancedSharpeningEnabled(!PauCClient.isAdvancedSharpeningEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.advancedSharpeningButton = this.addRenderableWidget(
+                    Button.builder(buildAdvancedSharpeningMessage(), button -> {
+                        PauCClient.setAdvancedSharpeningEnabled(!PauCClient.isAdvancedSharpeningEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            this.advancedSharpeningButton.active = !CompatibilityGuards.shouldDisableAdvancedSharpening();
+        }
 
-        top += this.controlGap;
-        this.sharpenStrengthSlider = this.addRenderableWidget(new SharpenStrengthSlider(left, top, this.controlWidth, CONTROL_HEIGHT));
+        row++;
+        if (shouldRenderRow(row)) {
+            this.sharpenStrengthSlider = this.addRenderableWidget(new SharpenStrengthSlider(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT));
+        }
     }
 
-    private void buildDeferredTab(int left, int top) {
-        this.deferredPackButton = this.addRenderableWidget(
-                Button.builder(buildDeferredPackMessage(), button -> {
-                    PauCDeferredShaderController.cycleShaderPack();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+    private void buildDeferredTab(int left) {
+        int row = 0;
+        if (shouldRenderRow(row)) {
+            this.deferredPackButton = this.addRenderableWidget(
+                    Button.builder(buildDeferredPackMessage(), button -> {
+                        PauCDeferredShaderController.cycleShaderPack();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.deferredCompatButton = this.addRenderableWidget(
-                Button.builder(buildDeferredCompatMessage(), button -> {
-                    PauCDeferredShaderController.cycleCompatibilityMode();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.deferredCompatButton = this.addRenderableWidget(
+                    Button.builder(buildDeferredCompatMessage(), button -> {
+                        PauCDeferredShaderController.cycleCompatibilityMode();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
-        this.deferredReloadButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Reload Pack"), button -> {
-                    PauCDeferredShaderController.reloadCurrentPack();
-                    refreshButtonLabels();
-                }).bounds(left, top, halfWidth, CONTROL_HEIGHT).build()
-        );
-        this.deferredFolderButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Packs Folder"), button -> PauCDeferredShaderController.openShaderPackFolder())
-                        .bounds(left + halfWidth + INLINE_GAP, top, halfWidth, CONTROL_HEIGHT)
-                        .build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            int y = resolveRowY(row);
+            int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
+            this.deferredReloadButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Reload Pack"), button -> {
+                        PauCDeferredShaderController.reloadCurrentPack();
+                        refreshButtonLabels();
+                    }).bounds(left, y, halfWidth, CONTROL_HEIGHT).build()
+            );
+            this.deferredFolderButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Packs Folder"), button -> PauCDeferredShaderController.openShaderPackFolder())
+                            .bounds(left + halfWidth + INLINE_GAP, y, halfWidth, CONTROL_HEIGHT)
+                            .build()
+            );
+        }
 
-        top += this.controlGap;
-        this.deferredRescanButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Rescan Packs"), button -> {
-                    PauCDeferredShaderController.refreshAvailablePacks();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.deferredRescanButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Rescan Packs"), button -> {
+                        PauCDeferredShaderController.refreshAvailablePacks();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
     }
 
-    private void buildIntegrationTab(int left, int top) {
-        this.authoritativeRuntimeButton = this.addRenderableWidget(
-                Button.builder(buildAuthoritativeRuntimeMessage(), button -> {
-                    PauCClient.setAuthoritativeRuntimeEnabled(!PauCClient.isAuthoritativeRuntimeEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+    private void buildIntegrationTab(int left) {
+        boolean dynamicResolutionBlocked = isDynamicResolutionRuntimeBlocked();
+        int row = 0;
+        if (shouldRenderRow(row)) {
+            this.authoritativeRuntimeButton = this.addRenderableWidget(
+                    Button.builder(buildAuthoritativeRuntimeMessage(), button -> {
+                        PauCClient.setAuthoritativeRuntimeEnabled(!PauCClient.isAuthoritativeRuntimeEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        this.dynamicResolutionButton = this.addRenderableWidget(
-                Button.builder(buildDynamicResolutionMessage(), button -> {
-                    PauCClient.setDynamicResolutionEnabled(!PauCClient.isDynamicResolutionSettingEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.dynamicResolutionButton = this.addRenderableWidget(
+                    Button.builder(buildDynamicResolutionMessage(), button -> {
+                        PauCClient.setDynamicResolutionEnabled(!PauCClient.isDynamicResolutionSettingEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            this.dynamicResolutionButton.active = !dynamicResolutionBlocked;
+        }
 
-        top += this.controlGap;
-        this.advancedSharpeningButton = this.addRenderableWidget(
-                Button.builder(buildAdvancedSharpeningMessage(), button -> {
-                    PauCClient.setAdvancedSharpeningEnabled(!PauCClient.isAdvancedSharpeningEnabled());
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.dynamicResolutionMinScaleSlider = this.addRenderableWidget(
+                    new DynamicResolutionMinScaleSlider(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT)
+            );
+        }
 
-        top += this.controlGap;
-        this.deferredCompatButton = this.addRenderableWidget(
-                Button.builder(buildDeferredCompatMessage(), button -> {
-                    PauCDeferredShaderController.cycleCompatibilityMode();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.advancedSharpeningButton = this.addRenderableWidget(
+                    Button.builder(buildAdvancedSharpeningMessage(), button -> {
+                        PauCClient.setAdvancedSharpeningEnabled(!PauCClient.isAdvancedSharpeningEnabled());
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            this.advancedSharpeningButton.active = !CompatibilityGuards.shouldDisableAdvancedSharpening();
+        }
 
-        top += this.controlGap;
-        this.reloadAllPipelinesButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Reload All Pipelines"), button -> {
-                    PauCShaderManager.reloadExternalShaders();
-                    PauCDeferredShaderController.reloadCurrentPack();
-                    refreshButtonLabels();
-                }).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.deferredCompatButton = this.addRenderableWidget(
+                    Button.builder(buildDeferredCompatMessage(), button -> {
+                        PauCDeferredShaderController.cycleCompatibilityMode();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
 
-        top += this.controlGap;
-        int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
-        this.shaderFolderButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Upscale Folder"), button -> PauCShaderManager.openShaderFolder())
-                        .bounds(left, top, halfWidth, CONTROL_HEIGHT)
-                        .build()
-        );
-        this.deferredFolderButton = this.addRenderableWidget(
-                Button.builder(Component.literal("Shaderpacks"), button -> PauCDeferredShaderController.openShaderPackFolder())
-                        .bounds(left + halfWidth + INLINE_GAP, top, halfWidth, CONTROL_HEIGHT)
-                        .build()
-        );
+        row++;
+        if (shouldRenderRow(row)) {
+            this.reloadAllPipelinesButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Reload All Pipelines"), button -> {
+                        PauCShaderManager.reloadExternalShaders();
+                        PauCDeferredShaderController.reloadCurrentPack();
+                        refreshButtonLabels();
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+        }
+
+        row++;
+        if (shouldRenderRow(row)) {
+            int y = resolveRowY(row);
+            int halfWidth = (this.controlWidth - INLINE_GAP) / 2;
+            this.shaderFolderButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Upscale Folder"), button -> PauCShaderManager.openShaderFolder())
+                            .bounds(left, y, halfWidth, CONTROL_HEIGHT)
+                            .build()
+            );
+            this.deferredFolderButton = this.addRenderableWidget(
+                    Button.builder(Component.literal("Shaderpacks"), button -> PauCDeferredShaderController.openShaderPackFolder())
+                            .bounds(left + halfWidth + INLINE_GAP, y, halfWidth, CONTROL_HEIGHT)
+                            .build()
+            );
+        }
+
+        row++;
+        if (shouldRenderRow(row)) {
+            this.dynamicResolutionRuntimeInfoButton = this.addRenderableWidget(
+                    Button.builder(buildDynamicResolutionRuntimeMessage(), button -> {
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            this.dynamicResolutionRuntimeInfoButton.active = false;
+        }
+
+        row++;
+        if (shouldRenderRow(row)) {
+            this.sharpeningRuntimeInfoButton = this.addRenderableWidget(
+                    Button.builder(buildSharpeningRuntimeMessage(), button -> {
+                    }).bounds(left, resolveRowY(row), this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            this.sharpeningRuntimeInfoButton.active = false;
+        }
     }
 
     private void addDoneButton() {
         int left = this.width / 2 - this.controlWidth / 2;
         int top = this.doneButtonY;
+        if (this.totalPages <= 1) {
+            this.addRenderableWidget(
+                    Button.builder(CommonComponents.GUI_DONE, button -> this.onClose()).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
+            );
+            return;
+        }
+
+        int navWidth = Math.max(26, Math.min(54, (this.controlWidth - 90 - INLINE_GAP * 2) / 2));
+        int doneWidth = Math.max(70, this.controlWidth - navWidth * 2 - INLINE_GAP * 2);
+        this.previousPageButton = this.addRenderableWidget(
+                Button.builder(Component.literal("<"), button -> changePage(-1)).bounds(left, top, navWidth, CONTROL_HEIGHT).build()
+        );
         this.addRenderableWidget(
-                Button.builder(CommonComponents.GUI_DONE, button -> this.onClose()).bounds(left, top, this.controlWidth, CONTROL_HEIGHT).build()
+                Button.builder(CommonComponents.GUI_DONE, button -> this.onClose())
+                        .bounds(left + navWidth + INLINE_GAP, top, doneWidth, CONTROL_HEIGHT)
+                        .build()
+        );
+        this.nextPageButton = this.addRenderableWidget(
+                Button.builder(Component.literal(">"), button -> changePage(1))
+                        .bounds(left + navWidth + INLINE_GAP + doneWidth + INLINE_GAP, top, navWidth, CONTROL_HEIGHT)
+                        .build()
         );
     }
 
@@ -469,6 +591,15 @@ public final class PauCConfigScreen extends Screen {
                     resolveIntegrationColor()
             );
         }
+        if (this.totalPages > 1) {
+            guiGraphics.drawCenteredString(
+                    this.font,
+                    Component.literal("Page " + (getCurrentPage() + 1) + "/" + this.totalPages + " (mouse wheel)"),
+                    this.width / 2,
+                    this.doneButtonY - 11,
+                    0x8EA7BD
+            );
+        }
         super.render(guiGraphics, mouseX, mouseY, partialTick);
     }
 
@@ -484,6 +615,78 @@ public final class PauCConfigScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        if (this.totalPages > 1) {
+            if (delta < 0.0D && changePage(1)) {
+                return true;
+            }
+            if (delta > 0.0D && changePage(-1)) {
+                return true;
+            }
+        }
+        return super.mouseScrolled(mouseX, mouseY, delta);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (this.totalPages > 1) {
+            if ((keyCode == GLFW.GLFW_KEY_RIGHT || keyCode == GLFW.GLFW_KEY_PAGE_DOWN) && changePage(1)) {
+                return true;
+            }
+            if ((keyCode == GLFW.GLFW_KEY_LEFT || keyCode == GLFW.GLFW_KEY_PAGE_UP) && changePage(-1)) {
+                return true;
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    private boolean changePage(int delta) {
+        int current = getCurrentPage();
+        int next = Math.max(0, Math.min(this.totalPages - 1, current + delta));
+        if (next == current) {
+            return false;
+        }
+        setCurrentPage(next);
+        rebuildUi();
+        return true;
+    }
+
+    private void prepareTabPagination(ConfigTab tab) {
+        int totalRows = resolveTabRowCount(tab);
+        this.totalPages = Math.max(1, (totalRows + this.rowsPerPage - 1) / this.rowsPerPage);
+        int currentPage = Math.max(0, Math.min(this.totalPages - 1, this.tabPageByIndex[tab.ordinal()]));
+        this.tabPageByIndex[tab.ordinal()] = currentPage;
+        this.pageStartRow = currentPage * this.rowsPerPage;
+        this.pageEndRowExclusive = Math.min(totalRows, this.pageStartRow + this.rowsPerPage);
+    }
+
+    private int resolveTabRowCount(ConfigTab tab) {
+        return switch (tab) {
+            case CORE -> 6;
+            case RUNTIME -> 6;
+            case UPSCALE -> 4;
+            case DEFERRED -> 4;
+            case INTEGRATION -> 9;
+        };
+    }
+
+    private int getCurrentPage() {
+        return this.tabPageByIndex[this.selectedTab.ordinal()];
+    }
+
+    private void setCurrentPage(int page) {
+        this.tabPageByIndex[this.selectedTab.ordinal()] = page;
+    }
+
+    private boolean shouldRenderRow(int rowIndex) {
+        return rowIndex >= this.pageStartRow && rowIndex < this.pageEndRowExclusive;
+    }
+
+    private int resolveRowY(int rowIndex) {
+        return this.contentTop + (rowIndex - this.pageStartRow) * this.controlGap;
     }
 
     private void refreshButtonLabels() {
@@ -520,9 +723,18 @@ public final class PauCConfigScreen extends Screen {
         }
         if (this.dynamicResolutionButton != null) {
             this.dynamicResolutionButton.setMessage(buildDynamicResolutionMessage());
+            this.dynamicResolutionButton.active = !isDynamicResolutionRuntimeBlocked();
         }
         if (this.adaptiveSimulationDistanceButton != null) {
             this.adaptiveSimulationDistanceButton.setMessage(buildAdaptiveSimulationDistanceMessage());
+        }
+        if (this.dynamicResolutionRuntimeInfoButton != null) {
+            this.dynamicResolutionRuntimeInfoButton.setMessage(buildDynamicResolutionRuntimeMessage());
+            this.dynamicResolutionRuntimeInfoButton.active = false;
+        }
+        if (this.sharpeningRuntimeInfoButton != null) {
+            this.sharpeningRuntimeInfoButton.setMessage(buildSharpeningRuntimeMessage());
+            this.sharpeningRuntimeInfoButton.active = false;
         }
         if (this.qualitySlider != null) {
             this.qualitySlider.refresh();
@@ -535,6 +747,12 @@ public final class PauCConfigScreen extends Screen {
         }
         if (this.sharpenStrengthSlider != null) {
             this.sharpenStrengthSlider.refresh();
+        }
+        if (this.previousPageButton != null) {
+            this.previousPageButton.active = getCurrentPage() > 0;
+        }
+        if (this.nextPageButton != null) {
+            this.nextPageButton.active = getCurrentPage() + 1 < this.totalPages;
         }
         PauCClient.saveConfig();
     }
@@ -569,10 +787,16 @@ public final class PauCConfigScreen extends Screen {
     }
 
     private Component buildDynamicResolutionMessage() {
-        return Component.translatable(
-                "option.pauc.dynamic_resolution",
-                PauCClient.isDynamicResolutionSettingEnabled() ? CommonComponents.OPTION_ON : CommonComponents.OPTION_OFF
-        );
+        String runtimeReason = PauCClient.getDynamicResolutionRuntimeReason();
+        String state = PauCClient.isDynamicResolutionSettingEnabled() ? "ON" : "OFF";
+        if ("ready".equals(runtimeReason) || "setting off".equals(runtimeReason)) {
+            return Component.literal("Dynamic Resolution: " + state);
+        }
+        return Component.literal("Dynamic Resolution: " + state + " [" + runtimeReason + "]");
+    }
+
+    private Component buildDynamicResolutionRuntimeMessage() {
+        return Component.literal("DRS Runtime: " + PauCClient.getDynamicResolutionRuntimeReason());
     }
 
     private Component buildAdaptiveSimulationDistanceMessage() {
@@ -591,13 +815,17 @@ public final class PauCConfigScreen extends Screen {
 
     private Component buildAdvancedSharpeningMessage() {
         if (CompatibilityGuards.shouldDisableAdvancedSharpening()) {
-            return Component.translatable("option.pauc.advanced_sharpening_blocked");
+            return Component.literal("Advanced Sharpening: BLOCKED [external shader pipeline]");
         }
 
         return Component.translatable(
                 "option.pauc.advanced_sharpening",
                 PauCClient.isAdvancedSharpeningEnabled() ? CommonComponents.OPTION_ON : CommonComponents.OPTION_OFF
         );
+    }
+
+    private Component buildSharpeningRuntimeMessage() {
+        return Component.literal("Sharpen Runtime: " + resolveSharpeningRuntimeReason());
     }
 
     private Component buildShaderModeMessage() {
@@ -634,6 +862,28 @@ public final class PauCConfigScreen extends Screen {
             return 0xE4C86A;
         }
         return 0x79D295;
+    }
+
+    private static boolean isDynamicResolutionRuntimeBlocked() {
+        return AuthoritativeRuntimeController.shouldForceDisableDynamicResolution()
+                || AuthoritativeRuntimeController.shouldForceDisableDynamicResolutionForDeferredPipeline()
+                || AuthoritativeRuntimeController.shouldYieldDynamicResolutionToExternalPipeline();
+    }
+
+    private static String resolveSharpeningRuntimeReason() {
+        if (!PauCClient.isEnabled()) {
+            return "PauC off";
+        }
+        if (!PauCClient.isBudgetActive()) {
+            return "runtime off";
+        }
+        if (!PauCClient.isAdvancedSharpeningEnabled()) {
+            return "setting off";
+        }
+        if (CompatibilityGuards.shouldDisableAdvancedSharpening()) {
+            return "external shader pipeline";
+        }
+        return "ready";
     }
 
     private static String buildRuntimeSummaryLine() {
@@ -797,7 +1047,7 @@ public final class PauCConfigScreen extends Screen {
 
         private void refresh() {
             this.value = toSliderValue(PauCClient.getConfiguredDynamicResolutionMinScale());
-            this.active = PauCClient.isDynamicResolutionSettingEnabled();
+            this.active = PauCClient.isDynamicResolutionSettingEnabled() && !isDynamicResolutionRuntimeBlocked();
             this.updateMessage();
         }
 

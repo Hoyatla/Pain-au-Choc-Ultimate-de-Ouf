@@ -13,7 +13,8 @@ public final class AdaptiveSimulationDistanceController {
     private static final double LOW_TPS_THRESHOLD = 18.2D;
     private static final double HIGH_TPS_THRESHOLD = 19.8D;
     private static final int MIN_SIMULATION_DISTANCE = 5;
-    private static final int MIN_SIMULATION_DISTANCE_EMERGENCY = 5;
+    private static final int MIN_SIMULATION_DISTANCE_EMERGENCY = 3;
+    private static final int ABSOLUTE_MIN_SIMULATION_DISTANCE = MIN_SIMULATION_DISTANCE_EMERGENCY;
     private static final int MAX_SIMULATION_DISTANCE = 32;
     private static final float MAX_BACKPRESSURE_FOR_RECOVERY = 0.20F;
 
@@ -86,7 +87,7 @@ public final class AdaptiveSimulationDistanceController {
 
         if (mitigationTier >= 3 && cooldownTicks == 0 && appliedSimulationDistance > minimumSimulationDistance) {
             applyAdaptiveDistance(minecraft, Math.max(minimumSimulationDistance, appliedSimulationDistance - 1));
-            cooldownTicks = DOWN_ADJUSTMENT_COOLDOWN_TICKS;
+            cooldownTicks = Math.max(120, DOWN_ADJUSTMENT_COOLDOWN_TICKS / 2);
             stableHighTpsSamples = 0;
             return;
         }
@@ -194,11 +195,12 @@ public final class AdaptiveSimulationDistanceController {
 
     private static int resolveBaseSimulationDistance() {
         int qualityLevel = resolveTerrainQualityLevel();
-        return clampSimulationDistance(QualityBudgetProfile.forLevel(qualityLevel).simulationDistance());
+        int profileDistance = clampSimulationDistance(QualityBudgetProfile.forLevel(qualityLevel).simulationDistance());
+        return Math.max(MIN_SIMULATION_DISTANCE, profileDistance);
     }
 
     private static int clampSimulationDistance(int value) {
-        return Math.max(MIN_SIMULATION_DISTANCE, Math.min(MAX_SIMULATION_DISTANCE, value));
+        return Math.max(ABSOLUTE_MIN_SIMULATION_DISTANCE, Math.min(MAX_SIMULATION_DISTANCE, value));
     }
 
     private static int resolveTerrainQualityLevel() {

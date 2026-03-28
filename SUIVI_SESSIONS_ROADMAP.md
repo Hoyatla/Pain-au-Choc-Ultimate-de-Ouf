@@ -5745,3 +5745,15 @@ Copier/coller le bloc suivant a chaque fin de session:
   - `aec4594` pousse vers `origin/feat/embeddium-oculus-pipeline`.
 - Prochaine action:
   - relancer une capture live apres redemarrage jeu pour charger ce patch et confirmer reprise d'ecriture continue des metrics.
+
+## Checkpoint 2026-03-28 04:02:20 (Local) - Codex
+
+- Statut: in_progress
+- Note: Lot UI: pagination anti-overflow + integration runtime explicite; lot perf: cache PBR adaptatif selon pression heap. Jar reconstruit et déployé Prism.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-28 04:54:33 (Local) - Codex
+
+- Statut: in_progress
+- Note: Capture live +240 lignes reussie. Nouveau lot perf ajoute: simulation distance d'urgence abaissable a 3 avec descente plus rapide en tier>=3. Jar redeploye.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
