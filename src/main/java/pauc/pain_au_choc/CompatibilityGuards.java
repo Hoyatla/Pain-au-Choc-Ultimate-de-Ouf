@@ -57,21 +57,21 @@ public final class CompatibilityGuards {
         return geckoLibLoaded;
     }
 
-    private static boolean isOculusLoaded() {
+    public static boolean isOculusLoaded() {
         if (oculusLoaded == null) {
             oculusLoaded = isLoaded("oculus");
         }
         return oculusLoaded;
     }
 
-    private static boolean isEmbeddiumLoaded() {
+    public static boolean isEmbeddiumLoaded() {
         if (embeddiumLoaded == null) {
             embeddiumLoaded = isLoaded("embeddium");
         }
         return embeddiumLoaded;
     }
 
-    private static boolean isReplayStackLoaded() {
+    public static boolean isReplayStackLoaded() {
         if (replayStackLoaded == null) {
             replayStackLoaded = isLoaded("replaymod") || isLoaded("reforgedplaymod");
         }

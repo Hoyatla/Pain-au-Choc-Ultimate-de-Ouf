@@ -176,6 +176,25 @@ public final class PauCClient {
         return authoritativeRuntimeEnabled;
     }
 
+    public static void setAuthoritativeRuntimeEnabled(boolean enabledIn) {
+        if (authoritativeRuntimeEnabled == enabledIn) {
+            return;
+        }
+
+        authoritativeRuntimeEnabled = enabledIn;
+        AuthoritativeRuntimeController.resetRuntimeState();
+        DynamicResolutionController.reset();
+        AdaptiveSimulationDistanceController.reset();
+        TerrainProxyController.reset();
+        ManagedChunkRadiusController.reset();
+        StructureStreamingController.reset();
+        ChunkBuildQueueController.reset();
+        RuntimeStateLogger.reset();
+        PerformanceTelemetryRecorder.flushNow();
+        runtimePoliciesDirty = true;
+        runtimePolicySyncTicks = RUNTIME_POLICY_SYNC_INTERVAL_TICKS;
+    }
+
     public static boolean isBudgetActive() {
         return budgetActive;
     }
@@ -329,6 +348,16 @@ public final class PauCClient {
         return dynamicResolutionEnabled;
     }
 
+    public static void setDynamicResolutionEnabled(boolean enabledIn) {
+        if (dynamicResolutionEnabled == enabledIn) {
+            return;
+        }
+
+        dynamicResolutionEnabled = enabledIn;
+        DynamicResolutionController.reset();
+        RuntimeStateLogger.reset();
+    }
+
     public static String getDynamicResolutionRuntimeReason() {
         if (!enabled) {
             return "PauC off";
@@ -355,8 +384,37 @@ public final class PauCClient {
         return GlobalPerformanceGovernor.getEffectiveDynamicResolutionMinScale(dynamicResolutionMinScale);
     }
 
+    public static double getConfiguredDynamicResolutionMinScale() {
+        return dynamicResolutionMinScale;
+    }
+
+    public static void setDynamicResolutionMinScale(double minScale) {
+        double clampedScale = clampDynamicResolutionScale(minScale);
+        if (Math.abs(dynamicResolutionMinScale - clampedScale) < 0.0001D) {
+            return;
+        }
+
+        dynamicResolutionMinScale = clampedScale;
+        DynamicResolutionController.reset();
+        RuntimeStateLogger.reset();
+    }
+
     public static boolean isAdaptiveSimulationDistanceActive() {
         return enabled && budgetActive && adaptiveSimulationDistanceEnabled;
+    }
+
+    public static boolean isAdaptiveSimulationDistanceSettingEnabled() {
+        return adaptiveSimulationDistanceEnabled;
+    }
+
+    public static void setAdaptiveSimulationDistanceEnabled(boolean enabledIn) {
+        if (adaptiveSimulationDistanceEnabled == enabledIn) {
+            return;
+        }
+
+        adaptiveSimulationDistanceEnabled = enabledIn;
+        AdaptiveSimulationDistanceController.reset();
+        RuntimeStateLogger.reset();
     }
 
     public static boolean isAdaptiveQualityEnabled() {
