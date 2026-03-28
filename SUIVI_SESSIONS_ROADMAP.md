@@ -5649,3 +5649,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: validation V3 scope NVIDIA-only appliquee; resultat pass_with_waivers (AMD missing_hardware, Intel no_runtime_evidence) assume par decision produit.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-28 00:26:48 (UTC) - Codex
+
+- Statut: in_progress
+- Note: bundle release regenere via tools/create_release_bundle.ps1 (pauc_release_20260328_002633_456, zip sha256 F0BEC6C7...); strict live pass (ready_for_beta, fail_gates=0) et scope V3 NVIDIA-only pass_with_waivers maintenu.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
