@@ -5655,3 +5655,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: bundle release regenere via tools/create_release_bundle.ps1 (pauc_release_20260328_002633_456, zip sha256 F0BEC6C7...); strict live pass (ready_for_beta, fail_gates=0) et scope V3 NVIDIA-only pass_with_waivers maintenu.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-28 00:28:31 (UTC) - Codex
+
+- Statut: in_progress
+- Note: README outillage complete: validation V3 NVIDIA-only (AllowMissingVendors) + generation bundle release via tools/create_release_bundle.ps1.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.

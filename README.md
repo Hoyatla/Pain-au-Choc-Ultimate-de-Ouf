@@ -489,6 +489,32 @@ Self-test contrat d'integration `build_beta_candidate -> verify_beta_candidate`:
 .\tools\test_build_beta_candidate_verification_contract.ps1
 ```
 
+Validation V3 hardware/drivers:
+
+```powershell
+.\tools\validate_v3_hardware_drivers.ps1 -InstanceName test
+.\tools\validate_v3_hardware_drivers.ps1 -InstanceName test -AllowMissingVendors -PassThru
+```
+
+Notes V3:
+
+- En scope `NVIDIA-only`, utiliser `-AllowMissingVendors` pour assumer les waivers AMD/Intel.
+- Le rapport detaille est exporte sous `run/pauc_reports/v3_hardware_driver_matrix_*.{json,md}`.
+
+Generation d'un bundle release (candidate + rapports + checksums + zip):
+
+```powershell
+.\tools\create_release_bundle.ps1 -InstanceName test
+.\tools\create_release_bundle.ps1 -InstanceName test -PassThru | ConvertTo-Json -Depth 6
+```
+
+Le bundle est cree sous `run/releases/pauc_release_YYYYMMDD_HHMMSS_fff` avec:
+
+- `RELEASE_NOTES.md`
+- `SHA256SUMS.txt`
+- `pauc_release_....zip`
+- `pauc_release_....zip.sha256.txt`
+
 Gate KPI roadmap (frametime/MSPT):
 
 ```powershell
