@@ -5643,3 +5643,9 @@ Copier/coller le bloc suivant a chaque fin de session:
 - Statut: in_progress
 - Note: Beta candidate preflight checkpoint.
 - Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
+
+## Checkpoint 2026-03-28 00:18:53 (UTC) - Codex
+
+- Statut: in_progress
+- Note: validation V3 scope NVIDIA-only appliquee; resultat pass_with_waivers (AMD missing_hardware, Intel no_runtime_evidence) assume par decision produit.
+- Prochaine action: poursuivre la roadmap et revalider build/tests pertinents.
