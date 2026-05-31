@@ -41,12 +41,10 @@ public final class PauCLodRenderCulling {
 	private static final int DEFAULT_ENTITY_EXTRA_CHUNKS = 0;
 	private static final int DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS = 0;
 	private static final int DEFAULT_PARTICLE_DISTANCE_BLOCKS = 80;
-	private static final int DEFAULT_EXPENSIVE_SHADER_PARTICLE_DISTANCE_BLOCKS = 64;
 	private static final int DEFAULT_LOD_CLOUD_CELL_WIDTH_BLOCKS = 12;
 	private static final int DEFAULT_LOD_CLOUD_THICKNESS_BLOCKS = 4;
 	private static final int DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES = 0;
 	private static final int DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES = 6;
-	private static final int DEFAULT_EXPENSIVE_SHADER_LOD_CLOUD_OUTER_ACTIVE_INSTANCES = 5;
 	private static final float DEFAULT_LOD_CLOUD_SPEED_BLOCKS_PER_SECOND = 6.0F;
 	private static final int DEFAULT_LOD_CLOUD_HEIGHT_OFFSET_FROM_WORLD_TOP_BLOCKS = -128;
 
@@ -124,7 +122,7 @@ public final class PauCLodRenderCulling {
 			return false;
 		}
 
-		double maxDistance = readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, defaultParticleDistanceBlocks(), 32, 384);
+		double maxDistance = readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PARTICLE_DISTANCE_BLOCKS, 32, 384);
 		Vec3 camera = cameraPosition(minecraft);
 		double dx = x - camera.x;
 		double dy = y - camera.y;
@@ -147,7 +145,7 @@ public final class PauCLodRenderCulling {
 			return true;
 		}
 
-		int outerActive = readInt(LOD_CLOUD_OUTER_ACTIVE_INSTANCES_PROPERTY, defaultLodCloudOuterActiveInstances(), 1, 8);
+		int outerActive = readInt(LOD_CLOUD_OUTER_ACTIVE_INSTANCES_PROPERTY, DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES, 1, 8);
 		int radialDistanceSqr = instanceOffsetX * instanceOffsetX + instanceOffsetZ * instanceOffsetZ;
 		return radialDistanceSqr > outerActive * outerActive;
 	}
@@ -243,7 +241,7 @@ public final class PauCLodRenderCulling {
 			+ ", blockEntityExtra="
 			+ readInt(BLOCK_ENTITY_EXTRA_CHUNKS_PROPERTY, DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS, 0, 8)
 			+ ", particles="
-			+ readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, defaultParticleDistanceBlocks(), 32, 384)
+			+ readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PARTICLE_DISTANCE_BLOCKS, 32, 384)
 			+ "b, cloudCell="
 			+ lodCloudCellWidthBlocks()
 			+ "b, cloudThickness="
@@ -251,7 +249,7 @@ public final class PauCLodRenderCulling {
 			+ "b, cloudInnerCull="
 			+ readInt(LOD_CLOUD_INNER_CULL_INSTANCES_PROPERTY, DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES, 0, 4)
 			+ ", cloudOuter="
-			+ readInt(LOD_CLOUD_OUTER_ACTIVE_INSTANCES_PROPERTY, defaultLodCloudOuterActiveInstances(), 1, 8)
+			+ readInt(LOD_CLOUD_OUTER_ACTIVE_INSTANCES_PROPERTY, DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES, 1, 8)
 			+ ", vanillaClouds="
 			+ areVanillaCloudsVisible()
 			+ ", cloudSafe="
@@ -337,28 +335,6 @@ public final class PauCLodRenderCulling {
 		} catch (RuntimeException | LinkageError ignored) {
 			return false;
 		}
-	}
-
-	private static int defaultParticleDistanceBlocks() {
-		return isExpensiveShaderFamily()
-			? DEFAULT_EXPENSIVE_SHADER_PARTICLE_DISTANCE_BLOCKS
-			: DEFAULT_PARTICLE_DISTANCE_BLOCKS;
-	}
-
-	private static int defaultLodCloudOuterActiveInstances() {
-		return isExpensiveShaderFamily()
-			? DEFAULT_EXPENSIVE_SHADER_LOD_CLOUD_OUTER_ACTIVE_INSTANCES
-			: DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES;
-	}
-
-	private static boolean isExpensiveShaderFamily() {
-		if (!PauCLodShaderContext.isShaderPackInUse()) {
-			return false;
-		}
-		return switch (PauCLodShaderProfiles.currentFamily()) {
-			case PHOTON, SOLAS -> true;
-			case BLISS, BSL, COMPLEMENTARY, RETHINKING, GENERIC -> false;
-		};
 	}
 
 	private static boolean isAquaticPlant(BlockState state) {

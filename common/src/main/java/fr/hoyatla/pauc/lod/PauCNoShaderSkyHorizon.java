@@ -21,10 +21,10 @@ public final class PauCNoShaderSkyHorizon {
 	private static final String TOP_PROPERTY = "pauc.lod.noShaderSkyHorizonTopBlocks";
 	private static final String BOTTOM_PROPERTY = "pauc.lod.noShaderSkyHorizonBottomBlocks";
 	private static final String RADIUS_MARGIN_PROPERTY = "pauc.lod.noShaderSkyHorizonRadiusMarginBlocks";
-	private static final int DEFAULT_SEGMENTS = 48;
-	private static final float DEFAULT_TOP_BLOCKS = 192.0F;
-	private static final float DEFAULT_BOTTOM_BLOCKS = -96.0F;
-	private static final float DEFAULT_RADIUS_MARGIN_BLOCKS = 12.0F;
+	private static final int DEFAULT_SEGMENTS = 64;
+	private static final float DEFAULT_TOP_BLOCKS = 768.0F;
+	private static final float DEFAULT_BOTTOM_BLOCKS = -128.0F;
+	private static final float DEFAULT_RADIUS_MARGIN_BLOCKS = 16.0F;
 	private static VertexBuffer buffer;
 	private static int bufferSegments;
 	private static float bufferRadius;

@@ -62,8 +62,6 @@ public final class PauCEmbeddedDhBridge {
 	private static final String RELIEF_UNDERGROUND_CAVE_CULLING_HEIGHT_PROPERTY = "pauc.lod.reliefUndergroundCaveCullingHeight";
 	private static final String RELIEF_SURFACE_PLAYER_Y_PROPERTY = "pauc.lod.reliefSurfacePlayerY";
 	private static final String RELIEF_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.reliefOverdrawPrevention";
-	private static final String RELIEF_SHADER_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.shaderOverdrawPrevention";
-	private static final String RELIEF_FAST_MOVEMENT_OVERDRAW_PROPERTY = "pauc.lod.reduceOverdrawWithFastMovement";
 	private static final String RELIEF_WORLD_COMPRESSION_PROPERTY = "pauc.lod.reliefWorldCompression";
 	private static final String CLEAR_RENDER_CACHE_ON_GEOMETRY_CHANGE_PROPERTY = "pauc.lod.clearRenderCacheOnGeometryChange";
 	private static final String ROUND_HORIZON_FOG_PROPERTY = "pauc.lod.roundHorizonFog";
@@ -118,7 +116,6 @@ public final class PauCEmbeddedDhBridge {
 	private static final String DH_THREAD_RUN_TIME_RATIO_FIELD = "threadRunTimeRatio";
 	private static final String DH_OVERDRAW_PREVENTION_FIELD = "overdrawPrevention";
 	private static final String DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD = "reduceOverdrawWithFastMovement";
-	private static final String DH_DISABLE_FRUSTUM_CULLING_FIELD = "disableFrustumCulling";
 	private static final String DH_ENABLE_CAVE_CULLING_FIELD = "enableCaveCulling";
 	private static final String DH_CAVE_CULLING_HEIGHT_FIELD = "caveCullingHeight";
 	private static final String DH_WORLD_COMPRESSION_FIELD = "worldCompression";
@@ -301,24 +298,16 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	private static void configureSeamlessLodTransition() {
-		boolean shaderRuntime = isShaderPackRuntimeInUse();
-		float overdrawPrevention = shaderRuntime
-			? (float) readDouble(RELIEF_SHADER_OVERDRAW_PREVENTION_PROPERTY, 0.96D, -1.0D, 1.0D)
-			: (float) readDouble(RELIEF_OVERDRAW_PREVENTION_PROPERTY, 0.88D, -1.0D, 1.0D);
-		boolean reduceOverdrawWithFastMovement = readBoolean(RELIEF_FAST_MOVEMENT_OVERDRAW_PROPERTY, shaderRuntime);
+		float overdrawPrevention = !isShaderPackRuntimeInUse()
+			? (float) readDouble(RELIEF_OVERDRAW_PREVENTION_PROPERTY, 0.88D, -1.0D, 1.0D)
+			: 1.0F;
 		boolean configured = setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_VANILLA_FADE_MODE_FIELD, EDhApiMcRenderingFadeMode.NONE)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_OVERDRAW_PREVENTION_FIELD, overdrawPrevention)
-			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD, reduceOverdrawWithFastMovement);
-		boolean frustumConfigured = setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_DISABLE_FRUSTUM_CULLING_FIELD, Boolean.FALSE);
+			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD, Boolean.FALSE);
 
-		if ((configured || frustumConfigured) && !loggedSeamlessTransitionOverride) {
+		if (configured && !loggedSeamlessTransitionOverride) {
 			loggedSeamlessTransitionOverride = true;
-			LOGGER.info(
-				"PauC embedded DH bridge configured strict vanilla-to-LOD boundary: vanillaFade=NONE, overdraw={}, fastMovementOverdraw={}, frustumCulling=true, shaderRuntime={}.",
-				overdrawPrevention,
-				reduceOverdrawWithFastMovement,
-				shaderRuntime
-			);
+			LOGGER.info("PauC embedded DH bridge configured strict vanilla-to-LOD boundary: vanillaFade=NONE, overdraw={}, fastMovementOverdraw=false.", overdrawPrevention);
 		}
 	}
 
