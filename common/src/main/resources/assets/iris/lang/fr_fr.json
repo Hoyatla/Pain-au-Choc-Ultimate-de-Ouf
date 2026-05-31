@@ -31,11 +31,11 @@
     "options.pauc.lodDistance":  "Distance LOD",
     "options.pauc.lodDistance.disabled":  "Distance LOD : OFF",
     "options.pauc.lodDistance.tooltip":  "Définit la distance cible des LODs PauC. Les chunks vanilla restent prioritaires, puis PauC continue jusqu'à cette valeur.",
-    "options.pauc.lodClouds":  "Nuages LOD",
-    "options.pauc.lodClouds.enabled":  "Nuages LOD : ON",
-    "options.pauc.lodClouds.disabled":  "Nuages LOD : OFF",
-    "options.pauc.lodClouds.disabledWithLods":  "Nuages LOD : OFF",
-    "options.pauc.lodClouds.tooltip":  "Active ou désactive les nuages lointains des LODs PauC.",
+    "options.pauc.lodClouds":  "Nuages LOD + ciel",
+    "options.pauc.lodClouds.enabled":  "Nuages LOD + ciel : ON",
+    "options.pauc.lodClouds.disabled":  "Nuages LOD + ciel : OFF",
+    "options.pauc.lodClouds.disabledWithLods":  "Nuages LOD + ciel : OFF",
+    "options.pauc.lodClouds.tooltip":  "Active ou désactive les nuages lointains des LODs PauC et le dégradé rond du ciel.",
     "pack.iris.select.title":  "Sélectionner",
     "pack.iris.list.label":  "+ Glissez-déposez vos packs de shaders ici pour les ajouter"
 }
