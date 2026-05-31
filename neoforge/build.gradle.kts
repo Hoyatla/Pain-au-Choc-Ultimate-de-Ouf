@@ -709,6 +709,7 @@ tasks {
         source(project(":common").sourceSets.main.get().allSource)
         source(project(":common").sourceSets.getByName("paucorCompatibility").allSource)
         source(project(":common").sourceSets.getByName("vendored").allSource)
+        exclude("net/irisshaders/iris/compat/modmenu/**")
     }
 
     javadoc { source(project(":common").sourceSets.main.get().allJava) }
