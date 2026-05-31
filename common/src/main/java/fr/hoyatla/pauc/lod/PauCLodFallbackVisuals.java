@@ -32,7 +32,7 @@ public final class PauCLodFallbackVisuals {
 	private static final String UNDERWATER_FOG_END_CHUNKS_PROPERTY = "pauc.lod.underwaterFallbackFogEndChunks";
 	private static final String DH_FLAT_SHADER = "assets/distanthorizons/shaders/shared/gl/flat_shaded.frag";
 	private static final String DH_STANDARD_VERTEX_SHADER = "assets/distanthorizons/shaders/shared/gl/standard.vert";
-	private static final int STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 18;
+	private static final int STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 8;
 	private static final int STANDARD_FOG_END_MARGIN_CHUNKS = 0;
 	private static final float STANDARD_FOG_INTENSITY = 1.0F;
 	private static final float STANDARD_BRIGHTNESS = 1.0F;
