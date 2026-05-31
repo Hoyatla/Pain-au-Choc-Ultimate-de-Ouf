@@ -27,6 +27,9 @@ public final class PauCClientFpsGovernor {
 	private static final String VILLAGE_WARMUP_SCALE_PROPERTY = "pauc.lod.villageWarmupScale";
 	private static final String QUALITY_UPGRADE_STABLE_TICKS_PROPERTY = "pauc.lod.qualityUpgradeStableTicks";
 	private static final String MAX_QUALITY_TIER_PROPERTY = "pauc.lod.maxAdaptiveQualityTier";
+	private static final String MAX_SHADER_QUALITY_TIER_PROPERTY = "pauc.lod.maxShaderAdaptiveQualityTier";
+	private static final String MAX_SOLAS_QUALITY_TIER_PROPERTY = "pauc.lod.maxSolasAdaptiveQualityTier";
+	private static final String MAX_PHOTON_QUALITY_TIER_PROPERTY = "pauc.lod.maxPhotonAdaptiveQualityTier";
 	private static final int LOG_THROTTLE_TICKS = 100;
 	private static double smoothedFps = -1.0D;
 	private static Policy lastPolicy = Policy.STARTUP;
@@ -232,7 +235,7 @@ public final class PauCClientFpsGovernor {
 		boolean shaderActive,
 		PauCLodShaderProfiles.Family shaderFamily
 	) {
-		QualityTier maxTier = QualityTier.maxAllowed();
+		QualityTier maxTier = QualityTier.maxAllowed(shaderActive, shaderFamily);
 		QualityTier currentTier = currentQualityTier(shaderActive, shaderFamily);
 		if (currentTier.ordinal() >= maxTier.ordinal()) {
 			return;
@@ -378,10 +381,29 @@ public final class PauCClientFpsGovernor {
 			return tiers[Math.min(maxTier.ordinal(), ordinal() + 1)];
 		}
 
-		private static QualityTier maxAllowed() {
-			String rawValue = System.getProperty(MAX_QUALITY_TIER_PROPERTY);
+		private static QualityTier maxAllowed(boolean shaderActive, PauCLodShaderProfiles.Family shaderFamily) {
+			QualityTier globalMax = read(MAX_QUALITY_TIER_PROPERTY, POLISH);
+			if (!shaderActive) {
+				return globalMax;
+			}
+
+			QualityTier shaderDefault = switch (shaderFamily) {
+				case PHOTON, SOLAS -> FAR;
+				case BLISS, BSL, COMPLEMENTARY, RETHINKING, GENERIC -> POLISH;
+			};
+			QualityTier shaderMax = read(MAX_SHADER_QUALITY_TIER_PROPERTY, shaderDefault);
+			QualityTier familyMax = switch (shaderFamily) {
+				case PHOTON -> read(MAX_PHOTON_QUALITY_TIER_PROPERTY, shaderMax);
+				case SOLAS -> read(MAX_SOLAS_QUALITY_TIER_PROPERTY, shaderMax);
+				case BLISS, BSL, COMPLEMENTARY, RETHINKING, GENERIC -> shaderMax;
+			};
+			return lower(globalMax, familyMax);
+		}
+
+		private static QualityTier read(String property, QualityTier fallback) {
+			String rawValue = System.getProperty(property);
 			if (rawValue == null || rawValue.isBlank()) {
-				return POLISH;
+				return fallback;
 			}
 			String normalized = rawValue.trim().replace('-', '_').toUpperCase(Locale.ROOT);
 			for (QualityTier tier : values()) {
@@ -389,7 +411,11 @@ public final class PauCClientFpsGovernor {
 					return tier;
 				}
 			}
-			return POLISH;
+			return fallback;
+		}
+
+		private static QualityTier lower(QualityTier left, QualityTier right) {
+			return left.ordinal() <= right.ordinal() ? left : right;
 		}
 	}
 }
