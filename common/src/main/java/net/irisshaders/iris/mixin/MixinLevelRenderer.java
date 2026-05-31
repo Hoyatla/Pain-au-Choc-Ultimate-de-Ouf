@@ -4,7 +4,6 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
-import fr.hoyatla.pauc.lod.PauCSkyHorizonVeil;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.gl.IrisRenderSystem;
@@ -234,8 +233,6 @@ public class MixinLevelRenderer {
 			return;
 		}
 
-		pipeline.setPhase(PauCSkyHorizonVeil.shouldUseSkyShaderPhase() ? WorldRenderingPhase.SKY : WorldRenderingPhase.NONE);
-		PauCSkyHorizonVeil.renderAfterSky(poseStack);
 		pipeline.setPhase(WorldRenderingPhase.NONE);
 	}
 

@@ -186,8 +186,6 @@ public final class PauCLodClientSettings {
 			+ fillLodHoles()
 			+ ", lodClouds="
 			+ isLodCloudsEnabled()
-			+ ", skyVeil="
-			+ isLodCloudsEnabled()
 			+ "]";
 	}
 
