@@ -1,0 +1,24 @@
+{
+  "targets": [
+    "pauc_sandworm_final"
+  ],
+  "passes": [
+    {
+      "name": "paucultimate:sandworm_sonic_boom_safe",
+      "intarget": "minecraft:main",
+      "outtarget": "pauc_sandworm_final",
+      "auxtargets": [
+        {
+          "name": "MainDepthSampler",
+          "id": "minecraft:main"
+        }
+      ],
+      "uniforms": []
+    },
+    {
+      "name": "blit",
+      "intarget": "pauc_sandworm_final",
+      "outtarget": "minecraft:main"
+    }
+  ]
+}

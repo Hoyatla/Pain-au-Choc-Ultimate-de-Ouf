@@ -1,0 +1,25 @@
+modLoader = "javafml"
+loaderVersion = "*"
+license = "All Rights Reserved"
+
+[[mods]]
+modId = "paucultimate"
+version = "${version}"
+displayName = "PauCUltimate"
+logoFile = "paucultimate.png"
+authors = "Hoyatla"
+description = '''
+Pain au Choc Ultimate de Ouf fuses PauC Shader and PauC Core into a single Forge rendering stack.
+'''
+provides = ["pauc_core", "pauc_shader"]
+
+[[dependencies.paucultimate]]
+modId = "embeddium"
+mandatory = false
+versionRange = "*"
+ordering = "NONE"
+side = "CLIENT"
+
+[mods."paucultimate:options"]
+"mixin.features.render.world.sky" = false
+"mixin.features.render.gui.font" = false

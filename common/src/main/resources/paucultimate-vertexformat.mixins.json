@@ -1,0 +1,24 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.irisshaders.iris.mixin.vertices",
+  "refmap": "paucultimate.refmap.json",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "paucultimate.refmap.json",
+  "client": [
+    "MixinVertexFormat",
+    "MixinVertexFormatElement",
+    "MixinVertexBuffer",
+    "MixinBufferBuilder",
+    "block_rendering.MixinBlockRenderDispatcher",
+    "block_rendering.MixinBufferBuilder_SeparateAo",
+    "block_rendering.MixinChunkRebuildTask",
+    "block_rendering.MixinClientLevel",
+    "block_rendering.MixinModelBlockRenderer",
+    "immediate.MixinBufferSource",
+    "immediate.MixinLevelRenderer"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
