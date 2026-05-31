@@ -35,7 +35,7 @@
     "options.pauc.lodClouds.enabled":  "Nuages LOD : ON",
     "options.pauc.lodClouds.disabled":  "Nuages LOD : OFF",
     "options.pauc.lodClouds.disabledWithLods":  "Nuages LOD : OFF",
-    "options.pauc.lodClouds.tooltip":  "Active ou désactive les nuages lointains des LODs PauC.",
+    "options.pauc.lodClouds.tooltip":  "Active ou désactive les nuages lointains des LODs PauC et le masque de ciel sans shader.",
     "pack.iris.select.title":  "Sélectionner",
     "pack.iris.list.label":  "+ Glissez-déposez vos packs de shaders ici pour les ajouter"
 }

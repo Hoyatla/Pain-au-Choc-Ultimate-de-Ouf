@@ -73,7 +73,7 @@
     "options.pauc.lodClouds.enabled":  "LOD Clouds: ON",
     "options.pauc.lodClouds.disabled":  "LOD Clouds: OFF",
     "options.pauc.lodClouds.disabledWithLods":  "LOD Clouds: OFF",
-    "options.pauc.lodClouds.tooltip":  "Toggles distant PauC LOD clouds.",
+    "options.pauc.lodClouds.tooltip":  "Toggles distant PauC LOD clouds and the shaderless sky-edge mask.",
     "options.iris.colorSpace":  "Color Space",
     "options.iris.colorSpace.sodium_tooltip":  "The color space to transform the screen to. Works on top of shader packs. Use SRGB if unsure.",
     "options.iris.gui.hide":  "Hide GUI",
