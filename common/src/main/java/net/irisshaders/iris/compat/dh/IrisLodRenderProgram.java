@@ -48,6 +48,8 @@ public class IrisLodRenderProgram {
 	private static final String COMPLEMENTARY_DH_FOG_MIX = "0.16";
 	private static final String GENERIC_DH_FOG_MIX = "0.10";
 	private static final String BLISS_BORDER_FOG_MIX = "0.12";
+	private static final String ROUND_HORIZON_SHADER_FOG_STRENGTH_PROPERTY = "pauc.lod.roundHorizonShaderFogStrength";
+	private static final String ROUND_HORIZON_WATER_FOG_STRENGTH_PROPERTY = "pauc.lod.roundHorizonWaterFogStrength";
 	private static final Pattern DH_FOG_CALL = Pattern.compile(
 		"DoFog\\s*\\(\\s*(color\\s*,\\s*sky\\s*,\\s*lViewPos\\s*,\\s*playerPos\\s*,\\s*VdotU\\s*,\\s*VdotS\\s*,\\s*dither\\s*,\\s*false\\s*,\\s*0\\.0)\\s*\\)\\s*;"
 	);
@@ -373,7 +375,7 @@ public class IrisLodRenderProgram {
 	}
 
 	private static String farFogStrength(PauCLodShaderProfiles.Profile profile) {
-		return profile.farFogStrength();
+		return readClampedFloatString(ROUND_HORIZON_SHADER_FOG_STRENGTH_PROPERTY, 1.0F, 0.0F, 1.0F);
 	}
 
 	private static String waterGradientStrength(PauCLodShaderProfiles.Profile profile) {
@@ -381,7 +383,7 @@ public class IrisLodRenderProgram {
 	}
 
 	private static String waterEndFogStrength(PauCLodShaderProfiles.Profile profile) {
-		return profile.waterEndFogStrength();
+		return readClampedFloatString(ROUND_HORIZON_WATER_FOG_STRENGTH_PROPERTY, 1.0F, 0.0F, 1.0F);
 	}
 
 	private static String waterDeepTone(PauCLodShaderProfiles.Profile profile) {
@@ -399,6 +401,19 @@ public class IrisLodRenderProgram {
 			case RETHINKING -> "0.16";
 			default -> "1.00";
 		};
+	}
+
+	private static String readClampedFloatString(String key, float fallback, float min, float max) {
+		String rawValue = System.getProperty(key);
+		float value = fallback;
+		if (rawValue != null) {
+			try {
+				value = Float.parseFloat(rawValue.trim());
+			} catch (NumberFormatException ignored) {
+				value = fallback;
+			}
+		}
+		return Float.toString(Math.max(min, Math.min(max, value)));
 	}
 
 	private static String waterOpacityBoost(PauCLodShaderProfiles.Profile profile) {
@@ -671,7 +686,7 @@ public class IrisLodRenderProgram {
 				return source;
 			}
 			rewritten = distanceMatcher.replaceFirst(
-				Matcher.quoteReplacement("float view_distance = length(scene_pos);\n\tfloat paucChunkBoundaryDistance = max(abs(scene_pos.x), abs(scene_pos.z));")
+				Matcher.quoteReplacement("float view_distance = length(scene_pos);\n\tfloat paucChunkBoundaryDistance = length(scene_pos.xz);")
 			);
 		}
 		String chunkFade = DH_FADE_VIEW_DISTANCE.matcher(rewritten).replaceAll(
@@ -957,7 +972,7 @@ public class IrisLodRenderProgram {
 		while (matcher.find()) {
 			patched = true;
 			String replacement = "{\n"
-				+ "    float paucDhPhotonWaterDistance = max(abs(scene_pos.x), abs(scene_pos.z));\n"
+				+ "    float paucDhPhotonWaterDistance = length(scene_pos.xz);\n"
 				+ "    float paucDhPhotonWaterEndFog = smoothstep(max(float(paucLodEndDistance) - " + farFogWidth(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON)) + ", 0.0), float(paucLodEndDistance), paucDhPhotonWaterDistance);\n"
 				+ waterRingGradient(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON), "fragment_color", "paucDhPhotonWaterDistance", "paucDhPhotonWater")
 				+ "    fragment_color.rgb = mix(fragment_color.rgb, iris_FogColor.rgb, " + waterEndFogStrength(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON)) + " * paucDhPhotonWaterEndFog);\n"

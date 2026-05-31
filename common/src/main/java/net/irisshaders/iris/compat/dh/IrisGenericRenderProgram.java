@@ -297,7 +297,7 @@ public class IrisGenericRenderProgram implements IDhApiGenericObjectShaderProgra
 				return source;
 			}
 			rewritten = distanceMatcher.replaceFirst(
-				Matcher.quoteReplacement("float view_distance = length(scene_pos);\n\tfloat paucChunkBoundaryDistance = max(abs(scene_pos.x), abs(scene_pos.z));")
+				Matcher.quoteReplacement("float view_distance = length(scene_pos);\n\tfloat paucChunkBoundaryDistance = length(scene_pos.xz);")
 			);
 		}
 		String chunkFade = DH_FADE_VIEW_DISTANCE.matcher(rewritten).replaceAll(

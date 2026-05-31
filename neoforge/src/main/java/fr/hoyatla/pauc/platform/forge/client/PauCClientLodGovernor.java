@@ -92,7 +92,7 @@ public final class PauCClientLodGovernor {
 
 		int deltaChunkX = chunkX - frame.playerChunkX();
 		int deltaChunkZ = chunkZ - frame.playerChunkZ();
-		return frame.range().containsFilledSquareOffset(deltaChunkX, deltaChunkZ);
+		return frame.range().containsRoundHorizonOffset(deltaChunkX, deltaChunkZ);
 	}
 
 	public static String describeState() {

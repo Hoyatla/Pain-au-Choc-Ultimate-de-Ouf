@@ -146,7 +146,8 @@ public final class PauCLodRenderCulling {
 		}
 
 		int outerActive = readInt(LOD_CLOUD_OUTER_ACTIVE_INSTANCES_PROPERTY, DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES, 1, 8);
-		return Math.abs(instanceOffsetX) > outerActive || Math.abs(instanceOffsetZ) > outerActive;
+		int radialDistanceSqr = instanceOffsetX * instanceOffsetX + instanceOffsetZ * instanceOffsetZ;
+		return radialDistanceSqr > outerActive * outerActive;
 	}
 
 	public static boolean shouldCullVanillaFoliage(BlockState state, BlockPos pos) {

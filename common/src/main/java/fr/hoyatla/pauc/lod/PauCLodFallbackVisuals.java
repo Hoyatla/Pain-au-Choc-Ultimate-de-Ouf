@@ -34,7 +34,7 @@ public final class PauCLodFallbackVisuals {
 	private static final String DH_STANDARD_VERTEX_SHADER = "assets/distanthorizons/shaders/shared/gl/standard.vert";
 	private static final int STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 18;
 	private static final int STANDARD_FOG_END_MARGIN_CHUNKS = 0;
-	private static final float STANDARD_FOG_INTENSITY = 0.10F;
+	private static final float STANDARD_FOG_INTENSITY = 1.0F;
 	private static final float STANDARD_BRIGHTNESS = 1.0F;
 	private static final float STANDARD_SHADOW_LIFT = 0.0F;
 	private static final float STANDARD_SATURATION = 1.0F;
@@ -48,8 +48,8 @@ public final class PauCLodFallbackVisuals {
 	private static final float STANDARD_SEAM_MORPH_WIDTH_BLOCKS = 112.0F;
 	private static final float STANDARD_SEAM_MORPH_Y_LIFT = 0.0F;
 	private static final int LATE_FOG_END_MARGIN_CHUNKS = 0;
-	private static final float LATE_CLEAR_FOG_INTENSITY = 0.12F;
-	private static final float LATE_DARK_FOG_INTENSITY = 0.20F;
+	private static final float LATE_CLEAR_FOG_INTENSITY = 1.0F;
+	private static final float LATE_DARK_FOG_INTENSITY = 1.0F;
 	private static final float LATE_CLEAR_FOG_FLOOR = 0.0F;
 	private static final float LATE_DARK_FOG_FLOOR = 0.0F;
 	private static final float LATE_CLEAR_BRIGHTNESS = 1.02F;
@@ -106,9 +106,10 @@ public final class PauCLodFallbackVisuals {
 		float[] fogColor = RenderSystem.getShaderFogColor();
 		float[] presentationFogColor = lateRender ? PauCLodScreenFogColor.currentOrFallback(fogColor) : fogColor;
 		float rescueStrength = lateRender ? PauCLodScreenFogColor.rescueStrength(presentationFogColor) : 0.0F;
+		int visualEndChunk = range.roundHorizonEndChunk();
 		int defaultVeilStartChunk = Math.max(
 			range.lodStartChunk(),
-			range.lodEndChunk() - readInt(HORIZON_VEIL_START_BEFORE_END_PROPERTY, STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS, 1, 32)
+			visualEndChunk - readInt(HORIZON_VEIL_START_BEFORE_END_PROPERTY, STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS, 1, 64)
 		);
 		int defaultFogStartOffset = Math.max(0, defaultVeilStartChunk - range.lodStartChunk());
 		int offsetStartChunk = range.lodStartChunk() + readInt(FOG_START_OFFSET_PROPERTY, defaultFogStartOffset, 0, 64);
@@ -116,13 +117,13 @@ public final class PauCLodFallbackVisuals {
 		int defaultFogEndMargin = lateRender
 			? LATE_FOG_END_MARGIN_CHUNKS
 			: STANDARD_FOG_END_MARGIN_CHUNKS;
-		float fogEnd = (range.lodEndChunk() + readInt(FOG_END_MARGIN_PROPERTY, defaultFogEndMargin, 0, 64)) * 16.0F;
+		float fogEnd = (visualEndChunk + readInt(FOG_END_MARGIN_PROPERTY, defaultFogEndMargin, 0, 64)) * 16.0F;
 		if (fogEnd <= fogStart + 16.0F) {
 			fogStart = Math.max(range.lodStartChunk() * 16.0F, fogEnd - 16.0F);
 		}
 
 		if (underwater) {
-			int underwaterStartChunk = readInt(UNDERWATER_FOG_START_CHUNKS_PROPERTY, UNDERWATER_FOG_START_CHUNKS, 0, range.lodEndChunk());
+			int underwaterStartChunk = readInt(UNDERWATER_FOG_START_CHUNKS_PROPERTY, UNDERWATER_FOG_START_CHUNKS, 0, visualEndChunk);
 			int underwaterEndChunk = readInt(UNDERWATER_FOG_END_CHUNKS_PROPERTY, UNDERWATER_FOG_END_CHUNKS, underwaterStartChunk + 1, 64);
 			fogStart = underwaterStartChunk * 16.0F;
 			fogEnd = Math.max(fogStart + 16.0F, underwaterEndChunk * 16.0F);

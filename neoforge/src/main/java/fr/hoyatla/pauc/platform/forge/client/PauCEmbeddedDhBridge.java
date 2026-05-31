@@ -40,7 +40,7 @@ public final class PauCEmbeddedDhBridge {
 	private static volatile boolean loggedReliefGeometryOverride;
 	private static volatile boolean loggedReliefCompressionOverride;
 	private static volatile boolean loggedDhFogConfigOverride;
-	private static volatile boolean loggedFilledSquareGenerationPolicy;
+	private static volatile boolean loggedRoundHorizonGenerationPolicy;
 	private static volatile Boolean lastLoggedDistantCloudPolicy;
 	private static volatile boolean loggedMissingCoreConfigOverride;
 	private static volatile boolean disabledRenderingApplied;
@@ -64,6 +64,15 @@ public final class PauCEmbeddedDhBridge {
 	private static final String RELIEF_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.reliefOverdrawPrevention";
 	private static final String RELIEF_WORLD_COMPRESSION_PROPERTY = "pauc.lod.reliefWorldCompression";
 	private static final String CLEAR_RENDER_CACHE_ON_GEOMETRY_CHANGE_PROPERTY = "pauc.lod.clearRenderCacheOnGeometryChange";
+	private static final String ROUND_HORIZON_FOG_PROPERTY = "pauc.lod.roundHorizonFog";
+	private static final String ROUND_HORIZON_FOG_START_RATIO_PROPERTY = "pauc.lod.roundHorizonFogStartRatio";
+	private static final String ROUND_HORIZON_FOG_MIN_PROPERTY = "pauc.lod.roundHorizonFogMin";
+	private static final String ROUND_HORIZON_FOG_MAX_PROPERTY = "pauc.lod.roundHorizonFogMax";
+	private static final String ROUND_HORIZON_FOG_DENSITY_PROPERTY = "pauc.lod.roundHorizonFogDensity";
+	private static final float DEFAULT_ROUND_HORIZON_FOG_START_RATIO = 0.82F;
+	private static final float DEFAULT_ROUND_HORIZON_FOG_MIN = 0.0F;
+	private static final float DEFAULT_ROUND_HORIZON_FOG_MAX = 1.0F;
+	private static final float DEFAULT_ROUND_HORIZON_FOG_DENSITY = 1.0F;
 	private static final String DH_GRAPHICS_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics";
 	private static final String DH_DEBUGGING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Debugging";
 	private static final String DH_FOG_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$Fog";
@@ -132,24 +141,26 @@ public final class PauCEmbeddedDhBridge {
 		}
 
 		try {
-			int targetDistance = range.lodEndChunk();
+			int targetDistance = range.roundHorizonEndChunk();
 			RuntimeLodSettings runtimeSettings = RuntimeLodSettings.fastDefaults();
 			boolean shaderPackInUse = isShaderPackRuntimeInUse();
 			boolean nativeShaderFog = shaderPackInUse && !PauCLodShaderContext.isFallbackActive();
+			boolean dhDistanceFog = shouldUseDhDistanceFog(nativeShaderFog);
 			configureCoreRuntimeSettings(targetDistance, runtimeSettings);
 			clearApiValueIfSet(configs.graphics().fog().drawMode());
-			setApiValueIfChanged(configs.graphics().fog().enableDhFog(), nativeShaderFog);
+			setApiValueIfChanged(configs.graphics().fog().enableDhFog(), dhDistanceFog);
 			setApiValueIfChanged(configs.graphics().fog().enableVanillaFog(), !nativeShaderFog);
 			setApiValueIfChanged(configs.graphics().fog().disableVanillaFog(), false);
-			configureDhFogForPaucRange(range, nativeShaderFog);
+			configureDhFogForPaucRange(range, nativeShaderFog, dhDistanceFog);
 			disableDhVanillaGraphicsOverride();
 			enableDhFarClipFade();
 			enableDhDitherFade();
 			disabledRenderingApplied = false;
 			if (lastConfiguredTarget != targetDistance) {
 				LOGGER.info(
-					"PauC embedded DH bridge configured LOD target to {} chunks with quality horizontal={}, vertical={}, resolution={}.",
+					"PauC embedded DH bridge configured round LOD horizon to {} chunks from player target {} with quality horizontal={}, vertical={}, resolution={}.",
 					targetDistance,
+					range.lodEndChunk(),
 					runtimeSettings.horizontalQuality(),
 					runtimeSettings.verticalQuality(),
 					runtimeSettings.maxHorizontalResolution()
@@ -259,19 +270,17 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	private static void configureGenerationFillPolicy(int targetDistance) {
-		int filledCornerDistanceChunks = PauCLodRange.filledSquareCornerDistanceChunks(targetDistance);
-		int requestDistanceBlocks = clampInt((filledCornerDistanceChunks + 2) * 16, 256, 4096);
+		int requestDistanceBlocks = clampInt((targetDistance + 2) * 16, 256, 4096);
 		int requestRateLimit = PauCLodClientSettings.generationRequestRateLimit();
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_CONFIG_CLASS, DH_GENERATION_REQUEST_RATE_LIMIT_FIELD, requestRateLimit);
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_CONFIG_CLASS, DH_MAX_GENERATION_REQUEST_DISTANCE_FIELD, requestDistanceBlocks);
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_EXPERIMENTAL_CONFIG_CLASS, DH_ENABLE_N_SIZE_GENERATION_FIELD, PauCLodClientSettings.enableNSizeGeneration());
 		setDhCoreConfigValueWithoutSaving(DH_LOD_BUILDING_EXPERIMENTAL_CONFIG_CLASS, DH_UPSAMPLE_LOWER_DETAIL_LODS_FIELD, PauCLodClientSettings.fillLodHoles());
-		if (!loggedFilledSquareGenerationPolicy) {
-			loggedFilledSquareGenerationPolicy = true;
+		if (!loggedRoundHorizonGenerationPolicy) {
+			loggedRoundHorizonGenerationPolicy = true;
 			LOGGER.info(
-				"PauC embedded DH bridge keeps the LOD square filled: radialTarget={} chunks, filledCorner={} chunks, generationRequest={} blocks.",
+				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, generationRequest={} blocks.",
 				targetDistance,
-				filledCornerDistanceChunks,
 				requestDistanceBlocks
 			);
 		}
@@ -365,19 +374,43 @@ public final class PauCEmbeddedDhBridge {
 		}
 	}
 
-	private static void configureDhFogForPaucRange(PauCLodRange range, boolean nativeShaderFog) {
-		boolean configured = setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_ENABLE_DH_FOG_FIELD, false)
-			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_START_FIELD, 1.0F)
+	private static void configureDhFogForPaucRange(PauCLodRange range, boolean nativeShaderFog, boolean dhDistanceFog) {
+		float farFogStart = dhDistanceFog
+			? readFloat(ROUND_HORIZON_FOG_START_RATIO_PROPERTY, DEFAULT_ROUND_HORIZON_FOG_START_RATIO, 0.05F, 0.99F)
+			: 1.0F;
+		float farFogMin = dhDistanceFog
+			? readFloat(ROUND_HORIZON_FOG_MIN_PROPERTY, DEFAULT_ROUND_HORIZON_FOG_MIN, 0.0F, 1.0F)
+			: 0.0F;
+		float farFogMax = dhDistanceFog
+			? readFloat(ROUND_HORIZON_FOG_MAX_PROPERTY, DEFAULT_ROUND_HORIZON_FOG_MAX, farFogMin, 1.0F)
+			: 0.0F;
+		float farFogDensity = dhDistanceFog
+			? readFloat(ROUND_HORIZON_FOG_DENSITY_PROPERTY, DEFAULT_ROUND_HORIZON_FOG_DENSITY, 0.0F, 1.0F)
+			: 0.0F;
+		boolean configured = setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_ENABLE_DH_FOG_FIELD, dhDistanceFog)
+			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_START_FIELD, farFogStart)
 			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_END_FIELD, 1.0F)
-			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_MIN_FIELD, 0.0F)
-			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_MAX_FIELD, 0.0F)
-			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_DENSITY_FIELD, 0.0F)
+			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_MIN_FIELD, farFogMin)
+			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_MAX_FIELD, farFogMax)
+			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_DENSITY_FIELD, farFogDensity)
 			& setDhCoreConfigValueWithoutSaving(DH_FOG_CONFIG_CLASS, DH_FAR_FOG_FALLOFF_FIELD, EDhApiFogFalloff.LINEAR);
 
 		if (configured && !loggedDhFogConfigOverride) {
 			loggedDhFogConfigOverride = true;
-			LOGGER.info("PauC embedded DH bridge disabled distant LOD fog for GPU cost and cleaner horizons: {}", range.describe());
+			LOGGER.info(
+				"PauC embedded DH bridge configured round LOD distance fog: enabled={}, startRatio={}, endRatio=1.0, max={}, density={}, shaderManaged={}, {}",
+				dhDistanceFog,
+				roundThreeDecimals(farFogStart),
+				roundThreeDecimals(farFogMax),
+				roundThreeDecimals(farFogDensity),
+				nativeShaderFog,
+				range.describe()
+			);
 		}
+	}
+
+	private static boolean shouldUseDhDistanceFog(boolean nativeShaderFog) {
+		return !nativeShaderFog && readBoolean(ROUND_HORIZON_FOG_PROPERTY, true);
 	}
 
 	private static boolean setDhCoreConfigApiValue(String configClassName, String fieldName, Object value) {
@@ -506,6 +539,24 @@ public final class PauCEmbeddedDhBridge {
 		} catch (NumberFormatException ignored) {
 			return clampInt(fallback, min, max);
 		}
+	}
+
+	private static float readFloat(String key, float fallback, float min, float max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return clamp(fallback, min, max);
+		}
+
+		try {
+			return clamp(Float.parseFloat(rawValue.trim()), min, max);
+		} catch (NumberFormatException ignored) {
+			return clamp(fallback, min, max);
+		}
+	}
+
+	private static boolean readBoolean(String key, boolean fallback) {
+		String rawValue = System.getProperty(key);
+		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue.trim());
 	}
 
 	private static double readDouble(String key, double fallback, double min, double max) {

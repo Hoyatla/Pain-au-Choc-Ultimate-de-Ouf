@@ -44,7 +44,7 @@ public final class PauCLodHorizonState {
 		int startBeforeTarget = PauCLodShaderContext.isShaderPackInUse()
 			? readInt(FOG_START_BEFORE_TARGET_PROPERTY, DEFAULT_FOG_START_BEFORE_TARGET_CHUNKS, 1, 8)
 			: readInt(SHADERLESS_FOG_START_BEFORE_TARGET_PROPERTY, DEFAULT_SHADERLESS_FOG_START_BEFORE_TARGET_CHUNKS, 1, 12);
-		int fogStartChunk = Math.max(range.lodStartChunk(), range.lodEndChunk() - startBeforeTarget);
+		int fogStartChunk = Math.max(range.lodStartChunk(), range.roundHorizonEndChunk() - startBeforeTarget);
 		return fogStartChunk;
 	}
 
@@ -57,7 +57,7 @@ public final class PauCLodHorizonState {
 		int endMargin = PauCLodShaderContext.isShaderPackInUse()
 			? readInt(FOG_END_MARGIN_PROPERTY, DEFAULT_FOG_END_MARGIN_CHUNKS, -8, 64)
 			: readInt(SHADERLESS_FOG_END_MARGIN_PROPERTY, DEFAULT_SHADERLESS_FOG_END_MARGIN_CHUNKS, 0, 32);
-		return Math.max(range.lodEndChunk() + endMargin, vanillaFogStartChunk() + 1);
+		return Math.max(range.roundHorizonEndChunk() + endMargin, vanillaFogStartChunk() + 1);
 	}
 
 	public static String describeVisualPolicy() {

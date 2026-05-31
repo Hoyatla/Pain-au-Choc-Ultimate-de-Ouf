@@ -32,6 +32,10 @@ public record PauCLodRange(
 		return filledSquareCornerDistanceChunks(lodEndChunk);
 	}
 
+	public int roundHorizonEndChunk() {
+		return filledSquareCornerDistanceChunks();
+	}
+
 	public boolean containsChebyshevDistance(int distanceChunks) {
 		return enabled && distanceChunks >= lodStartChunk && distanceChunks <= lodEndChunk;
 	}
@@ -40,12 +44,20 @@ public record PauCLodRange(
 		return enabled && distanceChunks >= lodStartChunk && distanceChunks <= lodEndChunk;
 	}
 
+	public boolean containsRoundHorizonDistance(double distanceChunks) {
+		return enabled && distanceChunks >= lodStartChunk && distanceChunks <= roundHorizonEndChunk();
+	}
+
 	public boolean containsFilledSquareOffset(int deltaChunkX, int deltaChunkZ) {
 		return containsChebyshevDistance(chebyshevDistanceChunks(deltaChunkX, deltaChunkZ));
 	}
 
 	public boolean containsRadialOffset(int deltaChunkX, int deltaChunkZ) {
 		return containsRadialDistance(radialDistanceChunks(deltaChunkX, deltaChunkZ));
+	}
+
+	public boolean containsRoundHorizonOffset(int deltaChunkX, int deltaChunkZ) {
+		return containsRoundHorizonDistance(radialDistanceChunks(deltaChunkX, deltaChunkZ));
 	}
 
 	public int detailLevelForDistance(int distanceChunks) {
@@ -68,7 +80,7 @@ public record PauCLodRange(
 
 	public int detailLevelForRadialDistance(double distanceChunks) {
 		if (!containsRadialDistance(distanceChunks)) {
-			return enabled && distanceChunks > lodEndChunk && distanceChunks <= filledSquareCornerDistanceChunks() ? 4 : 0;
+			return enabled && distanceChunks > lodEndChunk && distanceChunks <= roundHorizonEndChunk() ? 4 : 0;
 		}
 
 		double lodDistance = distanceChunks - lodStartChunk;
@@ -97,8 +109,8 @@ public record PauCLodRange(
 			+ lodRadiusChunks()
 			+ ", radialTarget="
 			+ lodEndChunk
-			+ ", filledCorner="
-			+ filledSquareCornerDistanceChunks()
+			+ ", roundHorizon="
+			+ roundHorizonEndChunk()
 			+ "]";
 	}
 
