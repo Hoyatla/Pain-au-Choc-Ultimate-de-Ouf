@@ -13,17 +13,32 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.Iterator;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 public final class PauCLodRenderCulling {
 	private static final String ENABLED_PROPERTY = "pauc.lod.renderCulling";
 	private static final String VANILLA_TERRAIN_CULLING_PROPERTY = "pauc.lod.cull.vanillaTerrain";
 	private static final String VANILLA_TERRAIN_MARGIN_CHUNKS_PROPERTY = "pauc.lod.cull.vanillaTerrainMarginChunks";
 	private static final String VANILLA_FOLIAGE_CULLING_PROPERTY = "pauc.lod.cull.vanillaFoliage";
 	private static final String VANILLA_FOLIAGE_DISTANCE_CHUNKS_PROPERTY = "pauc.lod.cull.vanillaFoliageDistanceChunks";
+	private static final String LOD_GENERIC_UNDER_VANILLA_CULLING_PROPERTY = "pauc.lod.cull.genericUnderVanilla";
+	private static final String LOD_GENERIC_UNDER_VANILLA_EXTRA_CHUNKS_PROPERTY = "pauc.lod.cull.genericUnderVanillaExtraChunks";
+	private static final String LOD_GENERIC_UNDER_VANILLA_RELEASE_HEIGHT_PROPERTY = "pauc.lod.cull.genericUnderVanillaReleaseHeightBlocks";
+	private static final String LOD_GENERIC_UNDER_VANILLA_HOLD_MS_PROPERTY = "pauc.lod.cull.genericUnderVanillaHoldMs";
+	private static final String LOD_GENERIC_UNDER_VANILLA_CONFIG_CACHE_MS_PROPERTY = "pauc.lod.cull.genericUnderVanillaConfigCacheMs";
 	private static final String VANILLA_AQUATIC_PLANT_CULLING_PROPERTY = "pauc.lod.cull.aquaticPlants";
 	private static final String VANILLA_AQUATIC_PLANT_DISTANCE_CHUNKS_PROPERTY = "pauc.lod.cull.aquaticPlantDistanceChunks";
 	private static final String VANILLA_UNDERWATER_PLANT_DISTANCE_CHUNKS_PROPERTY = "pauc.lod.cull.underwaterPlantDistanceChunks";
 	private static final String ENTITY_EXTRA_CHUNKS_PROPERTY = "pauc.lod.cull.entityExtraChunks";
 	private static final String BLOCK_ENTITY_EXTRA_CHUNKS_PROPERTY = "pauc.lod.cull.blockEntityExtraChunks";
+	private static final String VILLAGE_PRESSURE_CULLING_PROPERTY = "pauc.lod.cull.villagePressure";
+	private static final String VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.villageEntityPressureDistanceBlocks";
+	private static final String VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.villageBlockEntityPressureDistanceBlocks";
+	private static final String PRESSURE_BLOCK_ENTITY_CULLING_PROPERTY = "pauc.lod.cull.pressureBlockEntities";
+	private static final String PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.pressureBlockEntityDistanceBlocks";
+	private static final String RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY = "pauc.runtime.villageSeverePressure";
 	private static final String PARTICLE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.particleDistanceBlocks";
 	private static final String LOD_CLOUD_CELL_WIDTH_BLOCKS_PROPERTY = "pauc.lod.cloudCellWidthBlocks";
 	private static final String LOD_CLOUD_THICKNESS_BLOCKS_PROPERTY = "pauc.lod.cloudThicknessBlocks";
@@ -34,19 +49,34 @@ public final class PauCLodRenderCulling {
 	private static final String LOD_CLOUD_FORCE_PROPERTY = "pauc.lod.forceDistantClouds";
 	private static final String LOD_CLOUD_SPEED_BLOCKS_PER_SECOND_PROPERTY = "pauc.lod.cloudSpeedBlocksPerSecond";
 	private static final String LOD_CLOUD_HEIGHT_OFFSET_FROM_WORLD_TOP_PROPERTY = "pauc.lod.cloudHeightOffsetFromWorldTopBlocks";
+	private static final String LOD_CLOUD_LOW_NEAR_CULL_HEIGHT_MARGIN_PROPERTY = "pauc.lod.cloudLowNearCullHeightMarginBlocks";
+	private static final String LOD_CLOUD_LOW_NEAR_CULL_RING_PROPERTY = "pauc.lod.cloudLowNearCullRing";
 	private static final int DEFAULT_VANILLA_TERRAIN_MARGIN_CHUNKS = 1;
 	private static final int DEFAULT_VANILLA_FOLIAGE_DISTANCE_CHUNKS = 7;
+	private static final int DEFAULT_LOD_GENERIC_UNDER_VANILLA_EXTRA_CHUNKS = 1;
+	private static final int DEFAULT_LOD_GENERIC_UNDER_VANILLA_RELEASE_HEIGHT_BLOCKS = 36;
+	private static final int DEFAULT_LOD_GENERIC_UNDER_VANILLA_HOLD_MS = 900;
 	private static final int DEFAULT_VANILLA_AQUATIC_PLANT_DISTANCE_CHUNKS = 3;
 	private static final int DEFAULT_VANILLA_UNDERWATER_PLANT_DISTANCE_CHUNKS = 5;
 	private static final int DEFAULT_ENTITY_EXTRA_CHUNKS = 0;
 	private static final int DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS = 0;
+	private static final int DEFAULT_VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS = 96;
+	private static final int DEFAULT_VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS = 48;
+	private static final int DEFAULT_PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS = 96;
 	private static final int DEFAULT_PARTICLE_DISTANCE_BLOCKS = 80;
-	private static final int DEFAULT_LOD_CLOUD_CELL_WIDTH_BLOCKS = 12;
+	private static final int DEFAULT_LOD_CLOUD_CELL_WIDTH_BLOCKS = 16;
 	private static final int DEFAULT_LOD_CLOUD_THICKNESS_BLOCKS = 4;
-	private static final int DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES = 0;
-	private static final int DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES = 6;
+	private static final int DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES = 3;
+	private static final int DEFAULT_SHADER_FALLBACK_LOD_CLOUD_INNER_CULL_INSTANCES = 4;
+	private static final int DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES = 5;
 	private static final float DEFAULT_LOD_CLOUD_SPEED_BLOCKS_PER_SECOND = 6.0F;
 	private static final int DEFAULT_LOD_CLOUD_HEIGHT_OFFSET_FROM_WORLD_TOP_BLOCKS = -128;
+	private static final int DEFAULT_LOD_CLOUD_LOW_NEAR_CULL_HEIGHT_MARGIN_BLOCKS = 24;
+	private static final int DEFAULT_LOD_CLOUD_LOW_NEAR_CULL_RING = 4;
+	private static final ConcurrentHashMap<Long, Long> GENERIC_LOD_CULL_HOLDS = new ConcurrentHashMap<>();
+	private static volatile long lastGenericHoldPruneMs;
+	private static volatile GenericLodCullConfig cachedGenericLodCullConfig;
+	private static volatile long cachedGenericLodCullConfigAtMs;
 
 	private PauCLodRenderCulling() {
 	}
@@ -92,6 +122,9 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = distanceFromVanillaChunks(DEFAULT_ENTITY_EXTRA_CHUNKS, ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
+		if (shouldApplyVillagePressureCulling() && PauCVillagePerformanceDiagnostics.isVillageEntity(entity)) {
+			maxDistance = Math.min(maxDistance, readInt(VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256));
+		}
 		Vec3 camera = cameraPosition(minecraft);
 		return horizontalDistanceSqr(entity.getX(), entity.getZ(), camera.x, camera.z) > maxDistance * maxDistance;
 	}
@@ -107,6 +140,13 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = distanceFromVanillaChunks(DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS, BLOCK_ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
+		if (shouldApplyVillagePressureCulling()) {
+			if (PauCVillagePerformanceDiagnostics.isVillageBlockEntity(blockEntity)) {
+				maxDistance = Math.min(maxDistance, readInt(VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS, 32, 256));
+			} else if (readBoolean(PRESSURE_BLOCK_ENTITY_CULLING_PROPERTY, true)) {
+				maxDistance = Math.min(maxDistance, readInt(PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS, 64, 256));
+			}
+		}
 		Vec3 camera = cameraPosition(minecraft);
 		BlockPos pos = blockEntity.getBlockPos();
 		return horizontalDistanceSqr(pos.getX() + 0.5D, pos.getZ() + 0.5D, camera.x, camera.z) > maxDistance * maxDistance;
@@ -135,19 +175,41 @@ public final class PauCLodRenderCulling {
 			return true;
 		}
 
+		boolean distantCloudRing = shouldUseDistantLodCloudRing();
 		int innerCull = PauCLodShaderRuntime.shouldProtectLodCloudCenter()
 			? 0
-			: readInt(LOD_CLOUD_INNER_CULL_INSTANCES_PROPERTY, DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES, 0, 4);
+			: readInt(
+				LOD_CLOUD_INNER_CULL_INSTANCES_PROPERTY,
+				distantCloudRing ? DEFAULT_SHADER_FALLBACK_LOD_CLOUD_INNER_CULL_INSTANCES : DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES,
+				0,
+				6
+			);
 		boolean vanillaCloudOverlap = !PauCLodShaderRuntime.shouldProtectLodCloudCenter()
 			&& readBoolean(LOD_CLOUD_CULL_VANILLA_OVERLAP_PROPERTY, true)
 			&& areVanillaCloudsVisible();
-		if (vanillaCloudOverlap && innerCull > 0 && Math.abs(instanceOffsetX) <= innerCull && Math.abs(instanceOffsetZ) <= innerCull) {
+		if ((vanillaCloudOverlap || distantCloudRing) && innerCull > 0 && Math.abs(instanceOffsetX) <= innerCull && Math.abs(instanceOffsetZ) <= innerCull) {
 			return true;
 		}
 
 		int outerActive = readInt(LOD_CLOUD_OUTER_ACTIVE_INSTANCES_PROPERTY, DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES, 1, 8);
 		int radialDistanceSqr = instanceOffsetX * instanceOffsetX + instanceOffsetZ * instanceOffsetZ;
 		return radialDistanceSqr > outerActive * outerActive;
+	}
+
+	public static boolean shouldCullLowNearLodCloud(double minPosY, int instanceOffsetX, int instanceOffsetZ) {
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null || minecraft.gameRenderer == null) {
+			return false;
+		}
+
+		int ring = readInt(LOD_CLOUD_LOW_NEAR_CULL_RING_PROPERTY, DEFAULT_LOD_CLOUD_LOW_NEAR_CULL_RING, 0, 8);
+		if (Math.abs(instanceOffsetX) > ring || Math.abs(instanceOffsetZ) > ring) {
+			return false;
+		}
+
+		double cameraY = cameraPosition(minecraft).y;
+		double margin = readInt(LOD_CLOUD_LOW_NEAR_CULL_HEIGHT_MARGIN_PROPERTY, DEFAULT_LOD_CLOUD_LOW_NEAR_CULL_HEIGHT_MARGIN_BLOCKS, 0, 96);
+		return minPosY <= cameraY + margin;
 	}
 
 	public static boolean shouldCullVanillaFoliage(BlockState state, BlockPos pos) {
@@ -191,6 +253,65 @@ public final class PauCLodRenderCulling {
 		return horizontalDistanceSqr(pos.getX() + 0.5D, pos.getZ() + 0.5D, camera.x, camera.z) > maxDistance * maxDistance;
 	}
 
+	public static boolean shouldCullGenericLodObject(long objectId, String resourceLocationPath, double originX, double originY, double originZ) {
+		long now = System.currentTimeMillis();
+		GenericLodCullConfig config = genericLodCullConfig(now);
+		boolean featureTransitionMask = PauCLodNearClipOverride.shouldUseFeatureTransitionMask();
+		if (!active()
+			|| (PauCLodShaderContext.isShaderPackInUse() && !featureTransitionMask)
+			|| !PauCLodNearClipOverride.shouldKeepLodsUnderVanilla()
+			|| !config.enabled()
+			|| isCloudGenericObject(resourceLocationPath)) {
+			clearGenericHold(objectId);
+			return false;
+		}
+
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null) {
+			return false;
+		}
+
+		PauCLodRange range = PauCLodHorizonState.currentRange();
+		if (range == null || !range.enabled()) {
+			return false;
+		}
+
+		Vec3 camera = cameraPosition(minecraft);
+		boolean groundedFeatureCandidate = PauCLodGenericObjectCulling.isGroundedFeatureMaskCandidate(resourceLocationPath);
+		if (PauCLodGenericObjectCulling.shouldCullGroundedFeatureNearPlayer(objectId, resourceLocationPath, originX, originZ)) {
+			holdGenericCull(objectId, now, Math.max(config.holdMs(), 1_800));
+			pruneGenericHolds(now);
+			return true;
+		}
+		if (!PauCLodShaderContext.isShaderPackInUse() && groundedFeatureCandidate) {
+			clearGenericHold(objectId);
+			pruneGenericHolds(now);
+			return false;
+		}
+
+		int extraChunks = config.extraChunks() + (featureTransitionMask ? 1 : 0);
+		double maxDistance = (range.vanillaRenderDistanceChunks() + extraChunks) * 16.0D;
+		double distanceSqr = horizontalDistanceSqr(originX, originZ, camera.x, camera.z);
+		int releaseHeight = config.releaseHeightBlocks();
+		boolean nearVanillaCoverage = distanceSqr <= maxDistance * maxDistance;
+		boolean cameraInsideVerticalVolume = featureTransitionMask || camera.y <= originY + releaseHeight;
+		if (nearVanillaCoverage && cameraInsideVerticalVolume) {
+			holdGenericCull(objectId, now, featureTransitionMask ? Math.max(config.holdMs(), 1_800) : config.holdMs());
+			pruneGenericHolds(now);
+			return true;
+		}
+
+		Long holdUntil = GENERIC_LOD_CULL_HOLDS.get(objectId);
+		if (holdUntil != null && now <= holdUntil) {
+			double holdDistance = maxDistance + (featureTransitionMask ? 48.0D : 32.0D);
+			return distanceSqr <= holdDistance * holdDistance;
+		}
+
+		clearGenericHold(objectId);
+		pruneGenericHolds(now);
+		return false;
+	}
+
 	public static boolean shouldEnableLodCloudRendering(boolean requestedByPlayer) {
 		if (!requestedByPlayer) {
 			return false;
@@ -206,7 +327,7 @@ public final class PauCLodRenderCulling {
 	}
 
 	public static double lodCloudThicknessBlocks() {
-		return readInt(LOD_CLOUD_THICKNESS_BLOCKS_PROPERTY, DEFAULT_LOD_CLOUD_THICKNESS_BLOCKS, 4, 32);
+		return readInt(LOD_CLOUD_THICKNESS_BLOCKS_PROPERTY, DEFAULT_LOD_CLOUD_THICKNESS_BLOCKS, 1, 32);
 	}
 
 	public static float lodCloudSpeedBlocksPerSecond() {
@@ -229,6 +350,13 @@ public final class PauCLodRenderCulling {
 			+ "@"
 			+ readInt(VANILLA_FOLIAGE_DISTANCE_CHUNKS_PROPERTY, DEFAULT_VANILLA_FOLIAGE_DISTANCE_CHUNKS, 3, 32)
 			+ "c"
+			+ ", genericUnderVanilla="
+			+ readBoolean(LOD_GENERIC_UNDER_VANILLA_CULLING_PROPERTY, true)
+			+ "+-"
+			+ readInt(LOD_GENERIC_UNDER_VANILLA_EXTRA_CHUNKS_PROPERTY, DEFAULT_LOD_GENERIC_UNDER_VANILLA_EXTRA_CHUNKS, 0, 4)
+			+ "c/"
+			+ readInt(LOD_GENERIC_UNDER_VANILLA_RELEASE_HEIGHT_PROPERTY, DEFAULT_LOD_GENERIC_UNDER_VANILLA_RELEASE_HEIGHT_BLOCKS, 8, 128)
+			+ "b"
 			+ ", aquatic="
 			+ readBoolean(VANILLA_AQUATIC_PLANT_CULLING_PROPERTY, true)
 			+ "@"
@@ -240,6 +368,18 @@ public final class PauCLodRenderCulling {
 			+ readInt(ENTITY_EXTRA_CHUNKS_PROPERTY, DEFAULT_ENTITY_EXTRA_CHUNKS, 0, 8)
 			+ ", blockEntityExtra="
 			+ readInt(BLOCK_ENTITY_EXTRA_CHUNKS_PROPERTY, DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS, 0, 8)
+			+ ", villagePressureCull="
+			+ shouldApplyVillagePressureCulling()
+			+ "@"
+			+ readInt(VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256)
+			+ "/"
+			+ readInt(VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS, 32, 256)
+			+ "b"
+			+ ", pressureBlockEntities="
+			+ readBoolean(PRESSURE_BLOCK_ENTITY_CULLING_PROPERTY, true)
+			+ "@"
+			+ readInt(PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS, 64, 256)
+			+ "b"
 			+ ", particles="
 			+ readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PARTICLE_DISTANCE_BLOCKS, 32, 384)
 			+ "b, cloudCell="
@@ -298,6 +438,11 @@ public final class PauCLodRenderCulling {
 		return range != null && range.enabled();
 	}
 
+	private static boolean shouldApplyVillagePressureCulling() {
+		return readBoolean(VILLAGE_PRESSURE_CULLING_PROPERTY, true)
+			&& readBoolean(RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY, false);
+	}
+
 	private static double distanceFromVanillaChunks(int defaultExtraChunks, String property, double minBlocks) {
 		Minecraft minecraft = Minecraft.getInstance();
 		int vanillaDistance = minecraft != null && minecraft.options != null ? minecraft.options.getEffectiveRenderDistance() : 8;
@@ -345,6 +490,79 @@ public final class PauCLodRenderCulling {
 			|| state.is(Blocks.SEA_PICKLE);
 	}
 
+	private static boolean isCloudGenericObject(String resourceLocationPath) {
+		return resourceLocationPath != null && resourceLocationPath.equalsIgnoreCase("Clouds");
+	}
+
+	private static boolean shouldUseDistantLodCloudRing() {
+		return PauCLodShaderContext.isFallbackActive() || PauCLodShaderRuntime.isUnderPressure();
+	}
+
+	private static GenericLodCullConfig genericLodCullConfig(long now) {
+		GenericLodCullConfig cached = cachedGenericLodCullConfig;
+		int cacheMs = readInt(LOD_GENERIC_UNDER_VANILLA_CONFIG_CACHE_MS_PROPERTY, 500, 50, 5_000);
+		if (cached != null && now - cachedGenericLodCullConfigAtMs <= cacheMs) {
+			return cached;
+		}
+
+		GenericLodCullConfig config = new GenericLodCullConfig(
+			readBoolean(LOD_GENERIC_UNDER_VANILLA_CULLING_PROPERTY, true),
+			readInt(
+				LOD_GENERIC_UNDER_VANILLA_EXTRA_CHUNKS_PROPERTY,
+				DEFAULT_LOD_GENERIC_UNDER_VANILLA_EXTRA_CHUNKS,
+				0,
+				4
+			),
+			readInt(
+				LOD_GENERIC_UNDER_VANILLA_RELEASE_HEIGHT_PROPERTY,
+				DEFAULT_LOD_GENERIC_UNDER_VANILLA_RELEASE_HEIGHT_BLOCKS,
+				8,
+				128
+			),
+			readInt(
+			LOD_GENERIC_UNDER_VANILLA_HOLD_MS_PROPERTY,
+			DEFAULT_LOD_GENERIC_UNDER_VANILLA_HOLD_MS,
+			0,
+			5_000
+			)
+		);
+		cachedGenericLodCullConfig = config;
+		cachedGenericLodCullConfigAtMs = now;
+		return config;
+	}
+
+	private static void holdGenericCull(long objectId, long now, int holdMs) {
+		if (objectId == 0L) {
+			return;
+		}
+		if (holdMs <= 0) {
+			return;
+		}
+		GENERIC_LOD_CULL_HOLDS.put(objectId, now + holdMs);
+	}
+
+	private static void clearGenericHold(long objectId) {
+		if (objectId != 0L) {
+			GENERIC_LOD_CULL_HOLDS.remove(objectId);
+		}
+	}
+
+	private static void pruneGenericHolds(long now) {
+		if (GENERIC_LOD_CULL_HOLDS.isEmpty()) {
+			return;
+		}
+		if (now - lastGenericHoldPruneMs < 5_000L) {
+			return;
+		}
+		lastGenericHoldPruneMs = now;
+		Iterator<Map.Entry<Long, Long>> iterator = GENERIC_LOD_CULL_HOLDS.entrySet().iterator();
+		while (iterator.hasNext()) {
+			if (iterator.next().getValue() < now) {
+				iterator.remove();
+			}
+		}
+	}
+
 	private static double horizontalDistanceSqr(double x, double z, double cameraX, double cameraZ) {
 		double dx = x - cameraX;
 		double dz = z - cameraZ;
@@ -380,6 +598,9 @@ public final class PauCLodRenderCulling {
 		} catch (NumberFormatException ignored) {
 			return clamp(fallback, min, max);
 		}
+	}
+
+	private record GenericLodCullConfig(boolean enabled, int extraChunks, int releaseHeightBlocks, int holdMs) {
 	}
 
 	private static int clamp(int value, int min, int max) {

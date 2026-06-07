@@ -23,16 +23,21 @@ public final class PauCLodFallbackVisuals {
 	private static final String WATER_BLEND_PROPERTY = "pauc.lod.fallbackVisualWaterBlend";
 	private static final String FAR_DESATURATION_PROPERTY = "pauc.lod.fallbackVisualFarDesaturation";
 	private static final String EMISSIVE_BOOST_PROPERTY = "pauc.lod.fallbackVisualEmissiveBoost";
+	private static final String MAX_RESCUE_STRENGTH_PROPERTY = "pauc.lod.fallbackVisualMaxRescueStrength";
 	private static final String SEAM_MORPH_PROPERTY = "pauc.lod.shaderOffSeamMorph";
+	private static final String SEAM_MORPH_FULL_SPEED_PROPERTY = "pauc.lod.shaderOffSeamMorphFullMotionStrength";
+	private static final String SEAM_MORPH_PAUSE_SPEED_PROPERTY = "pauc.lod.shaderOffSeamMorphPauseMotionStrength";
 	private static final String SEAM_MORPH_WIDTH_PROPERTY = "pauc.lod.shaderOffSeamMorphWidth";
 	private static final String SEAM_MORPH_Y_LIFT_PROPERTY = "pauc.lod.shaderOffSeamMorphYLift";
 	private static final String HORIZON_VEIL_START_BEFORE_END_PROPERTY = "pauc.lod.horizonVeilStartBeforeEndChunks";
 	private static final String UNDERWATER_VISUALS_PROPERTY = "pauc.lod.underwaterFallbackVisuals";
+	private static final String NATIVE_SHADER_UNDERWATER_VISUALS_PROPERTY = "pauc.lod.nativeShaderUnderwaterFallbackVisuals";
 	private static final String UNDERWATER_FOG_START_CHUNKS_PROPERTY = "pauc.lod.underwaterFallbackFogStartChunks";
 	private static final String UNDERWATER_FOG_END_CHUNKS_PROPERTY = "pauc.lod.underwaterFallbackFogEndChunks";
 	private static final String DH_FLAT_SHADER = "assets/distanthorizons/shaders/shared/gl/flat_shaded.frag";
 	private static final String DH_STANDARD_VERTEX_SHADER = "assets/distanthorizons/shaders/shared/gl/standard.vert";
 	private static final int STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 18;
+	private static final int LATE_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 6;
 	private static final int STANDARD_FOG_END_MARGIN_CHUNKS = 0;
 	private static final float STANDARD_FOG_INTENSITY = 1.0F;
 	private static final float STANDARD_BRIGHTNESS = 1.0F;
@@ -48,18 +53,18 @@ public final class PauCLodFallbackVisuals {
 	private static final float STANDARD_SEAM_MORPH_WIDTH_BLOCKS = 112.0F;
 	private static final float STANDARD_SEAM_MORPH_Y_LIFT = 0.0F;
 	private static final int LATE_FOG_END_MARGIN_CHUNKS = 0;
-	private static final float LATE_CLEAR_FOG_INTENSITY = 1.0F;
-	private static final float LATE_DARK_FOG_INTENSITY = 1.0F;
+	private static final float LATE_CLEAR_FOG_INTENSITY = 0.56F;
+	private static final float LATE_DARK_FOG_INTENSITY = 0.68F;
 	private static final float LATE_CLEAR_FOG_FLOOR = 0.0F;
 	private static final float LATE_DARK_FOG_FLOOR = 0.0F;
 	private static final float LATE_CLEAR_BRIGHTNESS = 1.02F;
-	private static final float LATE_DARK_BRIGHTNESS = 1.15F;
+	private static final float LATE_DARK_BRIGHTNESS = 1.08F;
 	private static final float LATE_CLEAR_SHADOW_LIFT = 0.04F;
-	private static final float LATE_DARK_SHADOW_LIFT = 0.12F;
-	private static final float LATE_CLEAR_SATURATION = 0.82F;
-	private static final float LATE_DARK_SATURATION = 0.5F;
+	private static final float LATE_DARK_SHADOW_LIFT = 0.08F;
+	private static final float LATE_CLEAR_SATURATION = 0.90F;
+	private static final float LATE_DARK_SATURATION = 0.72F;
 	private static final float LATE_CLEAR_CONTRAST = 0.92F;
-	private static final float LATE_DARK_CONTRAST = 0.6F;
+	private static final float LATE_DARK_CONTRAST = 0.78F;
 	private static final float LATE_CLEAR_GAMMA = 0.98F;
 	private static final float LATE_DARK_GAMMA = 0.9F;
 	private static final float LATE_CLEAR_DIRECTIONAL_LIGHT = 0.16F;
@@ -84,16 +89,54 @@ public final class PauCLodFallbackVisuals {
 	private static final float UNDERWATER_FAR_DESATURATION = 0.22F;
 	private static final float UNDERWATER_EMISSIVE_BOOST = 0.0F;
 	private static long lastDiagnosticLogMs;
+	private static boolean nativeShaderUnderwaterBypassLogged;
 	private static boolean shaderPatchLogged;
 	private static boolean shaderPatchFailureLogged;
+	private static volatile long stateCacheToken;
+	private static volatile long cachedStateToken = Long.MIN_VALUE;
+	private static volatile boolean cachedStateHasSeamUpdate;
+	private static volatile State cachedState;
 
 	private PauCLodFallbackVisuals() {
 	}
 
 	public static State currentState() {
+		return currentState(false);
+	}
+
+	public static State currentStateWithUpdatedSeam() {
+		return currentState(true);
+	}
+
+	public static void beginFrameSnapshot() {
+		stateCacheToken++;
+	}
+
+	private static State currentState(boolean updateSeam) {
+		long cacheToken = stateCacheToken;
+		State frameCachedState = cachedState;
+		if (frameCachedState != null
+			&& cachedStateToken == cacheToken
+			&& (!updateSeam || cachedStateHasSeamUpdate)) {
+			return frameCachedState;
+		}
+
+		State computedState = computeState(updateSeam);
+		cachedState = computedState;
+		cachedStateToken = cacheToken;
+		cachedStateHasSeamUpdate = updateSeam;
+		return computedState;
+	}
+
+	private static State computeState(boolean updateSeam) {
 		boolean underwater = shouldUseUnderwaterFallbackVisuals();
-		if (!readBoolean(ENABLED_PROPERTY, true)
-			|| (PauCLodShaderContext.isShaderPackInUse() && !PauCLodShaderContext.isFallbackActive() && !underwater)) {
+		boolean shaderNative = PauCLodShaderContext.isShaderPackInUse() && !PauCLodShaderContext.isFallbackActive();
+		if (shaderNative && underwater && !readBoolean(NATIVE_SHADER_UNDERWATER_VISUALS_PROPERTY, false)) {
+			underwater = false;
+			logNativeShaderUnderwaterBypass();
+		}
+		boolean shaderNativeOnly = shaderNative && !underwater;
+		if (!readBoolean(ENABLED_PROPERTY, true) && !shaderNativeOnly) {
 			return State.disabled();
 		}
 
@@ -101,15 +144,28 @@ public final class PauCLodFallbackVisuals {
 		if (range == null || !range.enabled()) {
 			return State.disabled();
 		}
+		if (shaderNativeOnly) {
+			float seamClipDistance = range.lodStartChunk() * 16.0F;
+			float seamMorphWidth = readFloat(SEAM_MORPH_WIDTH_PROPERTY, STANDARD_SEAM_MORPH_WIDTH_BLOCKS, 0.0F, 256.0F);
+			if (updateSeam) {
+				PauCLodSeamState.update(seamClipDistance, seamMorphWidth);
+			}
+			return State.seamSamplingOnly(seamClipDistance, seamMorphWidth);
+		}
 
 		boolean lateRender = PauCLodShaderPresentation.shouldLateRenderFallbackLods();
 		float[] fogColor = RenderSystem.getShaderFogColor();
 		float[] presentationFogColor = lateRender ? PauCLodScreenFogColor.currentOrFallback(fogColor) : fogColor;
-		float rescueStrength = lateRender ? PauCLodScreenFogColor.rescueStrength(presentationFogColor) : 0.0F;
+		float rescueStrength = lateRender
+			? Math.min(PauCLodScreenFogColor.rescueStrength(presentationFogColor), maxLateRescueStrength())
+			: 0.0F;
 		int visualEndChunk = range.roundHorizonEndChunk();
+		int defaultVeilBeforeEndChunks = lateRender
+			? LATE_HORIZON_VEIL_START_BEFORE_END_CHUNKS
+			: STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS;
 		int defaultVeilStartChunk = Math.max(
 			range.lodStartChunk(),
-			visualEndChunk - readInt(HORIZON_VEIL_START_BEFORE_END_PROPERTY, STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS, 1, 64)
+			visualEndChunk - readInt(HORIZON_VEIL_START_BEFORE_END_PROPERTY, defaultVeilBeforeEndChunks, 1, 64)
 		);
 		int defaultFogStartOffset = Math.max(0, defaultVeilStartChunk - range.lodStartChunk());
 		int offsetStartChunk = range.lodStartChunk() + readInt(FOG_START_OFFSET_PROPERTY, defaultFogStartOffset, 0, 64);
@@ -154,6 +210,13 @@ public final class PauCLodFallbackVisuals {
 			defaultEmissiveBoost = UNDERWATER_EMISSIVE_BOOST;
 		}
 
+		float seamClipDistance = PauCLodNearClipOverride.currentBoundaryClipBlocks(range.lodStartChunk() * 16.0F);
+		float seamMorphWidth = readFloat(SEAM_MORPH_WIDTH_PROPERTY, STANDARD_SEAM_MORPH_WIDTH_BLOCKS, 0.0F, 256.0F);
+		float configuredSeamMorphStrength = configuredShaderOffSeamMorphStrength();
+		if (updateSeam) {
+			PauCLodSeamState.update(configuredSeamMorphStrength > 0.0F ? seamClipDistance : 0.0F, seamMorphWidth);
+		}
+		PauCLodSeamState.Snapshot seam = PauCLodSeamState.current();
 		State state = new State(
 			readFloat(STRENGTH_PROPERTY, 1.0F, 0.0F, 1.0F),
 			lateRender,
@@ -176,27 +239,27 @@ public final class PauCLodFallbackVisuals {
 			readFloat(FAR_DESATURATION_PROPERTY, defaultFarDesaturation, 0.0F, 1.0F),
 			readFloat(EMISSIVE_BOOST_PROPERTY, defaultEmissiveBoost, 0.0F, 0.75F),
 			rescueStrength,
-			shaderOffSeamMorphStrength(),
-			PauCLodNearClipOverride.currentBoundaryClipBlocks(range.lodStartChunk() * 16.0F),
-			readFloat(SEAM_MORPH_WIDTH_PROPERTY, STANDARD_SEAM_MORPH_WIDTH_BLOCKS, 0.0F, 256.0F),
+			shaderOffSeamMorphStrength(seam, configuredSeamMorphStrength),
+			seamClipDistance,
+			seamMorphWidth,
 			readFloat(SEAM_MORPH_Y_LIFT_PROPERTY, STANDARD_SEAM_MORPH_Y_LIFT, -4.0F, 4.0F),
-			PauCLodSeamState.current().cameraX(),
-			PauCLodSeamState.current().cameraY(),
-			PauCLodSeamState.current().cameraZ(),
-			PauCLodSeamState.current().motionX(),
-			PauCLodSeamState.current().motionZ(),
-			PauCLodSeamState.current().motionStrength(),
-			PauCLodSeamState.current().motionWidth(),
-			PauCLodSeamState.current().westHeight(),
-			PauCLodSeamState.current().eastHeight(),
-			PauCLodSeamState.current().northHeight(),
-			PauCLodSeamState.current().southHeight(),
-			PauCLodSeamState.current().northWestHeight(),
-			PauCLodSeamState.current().northEastHeight(),
-			PauCLodSeamState.current().southWestHeight(),
-			PauCLodSeamState.current().southEastHeight(),
-			PauCLodSeamState.current().heightStrength(),
-			PauCLodSeamState.current().maxVerticalStep()
+			seam.cameraX(),
+			seam.cameraY(),
+			seam.cameraZ(),
+			seam.motionX(),
+			seam.motionZ(),
+			seam.motionStrength(),
+			seam.motionWidth(),
+			seam.westHeight(),
+			seam.eastHeight(),
+			seam.northHeight(),
+			seam.southHeight(),
+			seam.northWestHeight(),
+			seam.northEastHeight(),
+			seam.southWestHeight(),
+			seam.southEastHeight(),
+			seam.heightStrength(),
+			seam.maxVerticalStep()
 		);
 		logDiagnostic(state, range);
 		return state;
@@ -388,7 +451,7 @@ public final class PauCLodFallbackVisuals {
 				+ "uniform vec4 uPaucSeamCornerHeights;\n"
 				+ "uniform float uPaucSeamHeightStrength;\n"
 				+ "uniform float uPaucSeamMaxVerticalStep;\n"
-		);
+	);
 
 		patched = patched.replace(
 			"    gl_Position = uCombinedMatrix * vec4(vertexWorldPos, 1.0);\n",
@@ -449,6 +512,13 @@ public final class PauCLodFallbackVisuals {
 		}
 	}
 
+	private static void logNativeShaderUnderwaterBypass() {
+		if (!nativeShaderUnderwaterBypassLogged) {
+			nativeShaderUnderwaterBypassLogged = true;
+			LOGGER.info("PauC keeps native shader underwater/fog presentation for DH LOD terrain; fallback underwater visuals bypassed.");
+		}
+	}
+
 	private static float color(float[] fogColor, int index) {
 		if (fogColor == null || fogColor.length <= index) {
 			return 1.0F;
@@ -506,11 +576,54 @@ public final class PauCLodFallbackVisuals {
 			&& minecraft.gameRenderer.getMainCamera().getFluidInCamera() == FogType.WATER;
 	}
 
-	private static float shaderOffSeamMorphStrength() {
+	private static float maxLateRescueStrength() {
+		float fallback = switch (PauCLodShaderProfiles.currentFamily()) {
+			case PHOTON -> 0.40F;
+			case SOLAS -> 0.48F;
+			case BSL, COMPLEMENTARY, RETHINKING -> 0.36F;
+			case BLISS -> 0.44F;
+			case GENERIC -> 0.55F;
+		};
+		return readFloat(MAX_RESCUE_STRENGTH_PROPERTY, fallback, 0.0F, 1.0F);
+	}
+
+	private static float shaderOffSeamMorphStrength(PauCLodSeamState.Snapshot seam, float configuredStrength) {
 		if (PauCLodShaderContext.isShaderPackInUse()) {
 			return 0.0F;
 		}
-		return readFloat(SEAM_MORPH_PROPERTY, 1.0F, 0.0F, 1.0F);
+		if (configuredStrength <= 0.0F) {
+			return 0.0F;
+		}
+		float fullSpeed = readFloat(SEAM_MORPH_FULL_SPEED_PROPERTY, 0.34F, 0.0F, 1.0F);
+		float pauseSpeed = readFloat(SEAM_MORPH_PAUSE_SPEED_PROPERTY, 0.58F, fullSpeed, 1.0F);
+		float motionStrength = seam.motionStrength();
+		if (motionStrength <= fullSpeed) {
+			return configuredStrength;
+		}
+		if (motionStrength >= pauseSpeed) {
+			return 0.0F;
+		}
+		float fade = (motionStrength - fullSpeed) / Math.max(0.001F, pauseSpeed - fullSpeed);
+		return configuredStrength * (1.0F - fade);
+	}
+
+	private static float configuredShaderOffSeamMorphStrength() {
+		String rawValue = System.getProperty(SEAM_MORPH_PROPERTY);
+		if (rawValue == null) {
+			return 1.0F;
+		}
+		String normalized = rawValue.trim();
+		if (normalized.equalsIgnoreCase("true")) {
+			return 1.0F;
+		}
+		if (normalized.equalsIgnoreCase("false")) {
+			return 0.0F;
+		}
+		try {
+			return clamp(Float.parseFloat(normalized), 0.0F, 1.0F);
+		} catch (NumberFormatException ignored) {
+			return 1.0F;
+		}
 	}
 
 	private static void logDiagnostic(State state, PauCLodRange range) {
@@ -589,8 +702,101 @@ public final class PauCLodFallbackVisuals {
 		float seamHeightStrength,
 		float seamMaxVerticalStep
 	) {
+		private static final State DISABLED = new State(
+			0.0F,
+			false,
+			false,
+			1.0F,
+			1.0F,
+			1.0F,
+			1.0F,
+			0.0F,
+			1.0F,
+			0.0F,
+			0.0F,
+			1.0F,
+			0.0F,
+			1.0F,
+			1.0F,
+			1.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F,
+			0.0F
+		);
+
+		private static State seamSamplingOnly(float seamClipDistance, float seamMorphWidth) {
+			PauCLodSeamState.Snapshot seam = PauCLodSeamState.current();
+			return new State(
+				0.0F,
+				false,
+				false,
+				1.0F,
+				1.0F,
+				1.0F,
+				1.0F,
+				0.0F,
+				1.0F,
+				0.0F,
+				0.0F,
+				1.0F,
+				0.0F,
+				1.0F,
+				1.0F,
+				1.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				0.0F,
+				seamClipDistance,
+				seamMorphWidth,
+				0.0F,
+				seam.cameraX(),
+				seam.cameraY(),
+				seam.cameraZ(),
+				seam.motionX(),
+				seam.motionZ(),
+				seam.motionStrength(),
+				seam.motionWidth(),
+				seam.westHeight(),
+				seam.eastHeight(),
+				seam.northHeight(),
+				seam.southHeight(),
+				seam.northWestHeight(),
+				seam.northEastHeight(),
+				seam.southWestHeight(),
+				seam.southEastHeight(),
+				seam.heightStrength(),
+				seam.maxVerticalStep()
+			);
+		}
+
 		private static State disabled() {
-			return new State(0.0F, false, false, 1.0F, 1.0F, 1.0F, 1.0F, 0.0F, 1.0F, 0.0F, 0.0F, 1.0F, 0.0F, 1.0F, 1.0F, 1.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F);
+			return DISABLED;
 		}
 	}
 }

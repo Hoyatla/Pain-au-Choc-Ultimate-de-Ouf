@@ -6,6 +6,7 @@ import fr.hoyatla.pauc.platform.forge.compat.PauCCompatManager;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatModule;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCTaskPriority;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import org.slf4j.Logger;
@@ -75,10 +76,12 @@ public final class PauCClientRenderPrep {
 			SESSION_GENERATION.get(),
 			frameId,
 			level.dimension().location().toString(),
+			PauCClientTargetFps.effectiveTargetFps(Minecraft.getInstance()),
 			priorityFrame.renderDistanceChunks(),
 			priorityFrame.warmRadiusChunks(),
 			priorityFrame.snapMode(),
 			priorityFrame.fastTravel(),
+			priorityFrame.movementCatchup(),
 			budgetSnapshot.maxQueuedMeshSections(),
 			budgetSnapshot.maxHotMeshSections(),
 			budgetSnapshot.maxVramMeshSections(),
@@ -94,7 +97,7 @@ public final class PauCClientRenderPrep {
 			PauCClientGpuPathController.getLastSnapshot().renderPath().id()
 		);
 
-		PauCTaskPriority priority = priorityFrame.snapMode() || priorityFrame.fastTravel()
+		PauCTaskPriority priority = priorityFrame.snapMode() || priorityFrame.fastTravel() || priorityFrame.movementCatchup()
 			? PauCTaskPriority.FOV
 			: PauCTaskPriority.ACTIVE;
 		CompletableFuture<PreparedFrame> future = PauCScheduler.submitClientPrepare(
@@ -144,7 +147,7 @@ public final class PauCClientRenderPrep {
 
 		int hint = preparedFrame.warmupSectionHint();
 		if (hint <= 0) {
-			return 0;
+			return Math.min(requestedSections, snapMode ? 2 : 1);
 		}
 		if (snapMode) {
 			hint = Math.max(hint, Math.min(requestedSections, hint + 2));
@@ -220,11 +223,16 @@ public final class PauCClientRenderPrep {
 		int backlog = snapshot.builderAvailable() ? Math.max(0, snapshot.scheduledJobs() - Math.max(2, snapshot.totalThreads() * 2)) : 0;
 		int busyThreads = snapshot.totalThreads() > 0 ? snapshot.busyThreads() : 0;
 		double busyPressure = snapshot.totalThreads() > 0 ? (double) busyThreads / (double) snapshot.totalThreads() : 0.0D;
-		double fastScale = snapshot.snapMode() ? 1.35D : (snapshot.fastTravel() ? 1.18D : 1.0D);
-		double backlogScale = Math.max(0.25D, 1.0D - Math.min(0.75D, backlog * 0.08D));
-		double busyScale = Math.max(0.35D, 1.0D - Math.min(0.65D, busyPressure * 0.55D));
+		double fastScale = snapshot.snapMode() ? 1.55D : (snapshot.movementCatchup() ? 1.45D : (snapshot.fastTravel() ? 1.30D : 1.0D));
+		double backlogScale = Math.max(0.35D, 1.0D - Math.min(0.65D, backlog * 0.06D));
+		double busyScale = Math.max(0.45D, 1.0D - Math.min(0.55D, busyPressure * 0.45D));
 		int meshHeadroom = Math.max(0, Math.min(snapshot.maxQueuedMeshSections(), Math.min(snapshot.maxHotMeshSections(), snapshot.maxVramMeshSections())) - snapshot.scheduledJobs());
-		int warmupHint = clamp((int) Math.floor((meshHeadroom / 10.0D) * fastScale * backlogScale * busyScale * PauCLodShaderRuntime.uploadBudgetScale()), snapshot.snapMode() ? 2 : 1, snapshot.snapMode() ? 18 : 12);
+		boolean acceleratedWarmup = snapshot.snapMode() || snapshot.movementCatchup();
+		int warmupHint = clamp((int) Math.floor((meshHeadroom / 10.0D) * fastScale * backlogScale * busyScale * PauCLodShaderRuntime.uploadBudgetScale()), acceleratedWarmup ? 3 : 1, snapshot.snapMode() ? 28 : (snapshot.movementCatchup() ? 24 : 16));
+		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(snapshot.targetFps())) {
+			double fpsFirstScale = acceleratedWarmup ? 0.82D : 0.68D;
+			warmupHint = clamp((int) Math.floor(warmupHint * fpsFirstScale), acceleratedWarmup ? 2 : 1, snapshot.snapMode() ? 18 : 10);
+		}
 		if (!snapshot.builderAvailable()) {
 			warmupHint = Math.min(warmupHint, 2);
 		}
@@ -280,10 +288,12 @@ public final class PauCClientRenderPrep {
 		int sessionGeneration,
 		long frameId,
 		String dimensionId,
+		int targetFps,
 		int renderDistanceChunks,
 		int warmRadiusChunks,
 		boolean snapMode,
 		boolean fastTravel,
+		boolean movementCatchup,
 		int maxQueuedMeshSections,
 		int maxHotMeshSections,
 		int maxVramMeshSections,

@@ -15,11 +15,14 @@ import com.seibel.distanthorizons.core.render.RenderBufferHandler;
 import com.seibel.distanthorizons.core.world.IDhClientWorld;
 import com.seibel.distanthorizons.core.wrapperInterfaces.render.renderPass.IDhGenericRenderer;
 import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
+import fr.hoyatla.pauc.lod.PauCLodFallbackVisuals;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodLateDepthBuffer;
 import fr.hoyatla.pauc.lod.PauCLodScreenFogColor;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderPresentation;
+import fr.hoyatla.pauc.platform.forge.client.PauCCudaLodProxyRenderer;
+import fr.hoyatla.pauc.platform.forge.client.PauCEmbeddedLodRuntimeDiagnostics;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
 import net.irisshaders.iris.gl.program.ProgramSamplers;
 import net.irisshaders.iris.gl.program.ProgramUniforms;
@@ -58,9 +61,33 @@ public abstract class MixinPauCDhLevelRenderer {
 	@Unique
 	private static boolean pauc$lateRenderStateLogged;
 	@Unique
+	private static boolean pauc$lateDeferredSkipLogged;
+	@Unique
+	private static long pauc$lateFallbackTimingLastLogMs;
+	@Unique
+	private static long pauc$lateFallbackTotalNanos;
+	@Unique
+	private static long pauc$lateFallbackRenderNanos;
+	@Unique
+	private static long pauc$lateFallbackDeferredNanos;
+	@Unique
+	private static long pauc$lateFallbackMaxTotalNanos;
+	@Unique
+	private static int pauc$lateFallbackTimingSamples;
+	@Unique
 	private static final String PAUC_LATE_RENDER_STATE_BARRIER_PROPERTY = "pauc.lod.lateRenderStateBarrier";
 	@Unique
 	private static final String PAUC_LATE_RENDER_CLEAR_DEPTH_PROPERTY = "pauc.lod.lateRenderClearDepth";
+	@Unique
+	private static final String PAUC_LATE_RENDER_DEFERRED_PASS_PROPERTY = "pauc.lod.shaderFallbackLateDeferredPass";
+	@Unique
+	private static final String PAUC_LATE_RENDER_TIMING_PROPERTY = "pauc.lod.shaderFallbackLateTiming";
+	@Unique
+	private static final String PAUC_LATE_RENDER_TIMING_LOG_MS_PROPERTY = "pauc.lod.shaderFallbackLateTimingLogMs";
+	@Unique
+	private static final String PAUC_TRANSITION_HOLD_PROXY_PROPERTY = "pauc.lod.transitionHoldKeepsProxy";
+	@Unique
+	private static final String PAUC_SHADER_FALLBACK_PROXY_PREPASS_PROPERTY = "pauc.lod.shaderFallbackProxyPrepass";
 
 	@Shadow
 	private ClientLevel level;
@@ -72,6 +99,9 @@ public abstract class MixinPauCDhLevelRenderer {
 		}
 		if (!PauCLodHorizonState.currentRange().enabled()) {
 			return;
+		}
+		if (renderType.equals(RenderType.solid())) {
+			PauCLodFallbackVisuals.beginFrameSnapshot();
 		}
 
 		try {
@@ -88,6 +118,7 @@ public abstract class MixinPauCDhLevelRenderer {
 					} else {
 						pauc$skipLodsThisFrame = false;
 						pauc$transitionHoldLogged = false;
+						pauc$renderShaderFallbackProxyPrepass(modelViewMatrixStack);
 					}
 				}
 				if (renderType.equals(RenderType.solid())
@@ -105,11 +136,13 @@ public abstract class MixinPauCDhLevelRenderer {
 						pauc$transitionHoldLogged = true;
 						PAUC_DH_RENDER_LOGGER.info("PauC is holding embedded DH rendering briefly after a LOD/shader transition: {}", PauCLodShaderContext.describe());
 					}
+					pauc$renderTransitionHoldProxy(modelViewMatrixStack, "solid-transition-hold");
 					return;
 				}
 				pauc$skipLodsThisFrame = false;
 				pauc$transitionHoldLogged = false;
 				ClientApi.INSTANCE.renderLods();
+				PauCCudaLodProxyRenderer.render(this.level, Minecraft.getInstance().gameRenderer.getMainCamera(), modelViewMatrixStack, "solid");
 				pauc$logDhRenderDiagnostics();
 			} else if (renderType.equals(RenderType.translucent())) {
 				if (pauc$skipLodsThisFrame || PauCLodShaderContext.isTransitionHoldActive()) {
@@ -169,7 +202,7 @@ public abstract class MixinPauCDhLevelRenderer {
 				bufferDebug,
 				genericDebug
 			);
-			PAUC_DH_RENDER_LOGGER.info("PauC LOD shader diagnostics: {}", PauCLodShaderContext.describe());
+			PAUC_DH_RENDER_LOGGER.info("PauC LOD shader diagnostics: {}, {}.", PauCLodShaderContext.describe(), PauCEmbeddedLodRuntimeDiagnostics.describeState());
 		} catch (Exception | Error error) {
 			PAUC_DH_RENDER_LOGGER.debug("PauC could not collect embedded Distant Horizons render diagnostics.", error);
 		}
@@ -179,19 +212,34 @@ public abstract class MixinPauCDhLevelRenderer {
 	private void pauc$renderEmbeddedDhLodsAfterShaderFinal(PoseStack poseStack, float tickDelta, long startTime, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
 		if (this.level == null
 			|| !PauCLodHorizonState.currentRange().enabled()
-			|| !PauCLodShaderPresentation.shouldLateRenderFallbackLods()
-			|| pauc$skipLodsThisFrame
-			|| PauCLodShaderContext.isTransitionHoldActive()) {
+			|| !PauCLodShaderPresentation.shouldLateRenderFallbackLods()) {
+			return;
+		}
+		if (pauc$skipLodsThisFrame || PauCLodShaderContext.isTransitionHoldActive()) {
+			pauc$renderLateTransitionHoldProxy(poseStack, projectionMatrix, camera);
 			return;
 		}
 
 		boolean prepared = false;
+		long passStartNanos = System.nanoTime();
+		long renderNanos = 0L;
+		long deferredNanos = 0L;
 		try {
 			pauc$prepareLateFallbackRenderState();
 			prepared = true;
 			pauc$syncDhRenderState(poseStack, projectionMatrix);
+			long renderStartNanos = System.nanoTime();
 			ClientApi.INSTANCE.renderLods();
-			ClientApi.INSTANCE.renderDeferredLodsForShaders();
+			PauCCudaLodProxyRenderer.render(this.level, camera, poseStack, "late-shader");
+			renderNanos = System.nanoTime() - renderStartNanos;
+			if (pauc$readBoolean(PAUC_LATE_RENDER_DEFERRED_PASS_PROPERTY, false)) {
+				long deferredStartNanos = System.nanoTime();
+				ClientApi.INSTANCE.renderDeferredLodsForShaders();
+				deferredNanos = System.nanoTime() - deferredStartNanos;
+			} else if (!pauc$lateDeferredSkipLogged) {
+				pauc$lateDeferredSkipLogged = true;
+				PAUC_DH_RENDER_LOGGER.info("PauC skipped the late deferred PL fallback pass; terrain LODs still render, generic/cloud shader artifacts are avoided.");
+			}
 			PauCLodShaderPresentation.logLateFallbackRender();
 			pauc$logDhRenderDiagnostics();
 		} catch (Exception | Error error) {
@@ -204,7 +252,81 @@ public abstract class MixinPauCDhLevelRenderer {
 			if (prepared) {
 				pauc$finishLateFallbackRenderState();
 			}
+			pauc$recordLateFallbackTiming(System.nanoTime() - passStartNanos, renderNanos, deferredNanos);
 		}
+	}
+
+	@Unique
+	private void pauc$renderTransitionHoldProxy(PoseStack poseStack, String passName) {
+		if (!pauc$readBoolean(PAUC_TRANSITION_HOLD_PROXY_PROPERTY, true) || this.level == null) {
+			return;
+		}
+		PauCCudaLodProxyRenderer.render(this.level, Minecraft.getInstance().gameRenderer.getMainCamera(), poseStack, passName);
+	}
+
+	@Unique
+	private void pauc$renderShaderFallbackProxyPrepass(PoseStack poseStack) {
+		if (!pauc$readBoolean(PAUC_SHADER_FALLBACK_PROXY_PREPASS_PROPERTY, false) || this.level == null) {
+			return;
+		}
+		PauCCudaLodProxyRenderer.render(this.level, Minecraft.getInstance().gameRenderer.getMainCamera(), poseStack, "solid-shader-prepass");
+	}
+
+	@Unique
+	private void pauc$renderLateTransitionHoldProxy(PoseStack poseStack, Matrix4f projectionMatrix, Camera camera) {
+		if (!pauc$readBoolean(PAUC_TRANSITION_HOLD_PROXY_PROPERTY, true) || this.level == null) {
+			return;
+		}
+		boolean prepared = false;
+		try {
+			pauc$prepareLateFallbackRenderState();
+			prepared = true;
+			pauc$syncDhRenderState(poseStack, projectionMatrix);
+			PauCCudaLodProxyRenderer.render(this.level, camera, poseStack, "late-transition-hold");
+		} catch (Exception | Error error) {
+			if (!pauc$dhRenderWarningLogged) {
+				pauc$dhRenderWarningLogged = true;
+				PAUC_DH_RENDER_LOGGER.warn("PauC skipped the transition-hold CUDA proxy after an unexpected render error.", error);
+			}
+		} finally {
+			if (prepared) {
+				pauc$finishLateFallbackRenderState();
+			}
+		}
+	}
+
+	@Unique
+	private static void pauc$recordLateFallbackTiming(long totalNanos, long renderNanos, long deferredNanos) {
+		if (!pauc$readBoolean(PAUC_LATE_RENDER_TIMING_PROPERTY, true)) {
+			return;
+		}
+
+		pauc$lateFallbackTimingSamples++;
+		pauc$lateFallbackTotalNanos += totalNanos;
+		pauc$lateFallbackRenderNanos += renderNanos;
+		pauc$lateFallbackDeferredNanos += deferredNanos;
+		pauc$lateFallbackMaxTotalNanos = Math.max(pauc$lateFallbackMaxTotalNanos, totalNanos);
+
+		long now = System.currentTimeMillis();
+		long logIntervalMs = pauc$readInt(PAUC_LATE_RENDER_TIMING_LOG_MS_PROPERTY, 5_000, 1_000, 60_000);
+		if (now - pauc$lateFallbackTimingLastLogMs < logIntervalMs) {
+			return;
+		}
+		int samples = Math.max(1, pauc$lateFallbackTimingSamples);
+		PAUC_DH_RENDER_LOGGER.info(
+			"PauC late fallback LOD timings: samples={}, totalAvg={}ms, renderAvg={}ms, deferredAvg={}ms, totalMax={}ms.",
+			samples,
+			pauc$formatMillis(pauc$lateFallbackTotalNanos / samples),
+			pauc$formatMillis(pauc$lateFallbackRenderNanos / samples),
+			pauc$formatMillis(pauc$lateFallbackDeferredNanos / samples),
+			pauc$formatMillis(pauc$lateFallbackMaxTotalNanos)
+		);
+		pauc$lateFallbackTimingLastLogMs = now;
+		pauc$lateFallbackTimingSamples = 0;
+		pauc$lateFallbackTotalNanos = 0L;
+		pauc$lateFallbackRenderNanos = 0L;
+		pauc$lateFallbackDeferredNanos = 0L;
+		pauc$lateFallbackMaxTotalNanos = 0L;
 	}
 
 	@Unique
@@ -212,6 +334,7 @@ public abstract class MixinPauCDhLevelRenderer {
 		RenderTarget mainTarget = Minecraft.getInstance().getMainRenderTarget();
 		mainTarget.bindWrite(true);
 		PauCLodScreenFogColor.captureFromMainTarget();
+		PauCLodFallbackVisuals.beginFrameSnapshot();
 		if (!pauc$readBoolean(PAUC_LATE_RENDER_STATE_BARRIER_PROPERTY, true)) {
 			return;
 		}
@@ -278,5 +401,23 @@ public abstract class MixinPauCDhLevelRenderer {
 	private static boolean pauc$readBoolean(String key, boolean fallback) {
 		String rawValue = System.getProperty(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
+	}
+
+	@Unique
+	private static int pauc$readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
+	@Unique
+	private static String pauc$formatMillis(long nanos) {
+		return String.format(java.util.Locale.ROOT, "%.3f", nanos / 1_000_000.0D);
 	}
 }

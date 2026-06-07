@@ -11,6 +11,10 @@ The project now targets a single distribution path:
 
 The active build is intentionally not a Fabric project and does not provide or claim the public ids of Sodium, Indium, Iris, Oculus, or Distant Horizons.
 
+## License
+
+This project is licensed under the GNU Lesser General Public License v3.0. See `LICENSE` for the full license text.
+
 ## Development Notes
 
 - `common` is a shared source holder used by the Forge build.

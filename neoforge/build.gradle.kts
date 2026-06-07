@@ -112,6 +112,7 @@ dependencies {
     implementation(jarJar("io.github.llamalad7:mixinextras-forge:0.3.5")) {
         jarJar.ranged(this, "[0.3.5,)")
     }
+    compileOnly("net.java.dev.jna:jna:5.12.1")
 
     minecraftLibrary("io.github.douira:glsl-transformer:2.0.0-pre6") {
         isTransitive = false
@@ -727,7 +728,11 @@ tasks {
 
     jar {
         finalizedBy("reobfJar")
+        dependsOn("compileJava")
         duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        from(layout.buildDirectory.file("tmp/compileJava/compileJava-refmap.json")) {
+            rename { "paucultimate.refmap.json" }
+        }
         from(zipTree(embeddedLodRuntimeJar)) {
             excludeEmbeddedDistantHorizonsLoader()
         }

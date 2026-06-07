@@ -9,6 +9,11 @@ public final class PauCClientUploadBudgetController {
 	private static double lastFrameTimeMs = -1.0D;
 	private static int lastGrantedBudget;
 	private static boolean snapMode;
+	private static double cachedDirectGpuNormalScale = 1.0D;
+	private static double cachedDirectGpuAggressiveScale = 1.0D;
+	private static double cachedHighTargetUploadScale = 1.0D;
+	private static double cachedHighTargetBurstNormalScale = 1.0D;
+	private static double cachedHighTargetBurstSnapScale = 1.0D;
 
 	private PauCClientUploadBudgetController() {
 	}
@@ -22,15 +27,26 @@ public final class PauCClientUploadBudgetController {
 		int fps = queryFps(minecraft);
 		int targetFps = PauCClientTargetFps.effectiveTargetFps(minecraft);
 		double frameTimeMs = fps > 0 ? (1000.0D / fps) : -1.0D;
+		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(targetFps);
 		int baseRefill = Math.max(4, budgetSnapshot.maxQueuedMeshSections() / 8);
 		int backlogPenalty = Math.max(0, rendererStats.scheduledJobs() - Math.max(2, rendererStats.totalThreads() * 2));
 		double fpsPenalty = fps > 0 ? clamp01((targetFps - fps) / (double) targetFps) : 0.35D;
-		double refillScale = (aggressiveUpload ? 1.15D : 0.9D) * PauCLodShaderRuntime.uploadBudgetScale();
-		double refill = Math.max(1.0D, (baseRefill - (backlogPenalty * 1.5D)) * (1.0D - (fpsPenalty * 0.85D)) * refillScale);
+		refreshCachedScales(fpsFirstVanilla, aggressiveUpload);
+		double directGpuScale = aggressiveUpload ? cachedDirectGpuAggressiveScale : cachedDirectGpuNormalScale;
+		double refillScale = (aggressiveUpload ? 1.35D : 1.0D)
+			* PauCLodShaderRuntime.uploadBudgetScale()
+			* directGpuScale
+			* cachedHighTargetUploadScale;
+		double refill = Math.max(1.0D, (baseRefill - (backlogPenalty * 1.25D)) * (1.0D - (fpsPenalty * 0.70D)) * refillScale);
 		if (fps > 0 && fps < targetFps * 0.65D) {
-			refill = Math.min(refill, 2.0D);
+			refill = Math.min(refill, aggressiveUpload ? 3.0D : 2.0D);
 		}
-		double maxTokens = Math.max(8.0D, budgetSnapshot.maxQueuedMeshSections() * (aggressiveUpload ? 0.85D : 0.65D));
+		double maxTokens = Math.max(
+			12.0D,
+			budgetSnapshot.maxQueuedMeshSections()
+				* (aggressiveUpload ? 1.0D : 0.75D)
+				* (fpsFirstVanilla ? 0.62D : 1.0D)
+		);
 		tokens = Math.min(maxTokens, tokens + refill);
 		lastFps = fps;
 		lastFrameTimeMs = frameTimeMs;
@@ -44,11 +60,17 @@ public final class PauCClientUploadBudgetController {
 		}
 
 		int targetFps = PauCClientTargetFps.effectiveTargetFps();
-		double multiplier = (snapUploadMode ? 1.15D : 1.0D) * PauCLodShaderRuntime.uploadBudgetScale();
+		double multiplier = (snapUploadMode ? 1.15D : 1.0D)
+			* PauCLodShaderRuntime.uploadBudgetScale()
+			* (snapUploadMode ? cachedDirectGpuAggressiveScale : cachedDirectGpuNormalScale)
+			* (snapUploadMode ? cachedHighTargetBurstSnapScale : cachedHighTargetBurstNormalScale);
 		if (lastFps > 0 && lastFps < targetFps * 0.8D) {
 			multiplier *= lastFps < targetFps * 0.65D ? 0.55D : 0.8D;
 		}
 		int granted = Math.min(requestedSections, Math.max(0, (int) Math.floor(tokens * multiplier)));
+		if (granted <= 0 && (snapUploadMode || lastFps <= 0)) {
+			granted = Math.min(requestedSections, snapUploadMode ? 2 : 1);
+		}
 		tokens = Math.max(0.0D, tokens - granted);
 		lastGrantedBudget = granted;
 		return granted;
@@ -60,6 +82,11 @@ public final class PauCClientUploadBudgetController {
 		lastFrameTimeMs = -1.0D;
 		lastGrantedBudget = 0;
 		snapMode = false;
+		cachedDirectGpuNormalScale = 1.0D;
+		cachedDirectGpuAggressiveScale = 1.0D;
+		cachedHighTargetUploadScale = 1.0D;
+		cachedHighTargetBurstNormalScale = 1.0D;
+		cachedHighTargetBurstSnapScale = 1.0D;
 	}
 
 	public static String describeState() {
@@ -82,5 +109,54 @@ public final class PauCClientUploadBudgetController {
 
 	private static double clamp01(double value) {
 		return Math.max(0.0D, Math.min(1.0D, value));
+	}
+
+	private static void refreshCachedScales(boolean fpsFirstVanilla, boolean aggressiveUpload) {
+		boolean directGpuUpload = PauCEmbeddedDhBridge.isDirectGpuUploadActive();
+		cachedDirectGpuNormalScale = directGpuUpload
+			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.16D, 1.0D, 1.75D)
+			: 1.0D;
+		cachedDirectGpuAggressiveScale = directGpuUpload
+			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.28D, 1.0D, 1.75D)
+			: 1.0D;
+		cachedHighTargetUploadScale = highTargetUploadScale(fpsFirstVanilla, aggressiveUpload);
+		cachedHighTargetBurstNormalScale = highTargetBurstScale(fpsFirstVanilla, false);
+		cachedHighTargetBurstSnapScale = highTargetBurstScale(fpsFirstVanilla, true);
+	}
+
+	private static double highTargetUploadScale(boolean fpsFirstVanilla, boolean aggressiveUpload) {
+		if (!fpsFirstVanilla) {
+			return 1.0D;
+		}
+		return readDouble(
+			"pauc.lod.vanillaHighTargetUploadBudgetScale",
+			aggressiveUpload ? 0.78D : 0.66D,
+			0.25D,
+			1.0D
+		);
+	}
+
+	private static double highTargetBurstScale(boolean fpsFirstVanilla, boolean snapUploadMode) {
+		if (!fpsFirstVanilla) {
+			return 1.0D;
+		}
+		return readDouble(
+			"pauc.lod.vanillaHighTargetUploadBurstScale",
+			snapUploadMode ? 0.86D : 0.72D,
+			0.25D,
+			1.0D
+		);
+	}
+
+	private static double readDouble(String key, double fallback, double min, double max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Double.parseDouble(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
 	}
 }

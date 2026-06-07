@@ -17,6 +17,10 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static final String VILLAGE_PRESSURE_ENABLED_PROPERTY = "pauc.lod.villagePressureBudget";
 	private static final String VILLAGE_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureEntityThreshold";
 	private static final String TOTAL_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureTotalEntityThreshold";
+	private static final String RENDERED_VILLAGE_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureRenderedEntityThreshold";
+	private static final String RENDERED_VILLAGE_BLOCK_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureRenderedBlockEntityThreshold";
+	private static final String TOTAL_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureTotalRenderedBlockEntityThreshold";
+	private static final String VILLAGE_PRESSURE_HOLD_TICKS_PROPERTY = "pauc.lod.villagePressureHoldTicks";
 	private static final int SAMPLE_INTERVAL_TICKS = 20;
 	private static final Map<EntityType<?>, Boolean> VILLAGE_ENTITY_TYPES = new IdentityHashMap<>();
 	private static final Map<BlockEntityType<?>, Boolean> VILLAGE_BLOCK_ENTITY_TYPES = new IdentityHashMap<>();
@@ -34,12 +38,42 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static long renderedVillageEntities;
 	private static long renderedBlockEntities;
 	private static long renderedVillageBlockEntities;
+	private static long culledEntities;
+	private static long culledVillageEntities;
+	private static long culledBlockEntities;
+	private static long culledVillageBlockEntities;
+	private static long renderedEntitiesWindow;
+	private static long renderedVillageEntitiesWindow;
+	private static long renderedBlockEntitiesWindow;
+	private static long renderedVillageBlockEntitiesWindow;
+	private static long culledEntitiesWindow;
+	private static long culledVillageEntitiesWindow;
+	private static long culledBlockEntitiesWindow;
+	private static long culledVillageBlockEntitiesWindow;
+	private static long lastRenderedEntitiesWindow;
+	private static long lastRenderedVillageEntitiesWindow;
+	private static long lastRenderedBlockEntitiesWindow;
+	private static long lastRenderedVillageBlockEntitiesWindow;
+	private static long lastCulledEntitiesWindow;
+	private static long lastCulledVillageEntitiesWindow;
+	private static long lastCulledBlockEntitiesWindow;
+	private static long lastCulledVillageBlockEntitiesWindow;
+	private static long maxRenderedEntitiesWindow;
+	private static long maxRenderedVillageEntitiesWindow;
+	private static long maxRenderedBlockEntitiesWindow;
+	private static long maxRenderedVillageBlockEntitiesWindow;
+	private static long maxCulledEntitiesWindow;
+	private static long maxCulledVillageEntitiesWindow;
+	private static long maxCulledBlockEntitiesWindow;
+	private static long maxCulledVillageBlockEntitiesWindow;
 	private static long entityIdCacheHits;
 	private static long entityIdCacheMisses;
 	private static long blockEntityIdCacheHits;
 	private static long blockEntityIdCacheMisses;
 	private static volatile boolean villagePressureActive;
 	private static int villagePressureTicks;
+	private static long villagePressureActiveTicks;
+	private static long villagePressureActivations;
 
 	private PauCVillagePerformanceDiagnostics() {
 	}
@@ -58,12 +92,42 @@ public final class PauCVillagePerformanceDiagnostics {
 		renderedVillageEntities = 0L;
 		renderedBlockEntities = 0L;
 		renderedVillageBlockEntities = 0L;
+		culledEntities = 0L;
+		culledVillageEntities = 0L;
+		culledBlockEntities = 0L;
+		culledVillageBlockEntities = 0L;
+		renderedEntitiesWindow = 0L;
+		renderedVillageEntitiesWindow = 0L;
+		renderedBlockEntitiesWindow = 0L;
+		renderedVillageBlockEntitiesWindow = 0L;
+		culledEntitiesWindow = 0L;
+		culledVillageEntitiesWindow = 0L;
+		culledBlockEntitiesWindow = 0L;
+		culledVillageBlockEntitiesWindow = 0L;
+		lastRenderedEntitiesWindow = 0L;
+		lastRenderedVillageEntitiesWindow = 0L;
+		lastRenderedBlockEntitiesWindow = 0L;
+		lastRenderedVillageBlockEntitiesWindow = 0L;
+		lastCulledEntitiesWindow = 0L;
+		lastCulledVillageEntitiesWindow = 0L;
+		lastCulledBlockEntitiesWindow = 0L;
+		lastCulledVillageBlockEntitiesWindow = 0L;
+		maxRenderedEntitiesWindow = 0L;
+		maxRenderedVillageEntitiesWindow = 0L;
+		maxRenderedBlockEntitiesWindow = 0L;
+		maxRenderedVillageBlockEntitiesWindow = 0L;
+		maxCulledEntitiesWindow = 0L;
+		maxCulledVillageEntitiesWindow = 0L;
+		maxCulledBlockEntitiesWindow = 0L;
+		maxCulledVillageBlockEntitiesWindow = 0L;
 		entityIdCacheHits = 0L;
 		entityIdCacheMisses = 0L;
 		blockEntityIdCacheHits = 0L;
 		blockEntityIdCacheMisses = 0L;
 		villagePressureActive = false;
 		villagePressureTicks = 0;
+		villagePressureActiveTicks = 0L;
+		villagePressureActivations = 0L;
 		diagnosticsEnabled = true;
 	}
 
@@ -72,6 +136,7 @@ public final class PauCVillagePerformanceDiagnostics {
 		if (!diagnosticsEnabled || minecraft == null || minecraft.level == null) {
 			villagePressureActive = false;
 			villagePressureTicks = 0;
+			resetRenderWindow();
 			return;
 		}
 
@@ -93,7 +158,32 @@ public final class PauCVillagePerformanceDiagnostics {
 		}
 		lastClientEntityCount = totalEntities;
 		lastClientVillageEntityCount = villageEntities;
-		updateVillagePressure(totalEntities, villageEntities);
+		long windowEntities = renderedEntitiesWindow;
+		long windowVillageEntities = renderedVillageEntitiesWindow;
+		long windowBlockEntities = renderedBlockEntitiesWindow;
+		long windowVillageBlockEntities = renderedVillageBlockEntitiesWindow;
+		long windowCulledEntities = culledEntitiesWindow;
+		long windowCulledVillageEntities = culledVillageEntitiesWindow;
+		long windowCulledBlockEntities = culledBlockEntitiesWindow;
+		long windowCulledVillageBlockEntities = culledVillageBlockEntitiesWindow;
+		lastRenderedEntitiesWindow = windowEntities;
+		lastRenderedVillageEntitiesWindow = windowVillageEntities;
+		lastRenderedBlockEntitiesWindow = windowBlockEntities;
+		lastRenderedVillageBlockEntitiesWindow = windowVillageBlockEntities;
+		lastCulledEntitiesWindow = windowCulledEntities;
+		lastCulledVillageEntitiesWindow = windowCulledVillageEntities;
+		lastCulledBlockEntitiesWindow = windowCulledBlockEntities;
+		lastCulledVillageBlockEntitiesWindow = windowCulledVillageBlockEntities;
+		maxRenderedEntitiesWindow = Math.max(maxRenderedEntitiesWindow, windowEntities);
+		maxRenderedVillageEntitiesWindow = Math.max(maxRenderedVillageEntitiesWindow, windowVillageEntities);
+		maxRenderedBlockEntitiesWindow = Math.max(maxRenderedBlockEntitiesWindow, windowBlockEntities);
+		maxRenderedVillageBlockEntitiesWindow = Math.max(maxRenderedVillageBlockEntitiesWindow, windowVillageBlockEntities);
+		maxCulledEntitiesWindow = Math.max(maxCulledEntitiesWindow, windowCulledEntities);
+		maxCulledVillageEntitiesWindow = Math.max(maxCulledVillageEntitiesWindow, windowCulledVillageEntities);
+		maxCulledBlockEntitiesWindow = Math.max(maxCulledBlockEntitiesWindow, windowCulledBlockEntities);
+		maxCulledVillageBlockEntitiesWindow = Math.max(maxCulledVillageBlockEntitiesWindow, windowCulledVillageBlockEntities);
+		resetRenderWindow();
+		updateVillagePressure(totalEntities, villageEntities, windowEntities, windowVillageEntities, windowBlockEntities, windowVillageBlockEntities);
 	}
 
 	public static void recordEntityRender(Entity entity) {
@@ -102,8 +192,10 @@ public final class PauCVillagePerformanceDiagnostics {
 		}
 
 		renderedEntities++;
+		renderedEntitiesWindow++;
 		if (isVillageEntityType(entity.getType())) {
 			renderedVillageEntities++;
+			renderedVillageEntitiesWindow++;
 		}
 	}
 
@@ -113,8 +205,36 @@ public final class PauCVillagePerformanceDiagnostics {
 		}
 
 		renderedBlockEntities++;
+		renderedBlockEntitiesWindow++;
 		if (isVillageBlockEntityType(blockEntity.getType())) {
 			renderedVillageBlockEntities++;
+			renderedVillageBlockEntitiesWindow++;
+		}
+	}
+
+	public static void recordEntityCull(Entity entity) {
+		if (!diagnosticsEnabled || entity == null) {
+			return;
+		}
+
+		culledEntities++;
+		culledEntitiesWindow++;
+		if (isVillageEntityType(entity.getType())) {
+			culledVillageEntities++;
+			culledVillageEntitiesWindow++;
+		}
+	}
+
+	public static void recordBlockEntityCull(BlockEntity blockEntity) {
+		if (!diagnosticsEnabled || blockEntity == null) {
+			return;
+		}
+
+		culledBlockEntities++;
+		culledBlockEntitiesWindow++;
+		if (isVillageBlockEntityType(blockEntity.getType())) {
+			culledVillageBlockEntities++;
+			culledVillageBlockEntitiesWindow++;
 		}
 	}
 
@@ -159,6 +279,14 @@ public final class PauCVillagePerformanceDiagnostics {
 			&& villagePressureActive;
 	}
 
+	public static boolean isVillageEntity(Entity entity) {
+		return entity != null && isVillageEntityType(entity.getType());
+	}
+
+	public static boolean isVillageBlockEntity(BlockEntity blockEntity) {
+		return blockEntity != null && isVillageBlockEntityType(blockEntity.getType());
+	}
+
 	public static String describeState() {
 		return "villagePerf[clientEntities="
 			+ lastClientEntityCount
@@ -174,6 +302,51 @@ public final class PauCVillagePerformanceDiagnostics {
 			+ renderedBlockEntities
 			+ "/village="
 			+ renderedVillageBlockEntities
+			+ ", culledEntities="
+			+ culledEntities
+			+ "/village="
+			+ culledVillageEntities
+			+ ", culledBlockEntities="
+			+ culledBlockEntities
+			+ "/village="
+			+ culledVillageBlockEntities
+			+ ", renderWindow="
+			+ lastRenderedEntitiesWindow
+			+ "/village="
+			+ lastRenderedVillageEntitiesWindow
+			+ ", blockWindow="
+			+ lastRenderedBlockEntitiesWindow
+			+ "/village="
+			+ lastRenderedVillageBlockEntitiesWindow
+			+ ", cullWindow="
+			+ lastCulledEntitiesWindow
+			+ "/village="
+			+ lastCulledVillageEntitiesWindow
+			+ ", blockCullWindow="
+			+ lastCulledBlockEntitiesWindow
+			+ "/village="
+			+ lastCulledVillageBlockEntitiesWindow
+			+ ", maxRenderWindow="
+			+ maxRenderedEntitiesWindow
+			+ "/village="
+			+ maxRenderedVillageEntitiesWindow
+			+ ", maxBlockWindow="
+			+ maxRenderedBlockEntitiesWindow
+			+ "/village="
+			+ maxRenderedVillageBlockEntitiesWindow
+			+ ", maxCullWindow="
+			+ maxCulledEntitiesWindow
+			+ "/village="
+			+ maxCulledVillageEntitiesWindow
+			+ ", maxBlockCullWindow="
+			+ maxCulledBlockEntitiesWindow
+			+ "/village="
+			+ maxCulledVillageBlockEntitiesWindow
+			+ ", pressureActive="
+			+ villagePressureActiveTicks
+			+ "t/"
+			+ villagePressureActivations
+			+ "x"
 			+ ", sortLast="
 			+ formatMs(lastEntitySortNanos)
 			+ "ms/"
@@ -195,7 +368,14 @@ public final class PauCVillagePerformanceDiagnostics {
 			+ "]";
 	}
 
-	private static void updateVillagePressure(int totalEntities, int villageEntities) {
+	private static void updateVillagePressure(
+		int totalEntities,
+		int villageEntities,
+		long windowEntities,
+		long windowVillageEntities,
+		long windowBlockEntities,
+		long windowVillageBlockEntities
+	) {
 		if (!Boolean.parseBoolean(System.getProperty(VILLAGE_PRESSURE_ENABLED_PROPERTY, "true"))) {
 			villagePressureActive = false;
 			villagePressureTicks = 0;
@@ -204,15 +384,41 @@ public final class PauCVillagePerformanceDiagnostics {
 
 		int villageThreshold = readInt(VILLAGE_ENTITY_THRESHOLD_PROPERTY, 8, 1, 256);
 		int totalThreshold = readInt(TOTAL_ENTITY_THRESHOLD_PROPERTY, 96, 8, 512);
+		int renderedVillageEntityThreshold = readInt(RENDERED_VILLAGE_ENTITY_THRESHOLD_PROPERTY, 96, 1, 4096);
+		int renderedVillageBlockEntityThreshold = readInt(RENDERED_VILLAGE_BLOCK_ENTITY_THRESHOLD_PROPERTY, 96, 1, 4096);
+		int totalRenderedBlockEntityThreshold = readInt(TOTAL_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 512, 16, 8192);
+		int pressureHoldTicks = readInt(VILLAGE_PRESSURE_HOLD_TICKS_PROPERTY, 100, SAMPLE_INTERVAL_TICKS, 600);
 		boolean pressureCandidate = villageEntities >= villageThreshold
-			|| (villageEntities > 0 && totalEntities >= totalThreshold);
+			|| (villageEntities > 0 && totalEntities >= totalThreshold)
+			|| windowVillageEntities >= renderedVillageEntityThreshold
+			|| windowVillageBlockEntities >= renderedVillageBlockEntityThreshold
+			|| (windowVillageBlockEntities > 0L && windowBlockEntities >= totalRenderedBlockEntityThreshold)
+			|| (windowVillageEntities > 0L && windowEntities >= totalThreshold);
 
+		boolean wasActive = villagePressureActive;
 		if (pressureCandidate) {
-			villagePressureTicks = Math.min(120, villagePressureTicks + SAMPLE_INTERVAL_TICKS);
+			villagePressureTicks = Math.max(villagePressureTicks, pressureHoldTicks);
 		} else {
 			villagePressureTicks = Math.max(0, villagePressureTicks - SAMPLE_INTERVAL_TICKS);
 		}
-		villagePressureActive = villagePressureTicks >= SAMPLE_INTERVAL_TICKS;
+		villagePressureActive = villagePressureTicks > 0;
+		if (villagePressureActive) {
+			villagePressureActiveTicks += SAMPLE_INTERVAL_TICKS;
+			if (!wasActive) {
+				villagePressureActivations++;
+			}
+		}
+	}
+
+	private static void resetRenderWindow() {
+		renderedEntitiesWindow = 0L;
+		renderedVillageEntitiesWindow = 0L;
+		renderedBlockEntitiesWindow = 0L;
+		renderedVillageBlockEntitiesWindow = 0L;
+		culledEntitiesWindow = 0L;
+		culledVillageEntitiesWindow = 0L;
+		culledBlockEntitiesWindow = 0L;
+		culledVillageBlockEntitiesWindow = 0L;
 	}
 
 	private static boolean isVillageEntityType(EntityType<?> type) {
@@ -241,6 +447,7 @@ public final class PauCVillagePerformanceDiagnostics {
 		ResourceLocation key = BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(type);
 		String path = key != null ? key.getPath() : "";
 		boolean village = path.equals("bell")
+			|| path.equals("bed")
 			|| path.equals("sign")
 			|| path.equals("hanging_sign")
 			|| path.equals("chest")

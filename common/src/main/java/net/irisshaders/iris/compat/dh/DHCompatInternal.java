@@ -1,5 +1,6 @@
 package net.irisshaders.iris.compat.dh;
 
+import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.seibel.distanthorizons.api.DhApi;
 import com.seibel.distanthorizons.api.interfaces.override.IDhApiOverrideable;
@@ -25,13 +26,18 @@ import net.irisshaders.iris.targets.DepthTexture;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.opengl.GL20C;
+import org.lwjgl.opengl.GL43C;
 
 import java.io.IOException;
+import java.util.Optional;
 
 public class DHCompatInternal {
 	public static final DHCompatInternal SHADERLESS = new DHCompatInternal(null, false);
+	private static final String VANILLA_DEPTH_PRIORITY_PROPERTY = "pauc.lod.shaderVanillaDepthPriority";
 	static boolean dhEnabled;
 	private static int guiScale = -1;
+	private static boolean vanillaDepthPriorityLogged;
+	private static boolean vanillaDepthPriorityFallbackLogged;
 	private final IrisRenderingPipeline pipeline;
 	private GlFramebuffer dhGenericFramebuffer;
 	public boolean shouldOverrideShadow;
@@ -58,28 +64,52 @@ public class DHCompatInternal {
 			return;
 		}
 
-		boolean detectedNativeDhShader = pipeline.getDHTerrainShader().isPresent() || pipeline.getDHWaterShader().isPresent();
+		boolean hasExplicitDhTerrainShader = pipeline.hasExplicitDHTerrainShader();
+		boolean packBlocksSyntheticDhTerrainShader = PauCLodShaderContext.blocksSyntheticDhTerrainShader();
+		boolean detectedNativeDhShader = hasExplicitDhTerrainShader && !packBlocksSyntheticDhTerrainShader && pipeline.getDHTerrainShader().isPresent();
+		boolean syntheticDhShaderAllowed = !detectedNativeDhShader && PauCLodShaderContext.shouldUseSyntheticDhTerrainShader();
+		Optional<ProgramSource> terrainSource = detectedNativeDhShader ? pipeline.getDHTerrainShader() : Optional.empty();
+		boolean syntheticDhTerrainShader = false;
+		if (terrainSource.isEmpty() && syntheticDhShaderAllowed) {
+			terrainSource = pipeline.getTerrainShader();
+			syntheticDhTerrainShader = terrainSource.isPresent();
+		}
 		boolean cachedFallback = detectedNativeDhShader && PauCLodShaderContext.shouldForceFallbackForCurrentPack();
 		boolean conservativeEmbeddedFallback = detectedNativeDhShader
 			&& DHCompat.isUsingPauCEmbeddedBridgeOnly()
 			&& PauCLodShaderContext.shouldUseConservativeEmbeddedShaderFallback();
 		boolean hasNativeDhShader = detectedNativeDhShader && !cachedFallback && !conservativeEmbeddedFallback;
+		boolean hasDhTerrainShader = hasNativeDhShader || syntheticDhTerrainShader;
 		String compatibilityReason = hasNativeDhShader
-			? "native-dh-shader"
-			: conservativeEmbeddedFallback
-				? "pauc-conservative-embedded-dh"
-				: cachedFallback ? "cached-missing-dh-shader" : "missing-dh-shader";
-		PauCLodShaderContext.markDhShaderCompatibility(hasNativeDhShader, compatibilityReason, !conservativeEmbeddedFallback);
-		if (!hasNativeDhShader) {
+			? "native-dh-terrain-shader"
+			: syntheticDhTerrainShader
+				? "synthetic-dh-terrain-shader"
+				: conservativeEmbeddedFallback
+					? "pauc-conservative-embedded-dh"
+					: cachedFallback
+					? "cached-missing-dh-shader"
+					: packBlocksSyntheticDhTerrainShader
+						? "missing-pack-dh-terrain-shader"
+						: hasExplicitDhTerrainShader ? "missing-dh-shader" : "missing-dh-terrain-shader";
+		PauCLodShaderContext.markDhShaderCompatibility(
+			hasNativeDhShader,
+			syntheticDhTerrainShader,
+			compatibilityReason,
+			!conservativeEmbeddedFallback
+		);
+		if (!hasDhTerrainShader) {
 			if (conservativeEmbeddedFallback) {
 				Iris.logger.warn("PauC is using the conservative embedded DH LOD path for this shaderpack so PauC controls fog, visibility, and the vanilla-to-LOD boundary.");
 			} else if (cachedFallback) {
 				Iris.logger.warn("PauC is keeping this shaderpack on the LOD fallback path because it was previously detected without native DH shaders.");
 			} else {
-				Iris.logger.warn("No DH shader found in this pack.");
+				Iris.logger.warn("No usable DH terrain shader found in this pack; PauC will keep embedded LOD fallback rendering active.");
 			}
 			incompatible = true;
 			return;
+		}
+		if (syntheticDhTerrainShader) {
+			Iris.logger.info("PauC enabled the synthetic DH terrain shader path for this shaderpack.");
 		}
 
 		try {
@@ -88,15 +118,34 @@ public class DHCompatInternal {
 			createDepthTex(Minecraft.getInstance().getMainRenderTarget().width, Minecraft.getInstance().getMainRenderTarget().height);
 			translucentDepthDirty = true;
 
-			ProgramSource terrain = pipeline.getDHTerrainShader().get();
+			ProgramSource terrain = terrainSource.orElseThrow(RuntimeException::new);
 			solidProgram = IrisLodRenderProgram.createProgram(terrain.getName(), false, false, terrain, pipeline.getCustomUniforms(), pipeline);
 
-			ProgramSource generic = pipeline.getDHGenericShader().get();
+			Optional<ProgramSource> genericSource = pipeline.getDHGenericShader();
+			if (genericSource.isEmpty() && syntheticDhTerrainShader) {
+				genericSource = pipeline.getBlockShader();
+				if (genericSource.isEmpty()) {
+					genericSource = terrainSource;
+				}
+			}
+			ProgramSource generic = genericSource.orElse(terrain);
 			genericShader = IrisGenericRenderProgram.createProgram(generic.getName() + "_g", false, false, generic, pipeline.getCustomUniforms(), pipeline);
 			dhGenericFramebuffer = pipeline.createDHFramebuffer(generic, false);
 
-			pipeline.getDHWaterShader().ifPresent(this::tryCreateTranslucentProgram);
-			pipeline.getDHShadowShader().ifPresent(shadow -> tryCreateShadowProgram(shadow, dhShadowEnabled));
+			Optional<ProgramSource> waterSource = pipeline.getDHWaterShader();
+			if (waterSource.isEmpty() && syntheticDhTerrainShader) {
+				waterSource = pipeline.getWaterShader();
+				if (waterSource.isEmpty()) {
+					waterSource = terrainSource;
+				}
+			}
+			waterSource.ifPresent(this::tryCreateTranslucentProgram);
+
+			Optional<ProgramSource> shadowSource = pipeline.getDHShadowShader();
+			if (shadowSource.isEmpty() && syntheticDhTerrainShader) {
+				shadowSource = pipeline.getShadowTerrainShader();
+			}
+			shadowSource.ifPresent(shadow -> tryCreateShadowProgram(shadow, dhShadowEnabled));
 
 			dhTerrainFramebuffer = pipeline.createDHFramebuffer(terrain, false);
 			dhTerrainFramebufferWrapper = new DhFrameBufferWrapper(dhTerrainFramebuffer);
@@ -325,6 +374,52 @@ public class DHCompatInternal {
 		return storedDepthTex;
 	}
 
+	public boolean copyVanillaDepthIntoDhDepth(int width, int height) {
+		if (!readBoolean(VANILLA_DEPTH_PRIORITY_PROPERTY, false) || dhTerrainFramebuffer == null || storedDepthTex <= 0) {
+			return false;
+		}
+
+		RenderTarget mainTarget = Minecraft.getInstance().getMainRenderTarget();
+		int vanillaDepthTexture = mainTarget.getDepthTextureId();
+		if (vanillaDepthTexture <= 0) {
+			return false;
+		}
+
+		int copyWidth = width > 0 ? width : mainTarget.width;
+		int copyHeight = height > 0 ? height : mainTarget.height;
+		try {
+			GL43C.glCopyImageSubData(
+				vanillaDepthTexture,
+				GL43C.GL_TEXTURE_2D,
+				0,
+				0,
+				0,
+				0,
+				storedDepthTex,
+				GL43C.GL_TEXTURE_2D,
+				0,
+				0,
+				0,
+				0,
+				copyWidth,
+				copyHeight,
+				1
+			);
+			translucentDepthDirty = true;
+			if (!vanillaDepthPriorityLogged) {
+				vanillaDepthPriorityLogged = true;
+				Iris.logger.info("PauC copied vanilla terrain depth into DH LOD depth so shader LODs stay behind vanilla chunks.");
+			}
+			return true;
+		} catch (RuntimeException | LinkageError throwable) {
+			if (!vanillaDepthPriorityFallbackLogged) {
+				vanillaDepthPriorityFallbackLogged = true;
+				Iris.logger.warn("PauC could not copy vanilla depth into DH LOD depth; falling back to DH depth clear.", throwable);
+			}
+			return false;
+		}
+	}
+
 	public void copyTranslucents(int width, int height) {
 		if (translucentDepthDirty) {
 			translucentDepthDirty = false;
@@ -398,5 +493,10 @@ public class DHCompatInternal {
 			genericShader.free();
 			genericShader = null;
 		}
+	}
+
+	private static boolean readBoolean(String key, boolean fallback) {
+		String rawValue = System.getProperty(key);
+		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
 	}
 }

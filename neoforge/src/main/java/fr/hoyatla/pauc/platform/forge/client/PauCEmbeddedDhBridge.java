@@ -6,6 +6,7 @@ import com.seibel.distanthorizons.api.enums.config.EDhApiHorizontalQuality;
 import com.seibel.distanthorizons.api.enums.config.EDhApiLodShading;
 import com.seibel.distanthorizons.api.enums.config.EDhApiMaxHorizontalResolution;
 import com.seibel.distanthorizons.api.enums.config.EDhApiMcRenderingFadeMode;
+import com.seibel.distanthorizons.api.enums.config.EDhApiRenderApi;
 import com.seibel.distanthorizons.api.enums.config.EDhApiVerticalQuality;
 import com.seibel.distanthorizons.api.enums.config.EDhApiWorldCompressionMode;
 import com.seibel.distanthorizons.api.enums.rendering.EDhApiFogFalloff;
@@ -16,6 +17,7 @@ import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfig;
 import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfigValue;
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
+import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
@@ -40,13 +42,20 @@ public final class PauCEmbeddedDhBridge {
 	private static volatile boolean loggedReliefGeometryOverride;
 	private static volatile boolean loggedReliefCompressionOverride;
 	private static volatile boolean loggedDhFogConfigOverride;
+	private static volatile boolean loggedDirectGpuRendererOverride;
 	private static volatile boolean loggedRoundHorizonGenerationPolicy;
+	private static volatile String lastLoggedGenerationPolicy = "";
+	private static volatile String lastLoggedSeamlessTransitionPolicy = "";
 	private static volatile Boolean lastLoggedDistantCloudPolicy;
+	private static volatile Boolean lastLoggedDistantCloudShaderFallback;
 	private static volatile boolean loggedMissingCoreConfigOverride;
 	private static volatile boolean disabledRenderingApplied;
+	private static volatile DhGpuUploadState cachedGpuUploadState;
+	private static volatile long cachedGpuUploadStateAtMillis;
 	private static final String FAST_THREADS_PROPERTY = "pauc.lod.generationThreads";
 	private static final String FAST_RUNTIME_RATIO_PROPERTY = "pauc.lod.generationRuntimeRatio";
 	private static final String FAST_GENERATOR_MODE_PROPERTY = "pauc.lod.generationMode";
+	private static final String FILL_GENERATOR_MODE_PROPERTY = "pauc.lod.fillGenerationMode";
 	private static final String FAST_MAX_RESOLUTION_PROPERTY = "pauc.lod.maxHorizontalResolution";
 	private static final String FAST_HORIZONTAL_QUALITY_PROPERTY = "pauc.lod.horizontalQuality";
 	private static final String FAST_VERTICAL_QUALITY_PROPERTY = "pauc.lod.verticalQuality";
@@ -56,12 +65,19 @@ public final class PauCEmbeddedDhBridge {
 	private static final String FAST_BIOME_BLEND_PROPERTY = "pauc.lod.biomeBlending";
 	private static final String FAST_TRANSPARENCY_PROPERTY = "pauc.lod.transparency";
 	private static final String DISTANT_STRUCTURES_PROPERTY = "pauc.lod.structures";
+	private static final String ADAPTIVE_DISTANT_STRUCTURES_PROPERTY = "pauc.lod.adaptiveStructures";
+	private static final String GENERIC_RENDERING_PROPERTY = "pauc.lod.genericRendering";
+	private static final String SHADER_FALLBACK_GENERIC_RENDERING_PROPERTY = "pauc.lod.shaderFallbackGenericRendering";
 	private static final String RELIEF_CAVE_CULLING_PROPERTY = "pauc.lod.reliefCaveCulling";
 	private static final String RELIEF_CAVE_CULLING_HEIGHT_PROPERTY = "pauc.lod.reliefCaveCullingHeight";
 	private static final String RELIEF_SURFACE_CAVE_CULLING_HEIGHT_PROPERTY = "pauc.lod.reliefSurfaceCaveCullingHeight";
 	private static final String RELIEF_UNDERGROUND_CAVE_CULLING_HEIGHT_PROPERTY = "pauc.lod.reliefUndergroundCaveCullingHeight";
 	private static final String RELIEF_SURFACE_PLAYER_Y_PROPERTY = "pauc.lod.reliefSurfacePlayerY";
 	private static final String RELIEF_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.reliefOverdrawPrevention";
+	private static final String SHADER_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.shaderOverdrawPrevention";
+	private static final String SHADER_FALLBACK_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.shaderFallbackOverdrawPrevention";
+	private static final String SHADER_VANILLA_FADE_MODE_PROPERTY = "pauc.lod.shaderVanillaFadeMode";
+	private static final String SHADER_FALLBACK_VANILLA_FADE_MODE_PROPERTY = "pauc.lod.shaderFallbackVanillaFadeMode";
 	private static final String RELIEF_WORLD_COMPRESSION_PROPERTY = "pauc.lod.reliefWorldCompression";
 	private static final String CLEAR_RENDER_CACHE_ON_GEOMETRY_CHANGE_PROPERTY = "pauc.lod.clearRenderCacheOnGeometryChange";
 	private static final String ROUND_HORIZON_FOG_PROPERTY = "pauc.lod.roundHorizonFog";
@@ -69,6 +85,8 @@ public final class PauCEmbeddedDhBridge {
 	private static final String ROUND_HORIZON_FOG_MIN_PROPERTY = "pauc.lod.roundHorizonFogMin";
 	private static final String ROUND_HORIZON_FOG_MAX_PROPERTY = "pauc.lod.roundHorizonFogMax";
 	private static final String ROUND_HORIZON_FOG_DENSITY_PROPERTY = "pauc.lod.roundHorizonFogDensity";
+	private static final String DIRECT_GPU_OPENGL_RENDERER_PROPERTY = "pauc.lod.directGpuOpenGlRenderer";
+	private static final String DIRECT_GPU_UPLOAD_STATE_CACHE_MS_PROPERTY = "pauc.lod.directGpuUploadStateCacheMs";
 	private static final float DEFAULT_ROUND_HORIZON_FOG_START_RATIO = 0.82F;
 	private static final float DEFAULT_ROUND_HORIZON_FOG_MIN = 0.0F;
 	private static final float DEFAULT_ROUND_HORIZON_FOG_MAX = 1.0F;
@@ -79,6 +97,7 @@ public final class PauCEmbeddedDhBridge {
 	private static final String DH_QUALITY_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$Quality";
 	private static final String DH_CULLING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$Culling";
 	private static final String DH_GENERIC_RENDERING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$GenericRendering";
+	private static final String DH_GRAPHICS_EXPERIMENTAL_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$Experimental";
 	private static final String DH_WORLD_GENERATOR_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Common$WorldGenerator";
 	private static final String DH_MULTI_THREADING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Common$MultiThreading";
 	private static final String DH_SERVER_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Server";
@@ -119,7 +138,25 @@ public final class PauCEmbeddedDhBridge {
 	private static final String DH_ENABLE_CAVE_CULLING_FIELD = "enableCaveCulling";
 	private static final String DH_CAVE_CULLING_HEIGHT_FIELD = "caveCullingHeight";
 	private static final String DH_WORLD_COMPRESSION_FIELD = "worldCompression";
+	private static final String DH_RENDERING_API_FIELD = "renderingApi";
+	private static final String COARSE_FIRST_FILL_PROPERTY = "pauc.lod.coarseFirstFill";
+	private static final String COARSE_FILL_REQUEST_RATE_PROPERTY = "pauc.lod.coarseFillRequestRate";
+	private static final String FOG_PRELOAD_EXTRA_CHUNKS_PROPERTY = "pauc.lod.fogPreloadGenerationExtraChunks";
+	private static final String MAX_GENERATION_REQUEST_BLOCKS_PROPERTY = "pauc.lod.maxGenerationRequestBlocks";
+	private static final String COARSE_FILL_RENDER_REFRESH_PROPERTY = "pauc.lod.coarseFillRenderRefresh";
+	private static final String COARSE_FILL_REFRESH_DURING_TRAVEL_PROPERTY = "pauc.lod.coarseFillRefreshDuringTravel";
+	private static final String COARSE_FILL_REFRESH_COOLDOWN_PROPERTY = "pauc.lod.coarseFillRefreshCooldownMs";
+	private static final String COARSE_FILL_REFRESH_MIN_COVERAGE_PROPERTY = "pauc.lod.coarseFillRefreshMinCoverageRatio";
+	private static final String COARSE_FILL_ALLOW_GLOBAL_CACHE_CLEAR_PROPERTY = "pauc.lod.coarseFillAllowGlobalRenderCacheClear";
+	private static final String DEFER_RENDER_CACHE_CLEAR_DURING_FILL_PROPERTY = "pauc.lod.deferRenderCacheClearDuringFill";
+	private static final String DEFER_RENDER_CACHE_CLEAR_LOG_COOLDOWN_PROPERTY = "pauc.lod.deferRenderCacheClearLogCooldownMs";
+	private static final String KEEP_RENDER_CACHE_ON_QUALITY_CHANGE_PROPERTY = "pauc.lod.keepRenderCacheOnQualityChange";
+	private static final String KEEP_RENDER_CACHE_ON_SHADER_PRESENTATION_CHANGE_PROPERTY = "pauc.lod.keepRenderCacheOnShaderPresentationChange";
+	private static final String CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY = "pauc.lod.clearRenderCacheOnShaderRuntimeChange";
 	private static final Map<String, SavedCoreConfigValue> SAVED_CORE_CONFIG_VALUES = new ConcurrentHashMap<>();
+	private static volatile long lastCoarseFillRenderRefreshAtMillis;
+	private static volatile long lastDeferredRenderCacheClearLogAtMillis;
+	private static volatile int coarseFillRenderRefreshes;
 
 	private PauCEmbeddedDhBridge() {
 	}
@@ -189,11 +226,92 @@ public final class PauCEmbeddedDhBridge {
 		lastConfiguredTarget = -1;
 		lastRenderGeometrySignature = null;
 		lastLoggedDistantCloudPolicy = null;
+		lastLoggedDistantCloudShaderFallback = null;
+		lastLoggedGenerationPolicy = "";
 		disabledRenderingApplied = false;
 	}
 
+	public static void applyStartupDirectGpuPolicy() {
+		configureDirectGpuRendererPath("startup");
+	}
+
 	public static String describeState() {
-		return "embeddedDh[available=" + state.available() + ", status=" + state.status() + ", target=" + state.targetDistanceChunks() + "]";
+		return "embeddedDh[available="
+			+ state.available()
+			+ ", status="
+			+ state.status()
+			+ ", target="
+			+ state.targetDistanceChunks()
+			+ ", coarseFill="
+			+ PauCClientFrontierWarmupManager.shouldPreferCoarseFill()
+			+ ", coarseRefreshes="
+			+ coarseFillRenderRefreshes
+			+ ", "
+			+ describeGpuUploadState()
+			+ "]";
+	}
+
+	public static boolean isDirectGpuUploadActive() {
+		return PauCLodClientSettings.isDirectGpuUploadEnabled() && captureCachedGpuUploadState().direct();
+	}
+
+	public static String describeGpuUploadState() {
+		return captureCachedGpuUploadState().describe();
+	}
+
+	public static void refreshRenderCacheForCoarseFill(double coverageRatio, int expectedCells, int coveredCells) {
+		if (!readBoolean(COARSE_FILL_RENDER_REFRESH_PROPERTY, false)) {
+			return;
+		}
+		if (!PauCClientFrontierWarmupManager.shouldPreferCoarseFill()) {
+			return;
+		}
+		if (PauCClientFrontierWarmupManager.isActiveTravelFill() && !readBoolean(COARSE_FILL_REFRESH_DURING_TRAVEL_PROPERTY, false)) {
+			return;
+		}
+		if (expectedCells < 256) {
+			return;
+		}
+		double minimumCoverageRatio = readDouble(COARSE_FILL_REFRESH_MIN_COVERAGE_PROPERTY, 0.58D, 0.05D, 0.95D);
+		if (coverageRatio >= minimumCoverageRatio) {
+			return;
+		}
+
+		long now = System.currentTimeMillis();
+		long cooldownMs = readInt(COARSE_FILL_REFRESH_COOLDOWN_PROPERTY, 18_000, 5_000, 120_000);
+		if (now - lastCoarseFillRenderRefreshAtMillis < cooldownMs) {
+			return;
+		}
+		if (DhApi.Delayed.renderProxy == null) {
+			return;
+		}
+		if (!readBoolean(COARSE_FILL_ALLOW_GLOBAL_CACHE_CLEAR_PROPERTY, false)) {
+			lastCoarseFillRenderRefreshAtMillis = now;
+			LOGGER.info(
+				"PauC skipped global PL render cache clear during coarse LOD fill: coverage={}/{}, ratio={}, {}.",
+				coveredCells,
+				expectedCells,
+				roundTwoDecimals(coverageRatio),
+				PauCEmbeddedLodRuntimeDiagnostics.describeState()
+			);
+			return;
+		}
+
+		try {
+			DhApi.Delayed.renderProxy.clearRenderDataCache();
+			lastCoarseFillRenderRefreshAtMillis = now;
+			coarseFillRenderRefreshes++;
+			LOGGER.info(
+				"PauC requested PL render cache refresh for coarse LOD fill: coverage={}/{}, ratio={}, refreshes={}, {}.",
+				coveredCells,
+				expectedCells,
+				roundTwoDecimals(coverageRatio),
+				coarseFillRenderRefreshes,
+				PauCEmbeddedLodRuntimeDiagnostics.describeState()
+			);
+		} catch (Throwable throwable) {
+			LOGGER.debug("PauC could not refresh PL render cache for coarse LOD fill.", throwable);
+		}
 	}
 
 	private static void disableLodRendering(String status) {
@@ -222,6 +340,7 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	private static void configureCoreRuntimeSettings(int targetDistance, RuntimeLodSettings runtimeSettings) {
+		configureDirectGpuRendererPath("runtime");
 		setDhCoreConfigValueWithoutSaving(DH_DEBUGGING_CONFIG_CLASS, DH_RENDERER_MODE_FIELD, EDhApiRendererMode.DEFAULT);
 		setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_LOD_CHUNK_RENDER_DISTANCE_FIELD, targetDistance);
 		setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_MAX_HORIZONTAL_RESOLUTION_FIELD, runtimeSettings.maxHorizontalResolution());
@@ -241,14 +360,72 @@ public final class PauCEmbeddedDhBridge {
 		clearRenderCacheIfGeometryChanged(runtimeSettings);
 	}
 
+	private static void configureDirectGpuRendererPath(String phase) {
+		if (!PauCLodClientSettings.isDirectGpuUploadEnabled() || !readBoolean(DIRECT_GPU_OPENGL_RENDERER_PROPERTY, true)) {
+			return;
+		}
+
+		boolean configured = setDhCoreConfigValueWithoutSaving(DH_GRAPHICS_EXPERIMENTAL_CONFIG_CLASS, DH_RENDERING_API_FIELD, EDhApiRenderApi.OPEN_GL);
+		if (configured && !loggedDirectGpuRendererOverride) {
+			cachedGpuUploadState = null;
+			cachedGpuUploadStateAtMillis = 0L;
+			loggedDirectGpuRendererOverride = true;
+			LOGGER.info("PauC direct GPU path selected DH OpenGL renderer during {} phase; {}.", phase, describeGpuUploadState());
+		}
+	}
+
 	private static void clearRenderCacheIfGeometryChanged(RuntimeLodSettings runtimeSettings) {
 		LodRenderGeometrySignature signature = LodRenderGeometrySignature.from(runtimeSettings);
 		LodRenderGeometrySignature previousSignature = lastRenderGeometrySignature;
-		lastRenderGeometrySignature = signature;
-		if (previousSignature == null || previousSignature.equals(signature) || DhApi.Delayed.renderProxy == null) {
+		if (previousSignature == null) {
+			lastRenderGeometrySignature = signature;
 			return;
 		}
-		if (!Boolean.parseBoolean(System.getProperty(CLEAR_RENDER_CACHE_ON_GEOMETRY_CHANGE_PROPERTY, "false"))) {
+		if (previousSignature.equals(signature)) {
+			return;
+		}
+		if (DhApi.Delayed.renderProxy == null) {
+			lastRenderGeometrySignature = signature;
+			return;
+		}
+		if (previousSignature.isShaderRuntimeChange(signature)
+			&& readBoolean(CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY, true)) {
+			clearRenderDataCacheForSignatureChange(previousSignature, signature, "shader runtime changed");
+			return;
+		}
+		if (!previousSignature.requiresMeshCacheClear(signature)) {
+			lastRenderGeometrySignature = signature;
+			LOGGER.info(
+				"PauC kept the existing LOD render cache across a presentation-only change: {} -> {}.",
+				previousSignature.describe(),
+				signature.describe()
+			);
+			return;
+		}
+		if (previousSignature.isQualityOnlyChange(signature) && readBoolean(KEEP_RENDER_CACHE_ON_QUALITY_CHANGE_PROPERTY, true)) {
+			lastRenderGeometrySignature = signature;
+			LOGGER.info(
+				"PauC kept existing LOD meshes visible while quality changes from coarse fill to refinement: {} -> {}.",
+				previousSignature.describe(),
+				signature.describe()
+			);
+			return;
+		}
+		if (previousSignature.isShaderPresentationChange(signature) && readBoolean(KEEP_RENDER_CACHE_ON_SHADER_PRESENTATION_CHANGE_PROPERTY, true)) {
+			lastRenderGeometrySignature = signature;
+			LOGGER.info(
+				"PauC kept existing LOD meshes visible across shader/fallback presentation change: {} -> {}.",
+				previousSignature.describe(),
+				signature.describe()
+			);
+			return;
+		}
+		if (shouldDeferRenderCacheClear(previousSignature, signature)) {
+			logDeferredRenderCacheClear(previousSignature, signature);
+			return;
+		}
+		if (!readBoolean(CLEAR_RENDER_CACHE_ON_GEOMETRY_CHANGE_PROPERTY, true)) {
+			lastRenderGeometrySignature = signature;
 			LOGGER.debug(
 				"PauC detected a LOD geometry mode change without clearing DH render cache: {} -> {}.",
 				previousSignature.describe(),
@@ -257,10 +434,20 @@ public final class PauCEmbeddedDhBridge {
 			return;
 		}
 
+		clearRenderDataCacheForSignatureChange(previousSignature, signature, "LOD geometry mode changed");
+	}
+
+	private static void clearRenderDataCacheForSignatureChange(
+		LodRenderGeometrySignature previousSignature,
+		LodRenderGeometrySignature signature,
+		String reason
+	) {
 		try {
 			DhApi.Delayed.renderProxy.clearRenderDataCache();
+			lastRenderGeometrySignature = signature;
 			LOGGER.info(
-				"PauC embedded DH bridge cleared DH render cache after LOD geometry mode changed: {} -> {}.",
+				"PauC embedded DH bridge cleared DH render cache after {}: {} -> {}.",
+				reason,
 				previousSignature.describe(),
 				signature.describe()
 			);
@@ -269,45 +456,140 @@ public final class PauCEmbeddedDhBridge {
 		}
 	}
 
+	private static boolean shouldDeferRenderCacheClear(LodRenderGeometrySignature previousSignature, LodRenderGeometrySignature signature) {
+		return readBoolean(DEFER_RENDER_CACHE_CLEAR_DURING_FILL_PROPERTY, true)
+			&& previousSignature.isQualityOnlyChange(signature)
+			&& PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation();
+	}
+
+	private static void logDeferredRenderCacheClear(LodRenderGeometrySignature previousSignature, LodRenderGeometrySignature signature) {
+		long now = System.currentTimeMillis();
+		long cooldownMs = readInt(DEFER_RENDER_CACHE_CLEAR_LOG_COOLDOWN_PROPERTY, 15_000, 1_000, 120_000);
+		if (now - lastDeferredRenderCacheClearLogAtMillis < cooldownMs) {
+			return;
+		}
+		lastDeferredRenderCacheClearLogAtMillis = now;
+		LOGGER.info(
+			"PauC deferred a quality-only PL render cache clear while LOD coverage is still filling: {} -> {}.",
+			previousSignature.describe(),
+			signature.describe()
+		);
+	}
+
 	private static void configureGenerationFillPolicy(int targetDistance) {
-		int requestDistanceBlocks = clampInt((targetDistance + 2) * 16, 256, 4096);
 		int requestRateLimit = PauCLodClientSettings.generationRequestRateLimit();
+		boolean shaderRuntime = isShaderPackRuntimeInUse();
+		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
+		boolean coarseFillCatchup = shaderFallback
+			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| PauCClientFrontierWarmupManager.shouldPreferCoarseFill();
+		int preloadExtraChunks = readInt(FOG_PRELOAD_EXTRA_CHUNKS_PROPERTY, coarseFillCatchup ? 32 : 12, 0, 96);
+		int maxRequestBlocks = readInt(MAX_GENERATION_REQUEST_BLOCKS_PROPERTY, 8192, 4096, 16384);
+		int activeFillRadius = PauCClientFrontierWarmupManager.activeFillRadiusChunks(targetDistance);
+		int requestedFillRadius = PauCClientFrontierWarmupManager.requestedFillRadiusChunks(targetDistance);
+		int backgroundFillRadius = PauCClientFrontierWarmupManager.backgroundFillRadiusChunks(targetDistance);
+		int requestRadiusChunks = Math.min(targetDistance, Math.max(requestedFillRadius, PauCLodHorizonState.currentRange().lodStartChunk()));
+		int requestDistanceBlocks = clampInt((requestRadiusChunks + preloadExtraChunks) * 16, 256, maxRequestBlocks);
+		if (coarseFillCatchup) {
+			int coarseFillDefault = shaderFallback ? 768 : shaderRuntime ? 512 : 768;
+			int coarseFillCeiling = shaderFallback ? 1024 : shaderRuntime ? 768 : 1024;
+			if (PauCLodShaderRuntime.pressure() == PauCLodShaderRuntime.Pressure.RELIEF) {
+				coarseFillCeiling = Math.min(coarseFillCeiling, shaderFallback ? 768 : shaderRuntime ? 512 : 768);
+			}
+			int coarseFillRate = readInt(COARSE_FILL_REQUEST_RATE_PROPERTY, coarseFillDefault, 20, 2048);
+			requestRateLimit = Math.max(requestRateLimit, Math.min(coarseFillRate, coarseFillCeiling));
+		}
+		boolean coarseFirstFill = readBoolean(COARSE_FIRST_FILL_PROPERTY, true);
+		boolean fillHoles = PauCLodClientSettings.fillLodHoles();
+		boolean nSizedGeneration = PauCLodClientSettings.enableNSizeGeneration();
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_CONFIG_CLASS, DH_GENERATION_REQUEST_RATE_LIMIT_FIELD, requestRateLimit);
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_CONFIG_CLASS, DH_MAX_GENERATION_REQUEST_DISTANCE_FIELD, requestDistanceBlocks);
-		setDhCoreConfigValueWithoutSaving(DH_SERVER_EXPERIMENTAL_CONFIG_CLASS, DH_ENABLE_N_SIZE_GENERATION_FIELD, PauCLodClientSettings.enableNSizeGeneration());
-		setDhCoreConfigValueWithoutSaving(DH_LOD_BUILDING_EXPERIMENTAL_CONFIG_CLASS, DH_UPSAMPLE_LOWER_DETAIL_LODS_FIELD, PauCLodClientSettings.fillLodHoles());
-		if (!loggedRoundHorizonGenerationPolicy) {
+		setDhCoreConfigValueWithoutSaving(DH_SERVER_EXPERIMENTAL_CONFIG_CLASS, DH_ENABLE_N_SIZE_GENERATION_FIELD, nSizedGeneration);
+		setDhCoreConfigValueWithoutSaving(DH_LOD_BUILDING_EXPERIMENTAL_CONFIG_CLASS, DH_UPSAMPLE_LOWER_DETAIL_LODS_FIELD, fillHoles);
+		String generationPolicySignature = targetDistance
+			+ ":"
+			+ activeFillRadius
+			+ ":"
+			+ requestRadiusChunks
+			+ ":"
+			+ backgroundFillRadius
+			+ ":"
+			+ requestDistanceBlocks
+			+ ":"
+			+ requestRateLimit
+			+ ":"
+			+ shaderFallback
+			+ ":"
+			+ coarseFillCatchup;
+		if (!loggedRoundHorizonGenerationPolicy || !generationPolicySignature.equals(lastLoggedGenerationPolicy)) {
 			loggedRoundHorizonGenerationPolicy = true;
+			lastLoggedGenerationPolicy = generationPolicySignature;
 			LOGGER.info(
-				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, generationRequest={} blocks.",
+				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, activeFillBand={} chunks, generationRequest={} blocks, preloadExtra={} chunks, requestRate={}/s, nSized={}, fillHoles={}, coarseFirst={}.",
 				targetDistance,
-				requestDistanceBlocks
+				activeFillRadius,
+				requestDistanceBlocks,
+				preloadExtraChunks,
+				requestRateLimit,
+				nSizedGeneration,
+				fillHoles,
+				coarseFirstFill
+			);
+			LOGGER.info(
+				"PauC embedded DH bridge fill expansion: requestedRadius={} chunks, backgroundRadius={} chunks, shaderFallback={}, catchup={}.",
+				requestRadiusChunks,
+				backgroundFillRadius,
+				shaderFallback,
+				coarseFillCatchup
 			);
 		}
 		configureReliefCompression();
 	}
 
 	private static void configureDistantCloudRendering() {
-		boolean cloudLods = PauCLodRenderCulling.shouldEnableLodCloudRendering(PauCLodClientSettings.isLodCloudsEnabled());
-		setDhCoreConfigValueWithoutSaving(DH_GENERIC_RENDERING_CONFIG_CLASS, DH_ENABLE_GENERIC_RENDERING_FIELD, cloudLods);
+		boolean shaderFallback = isShaderPackRuntimeInUse() && PauCLodShaderContext.isFallbackActive();
+		boolean genericLods = readBoolean(GENERIC_RENDERING_PROPERTY, true)
+			&& (!shaderFallback || readBoolean(SHADER_FALLBACK_GENERIC_RENDERING_PROPERTY, true));
+		boolean cloudLods = genericLods
+			&& !shaderFallback
+			&& PauCLodRenderCulling.shouldEnableLodCloudRendering(PauCLodClientSettings.isLodCloudsEnabled());
+		setDhCoreConfigValueWithoutSaving(DH_GENERIC_RENDERING_CONFIG_CLASS, DH_ENABLE_GENERIC_RENDERING_FIELD, genericLods);
 		setDhCoreConfigValueWithoutSaving(DH_GENERIC_RENDERING_CONFIG_CLASS, DH_ENABLE_CLOUD_RENDERING_FIELD, cloudLods);
-		if (!Boolean.valueOf(cloudLods).equals(lastLoggedDistantCloudPolicy)) {
+		Boolean cloudPolicy = cloudLods;
+		Boolean shaderFallbackPolicy = shaderFallback;
+		if (!cloudPolicy.equals(lastLoggedDistantCloudPolicy) || !shaderFallbackPolicy.equals(lastLoggedDistantCloudShaderFallback)) {
 			lastLoggedDistantCloudPolicy = cloudLods;
-			LOGGER.info("PauC embedded DH bridge configured distant cloud LOD rendering: enabled={}.", cloudLods);
+			lastLoggedDistantCloudShaderFallback = shaderFallback;
+			LOGGER.info("PauC embedded DH bridge configured distant generic/cloud LOD rendering: generic={}, clouds={}, shaderFallback={}.", genericLods, cloudLods, shaderFallback);
 		}
 	}
 
 	private static void configureSeamlessLodTransition() {
-		float overdrawPrevention = !isShaderPackRuntimeInUse()
-			? (float) readDouble(RELIEF_OVERDRAW_PREVENTION_PROPERTY, 0.88D, -1.0D, 1.0D)
-			: 1.0F;
-		boolean configured = setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_VANILLA_FADE_MODE_FIELD, EDhApiMcRenderingFadeMode.NONE)
+		boolean shaderRuntime = isShaderPackRuntimeInUse();
+		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
+		boolean keepUnderVanilla = PauCLodNearClipOverride.shouldKeepLodsUnderVanilla();
+		float overdrawPrevention = (float) readDouble(
+			shaderFallback ? SHADER_FALLBACK_OVERDRAW_PREVENTION_PROPERTY : shaderRuntime ? SHADER_OVERDRAW_PREVENTION_PROPERTY : RELIEF_OVERDRAW_PREVENTION_PROPERTY,
+			keepUnderVanilla || shaderFallback ? -1.0D : shaderRuntime ? 0.80D : 0.88D,
+			-1.0D,
+			1.0D
+		);
+		EDhApiMcRenderingFadeMode fadeMode = shaderRuntime
+			? readEnum(
+				shaderFallback ? SHADER_FALLBACK_VANILLA_FADE_MODE_PROPERTY : SHADER_VANILLA_FADE_MODE_PROPERTY,
+				EDhApiMcRenderingFadeMode.class,
+				keepUnderVanilla || shaderFallback ? EDhApiMcRenderingFadeMode.NONE : EDhApiMcRenderingFadeMode.SINGLE_PASS
+			)
+			: EDhApiMcRenderingFadeMode.NONE;
+		boolean configured = setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_VANILLA_FADE_MODE_FIELD, fadeMode)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_OVERDRAW_PREVENTION_FIELD, overdrawPrevention)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD, Boolean.FALSE);
 
-		if (configured && !loggedSeamlessTransitionOverride) {
+		String transitionSignature = shaderRuntime + ":" + shaderFallback + ":" + keepUnderVanilla + ":" + fadeMode + ":" + overdrawPrevention;
+		if (configured && (!loggedSeamlessTransitionOverride || !transitionSignature.equals(lastLoggedSeamlessTransitionPolicy))) {
 			loggedSeamlessTransitionOverride = true;
-			LOGGER.info("PauC embedded DH bridge configured strict vanilla-to-LOD boundary: vanillaFade=NONE, overdraw={}, fastMovementOverdraw=false.", overdrawPrevention);
+			lastLoggedSeamlessTransitionPolicy = transitionSignature;
+			LOGGER.info("PauC embedded DH bridge configured vanilla-to-LOD boundary: shaderRuntime={}, shaderFallback={}, keepUnderVanilla={}, vanillaFade={}, overdraw={}, fastMovementOverdraw=false.", shaderRuntime, shaderFallback, keepUnderVanilla, fadeMode, overdrawPrevention);
 		}
 	}
 
@@ -472,6 +754,7 @@ public final class PauCEmbeddedDhBridge {
 		SAVED_CORE_CONFIG_VALUES.clear();
 		loggedDhFogConfigOverride = false;
 		loggedSeamlessTransitionOverride = false;
+		lastLoggedSeamlessTransitionPolicy = "";
 	}
 
 	private static Object dhCoreConfigEntry(String configClassName, String fieldName) throws ReflectiveOperationException {
@@ -498,6 +781,45 @@ public final class PauCEmbeddedDhBridge {
 		} catch (ReflectiveOperationException throwable) {
 			return null;
 		}
+	}
+
+	private static DhGpuUploadState captureGpuUploadState() {
+		try {
+			Class<?> glProxyClass = Class.forName("com.seibel.distanthorizons.common.render.openGl.glObject.GLProxy");
+			java.lang.reflect.Field instanceField = glProxyClass.getDeclaredField("instance");
+			instanceField.setAccessible(true);
+			Object proxy = instanceField.get(null);
+			if (proxy == null) {
+				return DhGpuUploadState.waiting();
+			}
+
+			Object uploadMethod = proxy.getClass().getMethod("getGpuUploadMethod").invoke(proxy);
+			boolean bufferStorageSupported = readBooleanField(proxy, "bufferStorageSupported");
+			boolean namedObjectSupported = readBooleanField(proxy, "namedObjectSupported");
+			String method = uploadMethod != null ? uploadMethod.toString() : "unknown";
+			return new DhGpuUploadState(true, method, bufferStorageSupported, namedObjectSupported, "BUFFER_STORAGE".equals(method), "ready");
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return DhGpuUploadState.unavailable(throwable.getClass().getSimpleName());
+		}
+	}
+
+	private static DhGpuUploadState captureCachedGpuUploadState() {
+		long now = System.currentTimeMillis();
+		DhGpuUploadState cached = cachedGpuUploadState;
+		long cacheMillis = readInt(DIRECT_GPU_UPLOAD_STATE_CACHE_MS_PROPERTY, 250, 50, 5_000);
+		if (cached != null && now - cachedGpuUploadStateAtMillis <= cacheMillis) {
+			return cached;
+		}
+
+		DhGpuUploadState fresh = captureGpuUploadState();
+		cachedGpuUploadState = fresh;
+		cachedGpuUploadStateAtMillis = now;
+		return fresh;
+	}
+
+	private static boolean readBooleanField(Object target, String fieldName) throws ReflectiveOperationException {
+		java.lang.reflect.Field field = target.getClass().getField(fieldName);
+		return field.getBoolean(target);
 	}
 
 	private static boolean valuesEqual(Object currentValue, Object newValue) {
@@ -599,6 +921,39 @@ public final class PauCEmbeddedDhBridge {
 		}
 	}
 
+	private record DhGpuUploadState(
+		boolean proxyReady,
+		String method,
+		boolean bufferStorageSupported,
+		boolean namedObjectSupported,
+		boolean direct,
+		String status
+	) {
+		private static DhGpuUploadState waiting() {
+			return new DhGpuUploadState(false, "-", false, false, false, "proxy-waiting");
+		}
+
+		private static DhGpuUploadState unavailable(String status) {
+			return new DhGpuUploadState(false, "-", false, false, false, status);
+		}
+
+		private String describe() {
+			return "dhGpu[proxy="
+				+ (proxyReady ? "ready" : "not-ready")
+				+ ", method="
+				+ method
+				+ ", direct="
+				+ direct
+				+ ", bufferStorage="
+				+ bufferStorageSupported
+				+ ", namedObject="
+				+ namedObjectSupported
+				+ ", status="
+				+ status
+				+ "]";
+		}
+	}
+
 	private record RuntimeLodSettings(
 		EDhApiMaxHorizontalResolution maxHorizontalResolution,
 		EDhApiHorizontalQuality horizontalQuality,
@@ -612,7 +967,17 @@ public final class PauCEmbeddedDhBridge {
 	) {
 		private static RuntimeLodSettings fastDefaults() {
 			int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
-			int defaultThreads = clampInt((int) Math.ceil(processors * 0.375D), 2, Math.max(2, Math.min(6, processors)));
+			boolean coarseFill = PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive();
+			boolean shaderRuntime = isShaderPackRuntimeInUse();
+			boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
+			int threadCeiling = Math.max(2, Math.min(shaderRuntime ? 18 : fpsFirstVanilla ? 20 : 28, processors));
+			double defaultThreadShare = coarseFill
+				? (shaderRuntime ? 0.76D : fpsFirstVanilla ? 0.58D : 0.92D)
+				: (shaderRuntime ? 0.54D : fpsFirstVanilla ? 0.46D : 0.68D);
+			int defaultThreads = clampInt((int) Math.ceil(processors * defaultThreadShare), 2, threadCeiling);
+			double defaultRuntimeRatio = coarseFill
+				? (shaderRuntime ? 0.72D : fpsFirstVanilla ? 0.56D : 0.90D)
+				: (shaderRuntime ? 0.52D : fpsFirstVanilla ? 0.42D : 0.68D);
 			return new RuntimeLodSettings(
 				defaultMaxHorizontalResolution(),
 				defaultHorizontalQuality(),
@@ -620,9 +985,9 @@ public final class PauCEmbeddedDhBridge {
 				EDhApiLodShading.ENABLED,
 				readEnum(FAST_TRANSPARENCY_PROPERTY, EDhApiTransparency.class, defaultTransparency()),
 				defaultRuntimeGeneratorMode(),
-				readInt(FAST_THREADS_PROPERTY, defaultThreads, 1, Math.max(1, Math.min(8, processors))),
-				readDouble(FAST_RUNTIME_RATIO_PROPERTY, PauCLodShaderRuntime.generationThreadRuntimeRatio(0.55D), 0.05D, 1.0D),
-				readInt(FAST_BIOME_BLEND_PROPERTY, 0, 0, 3)
+				readInt(FAST_THREADS_PROPERTY, defaultThreads, 1, threadCeiling),
+				readDouble(FAST_RUNTIME_RATIO_PROPERTY, PauCLodShaderRuntime.generationThreadRuntimeRatio(defaultRuntimeRatio), 0.05D, 1.0D),
+				readInt(FAST_BIOME_BLEND_PROPERTY, 2, 0, 3)
 			);
 		}
 
@@ -632,7 +997,8 @@ public final class PauCEmbeddedDhBridge {
 				EDhApiMaxHorizontalResolution.class,
 				EDhApiMaxHorizontalResolution.TWO_BLOCKS
 			);
-			return readEnum(DYNAMIC_MAX_RESOLUTION_PROPERTY, EDhApiMaxHorizontalResolution.class, configured);
+			EDhApiMaxHorizontalResolution dynamic = readEnum(DYNAMIC_MAX_RESOLUTION_PROPERTY, EDhApiMaxHorizontalResolution.class, configured);
+			return PauCClientSurfaceLodMode.adjustMaxHorizontalResolution(dynamic);
 		}
 
 		private static EDhApiVerticalQuality defaultVerticalQuality() {
@@ -651,11 +1017,18 @@ public final class PauCEmbeddedDhBridge {
 				EDhApiHorizontalQuality.class,
 				EDhApiHorizontalQuality.LOW
 			);
-			return readEnum(DYNAMIC_HORIZONTAL_QUALITY_PROPERTY, EDhApiHorizontalQuality.class, configured);
+			EDhApiHorizontalQuality dynamic = readEnum(DYNAMIC_HORIZONTAL_QUALITY_PROPERTY, EDhApiHorizontalQuality.class, configured);
+			return PauCClientSurfaceLodMode.adjustHorizontalQuality(dynamic);
 		}
 
 		private static EDhApiDistantGeneratorMode defaultGeneratorMode() {
 			if (Boolean.parseBoolean(System.getProperty(DISTANT_STRUCTURES_PROPERTY, "false"))) {
+				return EDhApiDistantGeneratorMode.INTERNAL_SERVER;
+			}
+			boolean shaderFallback = isShaderPackRuntimeInUse() && PauCLodShaderContext.isFallbackActive();
+			boolean stableFill = !PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation()
+				&& !PauCClientChunkPriorityScorer.isMovementCatchupActive();
+			if (readBoolean(ADAPTIVE_DISTANT_STRUCTURES_PROPERTY, true) && stableFill && !shaderFallback) {
 				return EDhApiDistantGeneratorMode.INTERNAL_SERVER;
 			}
 
@@ -663,13 +1036,16 @@ public final class PauCEmbeddedDhBridge {
 		}
 
 		private static EDhApiDistantGeneratorMode defaultRuntimeGeneratorMode() {
-			EDhApiDistantGeneratorMode configured = readEnum(FAST_GENERATOR_MODE_PROPERTY, EDhApiDistantGeneratorMode.class, defaultGeneratorMode());
+			EDhApiDistantGeneratorMode fallback = (PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive())
+				? readEnum(FILL_GENERATOR_MODE_PROPERTY, EDhApiDistantGeneratorMode.class, defaultGeneratorMode())
+				: defaultGeneratorMode();
+			EDhApiDistantGeneratorMode configured = readEnum(FAST_GENERATOR_MODE_PROPERTY, EDhApiDistantGeneratorMode.class, fallback);
 			return PauCClientSurfaceLodMode.adjustGeneratorMode(configured);
 		}
 
 		private static EDhApiTransparency defaultTransparency() {
 			if (!isShaderPackRuntimeInUse()) {
-				return EDhApiTransparency.FAKE;
+				return PauCClientSurfaceLodMode.prefersAccurateFeatureLods() ? EDhApiTransparency.COMPLETE : EDhApiTransparency.FAKE;
 			}
 			if (PauCLodShaderContext.isFallbackActive()) {
 				return EDhApiTransparency.COMPLETE;
@@ -698,15 +1074,22 @@ public final class PauCEmbeddedDhBridge {
 		EDhApiHorizontalQuality horizontalQuality,
 		EDhApiVerticalQuality verticalQuality,
 		EDhApiLodShading lodShading,
-		EDhApiTransparency transparency
+		EDhApiTransparency transparency,
+		boolean shaderRuntime,
+		PauCLodShaderProfiles.Family shaderFamily,
+		boolean shaderFallback
 	) {
 		private static LodRenderGeometrySignature from(RuntimeLodSettings settings) {
+			boolean shaderRuntime = isShaderPackRuntimeInUse();
 			return new LodRenderGeometrySignature(
 				settings.maxHorizontalResolution(),
 				settings.horizontalQuality(),
 				settings.verticalQuality(),
 				settings.lodShading(),
-				settings.transparency()
+				settings.transparency(),
+				shaderRuntime,
+				shaderRuntime ? PauCLodShaderProfiles.currentFamily() : PauCLodShaderProfiles.Family.GENERIC,
+				shaderRuntime && PauCLodShaderContext.isFallbackActive()
 			);
 		}
 
@@ -720,7 +1103,41 @@ public final class PauCEmbeddedDhBridge {
 				+ ", shading="
 				+ lodShading
 				+ ", transparency="
-				+ transparency;
+				+ transparency
+				+ ", shaderRuntime="
+				+ shaderRuntime
+				+ ", shaderFamily="
+				+ shaderFamily
+				+ ", shaderFallback="
+				+ shaderFallback;
+		}
+
+		private boolean isQualityOnlyChange(LodRenderGeometrySignature next) {
+			return lodShading == next.lodShading
+				&& transparency == next.transparency
+				&& shaderRuntime == next.shaderRuntime
+				&& shaderFamily == next.shaderFamily
+				&& shaderFallback == next.shaderFallback;
+		}
+
+		private boolean isShaderPresentationChange(LodRenderGeometrySignature next) {
+			return lodShading != next.lodShading
+				|| transparency != next.transparency
+				|| shaderRuntime != next.shaderRuntime
+				|| shaderFamily != next.shaderFamily
+				|| shaderFallback != next.shaderFallback;
+		}
+
+		private boolean isShaderRuntimeChange(LodRenderGeometrySignature next) {
+			return shaderRuntime != next.shaderRuntime
+				|| shaderFamily != next.shaderFamily
+				|| shaderFallback != next.shaderFallback;
+		}
+
+		private boolean requiresMeshCacheClear(LodRenderGeometrySignature next) {
+			return maxHorizontalResolution != next.maxHorizontalResolution
+				|| horizontalQuality != next.horizontalQuality
+				|| verticalQuality != next.verticalQuality;
 		}
 	}
 

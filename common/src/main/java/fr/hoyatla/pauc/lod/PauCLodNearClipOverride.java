@@ -1,22 +1,40 @@
 package fr.hoyatla.pauc.lod;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 
 public final class PauCLodNearClipOverride {
 	private static final Logger LOGGER = LogUtils.getLogger();
 	private static final String ENABLED_PROPERTY = "pauc.lod.nearClipOverride";
+	private static final String SHADER_ENABLED_PROPERTY = "pauc.lod.shaderNearClipOverride";
 	private static final String GLOBAL_RENDER_UTIL_PROPERTY = "pauc.lod.globalRenderUtilClip";
+	private static final String KEEP_UNDER_VANILLA_PROPERTY = "pauc.lod.keepLodsUnderVanilla";
+	private static final String UNDER_VANILLA_CLIP_BLOCKS_PROPERTY = "pauc.lod.underVanillaClipBlocks";
+	private static final String SHADER_OFF_GROUNDED_OVERLAP_CLIP_PROPERTY = "pauc.lod.shaderOffGroundedOverlapClip";
+	private static final String SHADER_OFF_GROUNDED_OVERLAP_CLIP_CHUNKS_PROPERTY = "pauc.lod.shaderOffGroundedOverlapClipChunks";
+	private static final String SHADER_OFF_GROUNDED_OVERLAP_HEIGHT_PROPERTY = "pauc.lod.shaderOffGroundedOverlapHeightBlocks";
+	private static final String SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS_PROPERTY = "pauc.lod.shaderOffGroundedOverlapReleaseMs";
+	private static final String FEATURE_TRANSITION_MASK_HOLD_MS_PROPERTY = "pauc.lod.featureTransitionMaskHoldMs";
+	private static final String TERRAIN_CONTINUITY_HOLD_MS_PROPERTY = "pauc.lod.terrainContinuityHoldMs";
 	private static final String INSET_CHUNKS_PROPERTY = "pauc.lod.nearClipInsetChunks";
 	private static final String SHADER_OFF_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffNearClipInsetChunks";
 	private static final String SHADER_OFF_MOVING_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffMovingNearClipInsetChunks";
 	private static final String SHADER_OFF_STARTUP_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffStartupNearClipInsetChunks";
-	private static final int DEFAULT_INSET_CHUNKS = 0;
+	private static final int DEFAULT_INSET_CHUNKS = 2;
 	private static final int DEFAULT_SHADER_OFF_INSET_CHUNKS = 3;
 	private static final int DEFAULT_SHADER_OFF_MOVING_INSET_CHUNKS = 4;
 	private static final int DEFAULT_SHADER_OFF_STARTUP_INSET_CHUNKS = 4;
+	private static final int DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_HEIGHT_BLOCKS = 24;
+	private static final int DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS = 1_800;
+	private static final int DEFAULT_FEATURE_TRANSITION_MASK_HOLD_MS = 1_500;
+	private static final int DEFAULT_TERRAIN_CONTINUITY_HOLD_MS = 1_500;
 	private static final long SHADER_OFF_STARTUP_WINDOW_MS = 8_000L;
 	private static final long SHADER_OFF_MOVING_HOLD_MS = 3_000L;
 	private static final double MOVING_SPEED_THRESHOLD = 0.08D;
@@ -24,10 +42,17 @@ public final class PauCLodNearClipOverride {
 	private static volatile float lastLoggedApplied = Float.NaN;
 	private static volatile int lastLoggedLodStartChunk = -1;
 	private static volatile int lastLoggedInsetChunks = -1;
+	private static volatile boolean lastLoggedUnderVanilla;
+	private static volatile boolean lastLoggedGroundedOverlapClip;
 	private static volatile long lastLogMs;
 	private static volatile long shaderOffRangeStartedAtMs;
 	private static volatile String shaderOffRangeKey = "";
 	private static volatile long movingInsetHoldUntilMs;
+	private static volatile long groundedOverlapClipHoldUntilMs;
+	private static volatile long featureTransitionMaskHoldUntilMs;
+	private static volatile String featureTransitionMaskReason = "";
+	private static volatile long terrainContinuityHoldUntilMs;
+	private static volatile String terrainContinuityHoldReason = "";
 
 	private PauCLodNearClipOverride() {
 	}
@@ -38,9 +63,14 @@ public final class PauCLodNearClipOverride {
 		}
 
 		PauCLodRange range = PauCLodHorizonState.currentRange();
-		int insetChunks = insetChunks();
-		float appliedNearClipBlocks = Math.max(originalNearClipBlocks, boundaryClipBlocks(range, insetChunks));
-		logOverride(originalNearClipBlocks, appliedNearClipBlocks, range, insetChunks);
+		boolean underVanilla = shouldKeepLodsUnderVanilla();
+		int insetChunks = underVanilla ? 0 : insetChunks();
+		boolean groundedOverlapClip = shouldUseGroundedOverlapClip();
+		float underVanillaClipBlocks = underVanillaClipBlocks(range, groundedOverlapClip);
+		float appliedNearClipBlocks = underVanilla
+			? underVanillaClipBlocks
+			: Math.max(originalNearClipBlocks, boundaryClipBlocks(range, insetChunks));
+		logOverride(originalNearClipBlocks, appliedNearClipBlocks, range, insetChunks, underVanilla, groundedOverlapClip);
 		return appliedNearClipBlocks;
 	}
 
@@ -54,16 +84,70 @@ public final class PauCLodNearClipOverride {
 
 	public static boolean shouldOverrideCurrentRange() {
 		PauCLodRange range = PauCLodHorizonState.currentRange();
-		return readBoolean(ENABLED_PROPERTY, true) && range != null && range.enabled();
+		if (!readBoolean(ENABLED_PROPERTY, true) || range == null || !range.enabled()) {
+			return false;
+		}
+		if (PauCLodShaderContext.isShaderPackInUse()) {
+			return shouldKeepLodsUnderVanilla() || readBoolean(SHADER_ENABLED_PROPERTY, false);
+		}
+		return true;
 	}
 
 	public static float currentBoundaryClipBlocks(float fallbackBlocks) {
-		PauCLodRange range = PauCLodHorizonState.currentRange();
-		if (!readBoolean(ENABLED_PROPERTY, true) || range == null || !range.enabled()) {
+		if (!shouldOverrideCurrentRange()) {
 			return fallbackBlocks;
 		}
 
+		PauCLodRange range = PauCLodHorizonState.currentRange();
+		if (range == null || !range.enabled()) {
+			return fallbackBlocks;
+		}
 		return Math.max(fallbackBlocks, boundaryClipBlocks(range, insetChunks()));
+	}
+
+	public static boolean shouldKeepLodsUnderVanilla() {
+		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, true);
+	}
+
+	public static void setFeatureTransitionMask(boolean active, String reason) {
+		long now = System.currentTimeMillis();
+		if (active) {
+			int holdMs = readInt(FEATURE_TRANSITION_MASK_HOLD_MS_PROPERTY, DEFAULT_FEATURE_TRANSITION_MASK_HOLD_MS, 0, 10_000);
+			featureTransitionMaskHoldUntilMs = now + holdMs;
+			featureTransitionMaskReason = reason == null ? "" : reason;
+			return;
+		}
+
+		if (now > featureTransitionMaskHoldUntilMs) {
+			featureTransitionMaskReason = "";
+		}
+	}
+
+	public static void setTerrainContinuityHold(boolean active, String reason) {
+		long now = System.currentTimeMillis();
+		if (active) {
+			int holdMs = readInt(TERRAIN_CONTINUITY_HOLD_MS_PROPERTY, DEFAULT_TERRAIN_CONTINUITY_HOLD_MS, 0, 10_000);
+			terrainContinuityHoldUntilMs = now + holdMs;
+			terrainContinuityHoldReason = reason == null ? "" : reason;
+			return;
+		}
+
+		if (now > terrainContinuityHoldUntilMs) {
+			terrainContinuityHoldReason = "";
+		}
+	}
+
+	public static boolean shouldUseFeatureTransitionMask() {
+		if (!shouldKeepLodsUnderVanilla()) {
+			return false;
+		}
+		// Keep feature masking independent from terrain continuity recovery. The
+		// continuity hold only suppresses terrain near clipping to avoid map holes.
+		return System.currentTimeMillis() <= featureTransitionMaskHoldUntilMs;
+	}
+
+	public static String featureTransitionMaskReason() {
+		return shouldUseFeatureTransitionMask() ? featureTransitionMaskReason : "";
 	}
 
 	private static float boundaryClipBlocks(PauCLodRange range, int insetChunks) {
@@ -118,11 +202,106 @@ public final class PauCLodNearClipOverride {
 		return now - shaderOffRangeStartedAtMs <= SHADER_OFF_STARTUP_WINDOW_MS;
 	}
 
-	private static void logOverride(float originalNearClipBlocks, float appliedNearClipBlocks, PauCLodRange range, int insetChunks) {
+	private static float underVanillaClipBlocks(PauCLodRange range, boolean groundedOverlapClip) {
+		float configuredClip = readFloat(UNDER_VANILLA_CLIP_BLOCKS_PROPERTY, 0.0F, 0.0F, 256.0F);
+		if (!groundedOverlapClip || range == null || !range.enabled()) {
+			return configuredClip;
+		}
+
+		int defaultClipChunks = Math.max(3, Math.min(range.vanillaRenderDistanceChunks(), range.vanillaRenderDistanceChunks() - 3));
+		int clipChunks = readInt(SHADER_OFF_GROUNDED_OVERLAP_CLIP_CHUNKS_PROPERTY, defaultClipChunks, -1, range.lodStartChunk());
+		if (clipChunks < 0) {
+			clipChunks = defaultClipChunks;
+		}
+		clipChunks = clamp(clipChunks, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, range.lodStartChunk());
+		return Math.max(configuredClip, clipChunks * 16.0F);
+	}
+
+	private static boolean shouldUseGroundedOverlapClip() {
+		if (!shouldKeepLodsUnderVanilla()) {
+			groundedOverlapClipHoldUntilMs = 0L;
+			return false;
+		}
+		if (shouldHoldTerrainContinuity()) {
+			groundedOverlapClipHoldUntilMs = 0L;
+			return false;
+		}
+
+		long now = System.currentTimeMillis();
+		if (now <= groundedOverlapClipHoldUntilMs) {
+			return true;
+		}
+		if (shouldUseFeatureTransitionMask()) {
+			int releaseMs = readInt(
+				SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS_PROPERTY,
+				DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS,
+				0,
+				10_000
+			);
+			groundedOverlapClipHoldUntilMs = now + releaseMs;
+			return true;
+		}
+		if (PauCLodShaderContext.isShaderPackInUse()
+			|| !readBoolean(SHADER_OFF_GROUNDED_OVERLAP_CLIP_PROPERTY, false)) {
+			groundedOverlapClipHoldUntilMs = 0L;
+			return false;
+		}
+
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null || minecraft.gameRenderer == null) {
+			return false;
+		}
+
+		Camera camera = minecraft.gameRenderer.getMainCamera();
+		Vec3 cameraPos = camera.getPosition();
+		int surfaceY = surfaceHeight(minecraft.level, cameraPos);
+		int heightTolerance = readInt(
+			SHADER_OFF_GROUNDED_OVERLAP_HEIGHT_PROPERTY,
+			DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_HEIGHT_BLOCKS,
+			0,
+			160
+		);
+		// Terrain continuity must not depend on the noisy near-feature transition state.
+		boolean grounded = cameraPos.y <= surfaceY + heightTolerance;
+		if (grounded) {
+			int releaseMs = readInt(
+				SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS_PROPERTY,
+				DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS,
+				0,
+				10_000
+			);
+			groundedOverlapClipHoldUntilMs = now + releaseMs;
+			return true;
+		}
+		return now <= groundedOverlapClipHoldUntilMs;
+	}
+
+	private static boolean shouldHoldTerrainContinuity() {
+		long now = System.currentTimeMillis();
+		if (now > terrainContinuityHoldUntilMs) {
+			terrainContinuityHoldReason = "";
+			return false;
+		}
+		return true;
+	}
+
+	private static int surfaceHeight(ClientLevel level, Vec3 cameraPos) {
+		BlockPos pos = BlockPos.containing(cameraPos.x, cameraPos.y, cameraPos.z);
+		int directSurface = level.getHeight(Heightmap.Types.WORLD_SURFACE, pos.getX(), pos.getZ());
+		if (directSurface > level.getMinBuildHeight() + 1) {
+			return directSurface;
+		}
+
+		return pos.getY();
+	}
+
+	private static void logOverride(float originalNearClipBlocks, float appliedNearClipBlocks, PauCLodRange range, int insetChunks, boolean underVanilla, boolean groundedOverlapClip) {
 		long now = System.currentTimeMillis();
 		boolean changed = Math.abs(appliedNearClipBlocks - lastLoggedApplied) >= 1.0F
 			|| range.lodStartChunk() != lastLoggedLodStartChunk
-			|| insetChunks != lastLoggedInsetChunks;
+			|| insetChunks != lastLoggedInsetChunks
+			|| underVanilla != lastLoggedUnderVanilla
+			|| groundedOverlapClip != lastLoggedGroundedOverlapClip;
 		if (now - lastLogMs < 3_000L) {
 			return;
 		}
@@ -134,13 +313,19 @@ public final class PauCLodNearClipOverride {
 		lastLoggedApplied = appliedNearClipBlocks;
 		lastLoggedLodStartChunk = range.lodStartChunk();
 		lastLoggedInsetChunks = insetChunks;
+		lastLoggedUnderVanilla = underVanilla;
+		lastLoggedGroundedOverlapClip = groundedOverlapClip;
 		lastLogMs = now;
 		LOGGER.info(
-			"PauC DH near-clip override: original={} blocks, applied={} blocks, lodStart={} chunks, inset={} chunks, {}",
+			"PauC DH near-clip override: mode={}, original={} blocks, applied={} blocks, lodStart={} chunks, inset={} chunks, groundedOverlapClip={}, featureTransition={}, continuityHold={}, {}",
+			underVanilla ? groundedOverlapClip ? "lods-under-vanilla-grounded-overlap-mask" : "lods-under-vanilla" : "boundary-clip",
 			roundOneDecimal(originalNearClipBlocks),
 			roundOneDecimal(appliedNearClipBlocks),
 			range.lodStartChunk(),
 			insetChunks,
+			groundedOverlapClip,
+			featureTransitionMaskReason().isEmpty() ? "off" : featureTransitionMaskReason(),
+			shouldHoldTerrainContinuity() ? (terrainContinuityHoldReason.isEmpty() ? "active" : terrainContinuityHoldReason) : "off",
 			range.describe()
 		);
 	}
@@ -163,7 +348,24 @@ public final class PauCLodNearClipOverride {
 		}
 	}
 
+	private static float readFloat(String key, float fallback, float min, float max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return clamp(fallback, min, max);
+		}
+
+		try {
+			return clamp(Float.parseFloat(rawValue), min, max);
+		} catch (NumberFormatException ignored) {
+			return clamp(fallback, min, max);
+		}
+	}
+
 	private static int clamp(int value, int min, int max) {
+		return Math.max(min, Math.min(max, value));
+	}
+
+	private static float clamp(float value, float min, float max) {
 		return Math.max(min, Math.min(max, value));
 	}
 

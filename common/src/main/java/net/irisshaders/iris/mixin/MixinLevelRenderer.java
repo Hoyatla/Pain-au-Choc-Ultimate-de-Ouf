@@ -4,7 +4,8 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
-import fr.hoyatla.pauc.lod.PauCNoShaderSkyHorizon;
+import fr.hoyatla.pauc.lod.PauCLodHorizonState;
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.gl.IrisRenderSystem;
@@ -27,6 +28,7 @@ import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.network.chat.Component;
 import org.joml.Matrix4f;
+import org.joml.Vector3d;
 import org.lwjgl.opengl.GL43C;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
@@ -49,9 +51,43 @@ public class MixinLevelRenderer {
 	private WorldRenderingPipeline pipeline;
 
 	@Unique
+	private static final String PAUC_SKY_FOG_BLEND_PROPERTY = "pauc.lod.skyFogColorBlend";
+
+	@Unique
 	private static boolean pauc$shouldBypassPipeline() {
 		return PauCRenderLifecycle.isClientLogoutInProgress()
 			|| PauCRenderLifecycle.isClientLogoutPipelineDestroyActive();
+	}
+
+	@Unique
+	private static float pauc$skyFogBlend() {
+		String rawValue = System.getProperty(PAUC_SKY_FOG_BLEND_PROPERTY);
+		if (rawValue == null) {
+			return 1.0F;
+		}
+
+		try {
+			return Math.max(0.0F, Math.min(1.0F, Float.parseFloat(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return 1.0F;
+		}
+	}
+
+	@Unique
+	private static boolean pauc$shouldUseFogSkyColor() {
+		return PauCLodHorizonState.shouldExtendVanillaFog()
+			&& !PauCLodShaderContext.isShaderPackInUse()
+			&& pauc$skyFogBlend() > 0.0F;
+	}
+
+	@Unique
+	private static float pauc$blendSkyWithFog(float original, double fogComponent) {
+		if (!pauc$shouldUseFogSkyColor()) {
+			return original;
+		}
+
+		float blend = pauc$skyFogBlend();
+		return original + ((float) fogComponent - original) * blend;
 	}
 
 	// Begin shader rendering after buffers have been cleared.
@@ -146,6 +182,36 @@ public class MixinLevelRenderer {
 		return false;
 	}
 
+	@ModifyArg(
+		method = "renderSky",
+		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;setShaderColor(FFFF)V", ordinal = 0, remap = false),
+		index = 0
+	)
+	private float pauc$useFogColorForVanillaSkyRed(float original) {
+		Vector3d fogColor = CapturedRenderingState.INSTANCE.getFogColor();
+		return pauc$blendSkyWithFog(original, fogColor.x);
+	}
+
+	@ModifyArg(
+		method = "renderSky",
+		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;setShaderColor(FFFF)V", ordinal = 0, remap = false),
+		index = 1
+	)
+	private float pauc$useFogColorForVanillaSkyGreen(float original) {
+		Vector3d fogColor = CapturedRenderingState.INSTANCE.getFogColor();
+		return pauc$blendSkyWithFog(original, fogColor.y);
+	}
+
+	@ModifyArg(
+		method = "renderSky",
+		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;setShaderColor(FFFF)V", ordinal = 0, remap = false),
+		index = 2
+	)
+	private float pauc$useFogColorForVanillaSkyBlue(float original) {
+		Vector3d fogColor = CapturedRenderingState.INSTANCE.getFogColor();
+		return pauc$blendSkyWithFog(original, fogColor.z);
+	}
+
 	@Inject(method = "renderLevel", at = @At(value = "INVOKE", target = RENDER_SKY))
 	private void iris$beginSky(PoseStack poseStack, float tickDelta, long limitTime, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f projection, CallbackInfo callback) {
 		if (pipeline == null) {
@@ -234,7 +300,6 @@ public class MixinLevelRenderer {
 			return;
 		}
 
-		PauCNoShaderSkyHorizon.renderAfterVanillaSky(poseStack, projection, camera);
 		pipeline.setPhase(WorldRenderingPhase.NONE);
 	}
 

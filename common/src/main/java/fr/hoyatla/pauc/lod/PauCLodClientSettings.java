@@ -16,6 +16,7 @@ import java.util.Properties;
 public final class PauCLodClientSettings {
 	private static final Logger LOGGER = LogUtils.getLogger();
 	private static final String CONFIG_FILE_NAME = "pauc_lods.properties";
+	private static final String PROFILE_DEFAULTS_VERSION_KEY = "profileDefaultsVersion";
 	private static final String ENABLED_KEY = "lodsEnabled";
 	private static final String LOD_CLOUDS_KEY = "lodCloudsEnabled";
 	private static final String TARGET_DISTANCE_KEY = "lodTargetDistanceChunks";
@@ -25,10 +26,15 @@ public final class PauCLodClientSettings {
 	private static final String ENABLE_N_SIZE_GENERATION_KEY = "lodEnableNSizeGeneration";
 	private static final String FILL_HOLES_KEY = "lodFillHoles";
 	private static final String DIAGNOSTICS_KEY = "lodDiagnostics";
+	private static final String NVIDIA_ACCELERATION_KEY = "nvidiaAccelerationEnabled";
+	private static final String DIRECT_GPU_UPLOAD_KEY = "directGpuUploadEnabled";
+	private static final String TERRAIN_MORPHING_KEY = "terrainMorphingEnabled";
 	private static final String ENABLED_PROPERTY = "pauc.lod.enabled";
 	private static final String LOD_CLOUDS_PROPERTY = "pauc.lod.clouds";
 	private static final String TARGET_DISTANCE_PROPERTY = "pauc.lod.targetDistance";
 	private static final String DYNAMIC_TARGET_DISTANCE_PROPERTY = "pauc.lod.dynamicTargetDistance";
+	private static final String ALLOW_DISTANCE_REDUCTION_PROPERTY = "pauc.client.allowFpsGovernorDistanceReduction";
+	private static final String ALLOW_GENERATION_REDUCTION_PROPERTY = "pauc.client.allowFpsGovernorGenerationReduction";
 	private static final String MEMORY_BUDGET_PROPERTY = "pauc.lod.memoryBudgetMb";
 	private static final String RETENTION_MARGIN_PROPERTY = "pauc.lod.retentionMarginChunks";
 	private static final String DYNAMIC_RETENTION_MARGIN_PROPERTY = "pauc.lod.dynamicRetentionMarginChunks";
@@ -39,16 +45,26 @@ public final class PauCLodClientSettings {
 	private static final String ENABLE_N_SIZE_GENERATION_PROPERTY = "pauc.lod.enableNSizeGeneration";
 	private static final String FILL_HOLES_PROPERTY = "pauc.lod.fillHoles";
 	private static final String DIAGNOSTICS_PROPERTY = "pauc.lod.diagnostics";
+	private static final String NVIDIA_ACCELERATION_PROPERTY = "pauc.client.cuda.enabled";
+	private static final String NVIDIA_ACCELERATION_AVAILABLE_PROPERTY = "pauc.client.cuda.available";
+	private static final String NVIDIA_DRIVER_AVAILABLE_PROPERTY = "pauc.client.cuda.driverAvailable";
+	private static final String NVIDIA_ACCELERATION_STATUS_PROPERTY = "pauc.client.cuda.status";
+	private static final String DIRECT_GPU_UPLOAD_PROPERTY = "pauc.lod.directGpuOpenGlRenderer";
+	private static final String TERRAIN_MORPHING_PROPERTY = "pauc.lod.shaderOffSeamMorph";
+	private static final int PROFILE_DEFAULTS_VERSION = 3;
 	private static volatile boolean loaded;
 	private static boolean lodsEnabled = true;
 	private static boolean lodCloudsEnabled = true;
-	private static int targetDistanceChunks = PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS;
+	private static int targetDistanceChunks = PauCLodGameplayProfile.defaultTargetDistanceChunks();
 	private static int memoryBudgetMb = defaultMemoryBudgetMb();
 	private static int retentionMarginChunks = 12;
-	private static int generationRequestRateLimit = defaultGenerationRequestRateLimit();
+	private static int generationRequestRateLimit = PauCLodGameplayProfile.defaultGenerationRequestRateLimit(defaultGenerationRequestRateLimit());
 	private static boolean enableNSizeGeneration = true;
 	private static boolean fillHoles = true;
 	private static boolean diagnostics = true;
+	private static boolean nvidiaAccelerationEnabled = true;
+	private static boolean directGpuUploadEnabled = true;
+	private static boolean terrainMorphingEnabled = true;
 
 	private PauCLodClientSettings() {
 	}
@@ -89,6 +105,9 @@ public final class PauCLodClientSettings {
 	public static int targetDistanceChunks() {
 		ensureLoaded();
 		int configuredDistance = configuredTargetDistanceChunks();
+		if (!isDynamicTargetDistanceReductionAllowed()) {
+			return configuredDistance;
+		}
 		String dynamicDistance = System.getProperty(DYNAMIC_TARGET_DISTANCE_PROPERTY);
 		if (dynamicDistance == null) {
 			return configuredDistance;
@@ -103,8 +122,10 @@ public final class PauCLodClientSettings {
 
 	public static void setTargetDistanceChunks(int targetDistance) {
 		ensureLoaded();
-		targetDistanceChunks = sanitizeTargetDistanceChunks(targetDistance);
+		int sanitizedTarget = sanitizeTargetDistanceChunks(targetDistance);
+		targetDistanceChunks = sanitizedTarget;
 		System.setProperty(TARGET_DISTANCE_PROPERTY, Integer.toString(targetDistanceChunks));
+		System.clearProperty(DYNAMIC_TARGET_DISTANCE_PROPERTY);
 		save();
 	}
 
@@ -129,27 +150,33 @@ public final class PauCLodClientSettings {
 
 	public static int generationRequestRateLimit() {
 		ensureLoaded();
-		int configuredRate = sanitizeGenerationRequestRateLimit(readIntProperty(GENERATION_REQUEST_RATE_LIMIT_PROPERTY, generationRequestRateLimit));
+		int configuredRate = configuredGenerationRequestRateLimit();
 		String dynamicRate = System.getProperty(DYNAMIC_GENERATION_REQUEST_RATE_LIMIT_PROPERTY);
 		if (dynamicRate != null) {
-			return sanitizeGenerationRequestRateLimit(readInt(dynamicRate, configuredRate));
-		}
-		if (!PauCLodShaderContext.isShaderPackInUse()) {
-			return Math.max(112, configuredRate);
+			int sanitizedDynamicRate = sanitizeGenerationRequestRateLimit(readInt(dynamicRate, configuredRate));
+			if (!isDynamicGenerationReductionAllowed()) {
+				return Math.max(configuredRate, sanitizedDynamicRate);
+			}
+			return sanitizedDynamicRate;
 		}
 
-		return configuredRate;
+		return Math.max(PauCLodGameplayProfile.minimumGenerationRequestRate(), configuredRate);
+	}
+
+	public static int configuredGenerationRequestRateLimit() {
+		ensureLoaded();
+		return sanitizeGenerationRequestRateLimit(readIntProperty(GENERATION_REQUEST_RATE_LIMIT_PROPERTY, generationRequestRateLimit));
 	}
 
 	public static int recommendedVanillaDistanceChunks() {
 		ensureLoaded();
-		int fallback = PauCLodShaderContext.isShaderPackInUse() ? 8 : 12;
+		int fallback = PauCLodGameplayProfile.recommendedVanillaDistanceChunks();
 		return sanitizeRecommendedVanillaDistanceChunks(readIntProperty(RECOMMENDED_VANILLA_DISTANCE_PROPERTY, fallback));
 	}
 
 	public static boolean autoReduceVanillaDistance() {
 		ensureLoaded();
-		return readBooleanProperty(AUTO_REDUCE_VANILLA_DISTANCE_PROPERTY, false);
+		return readBooleanProperty(AUTO_REDUCE_VANILLA_DISTANCE_PROPERTY, PauCLodGameplayProfile.autoReduceVanillaDistance());
 	}
 
 	public static boolean enableNSizeGeneration() {
@@ -167,9 +194,54 @@ public final class PauCLodClientSettings {
 		return readBooleanProperty(DIAGNOSTICS_PROPERTY, diagnostics);
 	}
 
+	public static boolean isNvidiaAccelerationEnabled() {
+		ensureLoaded();
+		return readBooleanProperty(NVIDIA_ACCELERATION_PROPERTY, nvidiaAccelerationEnabled);
+	}
+
+	public static boolean isDirectGpuUploadEnabled() {
+		ensureLoaded();
+		return readBooleanProperty(DIRECT_GPU_UPLOAD_PROPERTY, directGpuUploadEnabled);
+	}
+
+	public static boolean isTerrainMorphingEnabled() {
+		ensureLoaded();
+		return readEnabledStrengthProperty(TERRAIN_MORPHING_PROPERTY, terrainMorphingEnabled);
+	}
+
+	public static void setNvidiaAccelerationEnabled(boolean enabled) {
+		ensureLoaded();
+		nvidiaAccelerationEnabled = enabled;
+		System.setProperty(NVIDIA_ACCELERATION_PROPERTY, Boolean.toString(enabled));
+		save();
+	}
+
+	public static void setTerrainMorphingEnabled(boolean enabled) {
+		ensureLoaded();
+		terrainMorphingEnabled = enabled;
+		System.setProperty(TERRAIN_MORPHING_PROPERTY, enabled ? "1.0" : "0.0");
+		save();
+	}
+
+	public static boolean isNvidiaAccelerationReady() {
+		return isNvidiaAccelerationEnabled()
+			&& Boolean.parseBoolean(System.getProperty(NVIDIA_ACCELERATION_AVAILABLE_PROPERTY, "false"));
+	}
+
+	public static boolean isNvidiaCudaDriverAvailable() {
+		return Boolean.parseBoolean(System.getProperty(NVIDIA_DRIVER_AVAILABLE_PROPERTY, "false"));
+	}
+
+	public static String nvidiaAccelerationStatus() {
+		String status = System.getProperty(NVIDIA_ACCELERATION_STATUS_PROPERTY);
+		return status == null || status.isBlank() ? "not-detected" : status;
+	}
+
 	public static String describePerformancePolicy() {
 		return "lodPolicy[target="
 			+ targetDistanceChunks()
+			+ ", "
+			+ PauCLodGameplayProfile.describe()
 			+ ", memory="
 			+ memoryBudgetMb()
 			+ "MiB, retainMargin="
@@ -186,6 +258,14 @@ public final class PauCLodClientSettings {
 			+ fillLodHoles()
 			+ ", lodClouds="
 			+ isLodCloudsEnabled()
+			+ ", nvidiaAccel="
+			+ isNvidiaAccelerationEnabled()
+			+ "/"
+			+ nvidiaAccelerationStatus()
+			+ ", directGpu="
+			+ isDirectGpuUploadEnabled()
+			+ ", terrainMorph="
+			+ isTerrainMorphingEnabled()
 			+ "]";
 	}
 
@@ -202,8 +282,10 @@ public final class PauCLodClientSettings {
 		}
 
 		Properties properties = new Properties();
+		boolean migratedProfileDefaults = false;
 		try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
 			properties.load(reader);
+			int profileDefaultsVersion = readInt(properties.getProperty(PROFILE_DEFAULTS_VERSION_KEY), 0);
 			lodsEnabled = Boolean.parseBoolean(properties.getProperty(ENABLED_KEY, Boolean.toString(lodsEnabled)));
 			lodCloudsEnabled = Boolean.parseBoolean(properties.getProperty(LOD_CLOUDS_KEY, Boolean.toString(lodCloudsEnabled)));
 			targetDistanceChunks = sanitizeTargetDistanceChunks(readInt(properties.getProperty(TARGET_DISTANCE_KEY), targetDistanceChunks));
@@ -213,15 +295,23 @@ public final class PauCLodClientSettings {
 			enableNSizeGeneration = Boolean.parseBoolean(properties.getProperty(ENABLE_N_SIZE_GENERATION_KEY, Boolean.toString(enableNSizeGeneration)));
 			fillHoles = Boolean.parseBoolean(properties.getProperty(FILL_HOLES_KEY, Boolean.toString(fillHoles)));
 			diagnostics = Boolean.parseBoolean(properties.getProperty(DIAGNOSTICS_KEY, Boolean.toString(diagnostics)));
+			nvidiaAccelerationEnabled = Boolean.parseBoolean(properties.getProperty(NVIDIA_ACCELERATION_KEY, Boolean.toString(nvidiaAccelerationEnabled)));
+			directGpuUploadEnabled = Boolean.parseBoolean(properties.getProperty(DIRECT_GPU_UPLOAD_KEY, Boolean.toString(directGpuUploadEnabled)));
+			terrainMorphingEnabled = Boolean.parseBoolean(properties.getProperty(TERRAIN_MORPHING_KEY, Boolean.toString(terrainMorphingEnabled)));
+			migratedProfileDefaults = migrateProfileDefaults(profileDefaultsVersion);
 		} catch (IOException exception) {
 			LOGGER.warn("PauC could not read LOD client settings from {}.", path, exception);
 		}
 		syncRuntimeProperties();
+		if (migratedProfileDefaults) {
+			save();
+		}
 	}
 
 	private static synchronized void save() {
 		Path path = configPath();
 		Properties properties = new Properties();
+		properties.setProperty(PROFILE_DEFAULTS_VERSION_KEY, Integer.toString(PROFILE_DEFAULTS_VERSION));
 		properties.setProperty(ENABLED_KEY, Boolean.toString(lodsEnabled));
 		properties.setProperty(LOD_CLOUDS_KEY, Boolean.toString(lodCloudsEnabled));
 		properties.setProperty(TARGET_DISTANCE_KEY, Integer.toString(targetDistanceChunks));
@@ -231,6 +321,9 @@ public final class PauCLodClientSettings {
 		properties.setProperty(ENABLE_N_SIZE_GENERATION_KEY, Boolean.toString(enableNSizeGeneration));
 		properties.setProperty(FILL_HOLES_KEY, Boolean.toString(fillHoles));
 		properties.setProperty(DIAGNOSTICS_KEY, Boolean.toString(diagnostics));
+		properties.setProperty(NVIDIA_ACCELERATION_KEY, Boolean.toString(nvidiaAccelerationEnabled));
+		properties.setProperty(DIRECT_GPU_UPLOAD_KEY, Boolean.toString(directGpuUploadEnabled));
+		properties.setProperty(TERRAIN_MORPHING_KEY, Boolean.toString(terrainMorphingEnabled));
 
 		try {
 			Files.createDirectories(path.getParent());
@@ -254,19 +347,64 @@ public final class PauCLodClientSettings {
 	private static void resetDefaults() {
 		lodsEnabled = true;
 		lodCloudsEnabled = true;
-		targetDistanceChunks = PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS;
+		targetDistanceChunks = PauCLodGameplayProfile.defaultTargetDistanceChunks();
 		memoryBudgetMb = defaultMemoryBudgetMb();
 		retentionMarginChunks = 12;
-		generationRequestRateLimit = defaultGenerationRequestRateLimit();
+		generationRequestRateLimit = PauCLodGameplayProfile.defaultGenerationRequestRateLimit(defaultGenerationRequestRateLimit());
 		enableNSizeGeneration = true;
 		fillHoles = true;
 		diagnostics = true;
+		nvidiaAccelerationEnabled = true;
+		directGpuUploadEnabled = true;
+		terrainMorphingEnabled = true;
 	}
 
 	private static void syncRuntimeProperties() {
 		System.setProperty(ENABLED_PROPERTY, Boolean.toString(lodsEnabled));
 		System.setProperty(LOD_CLOUDS_PROPERTY, Boolean.toString(lodCloudsEnabled));
 		System.setProperty(TARGET_DISTANCE_PROPERTY, Integer.toString(targetDistanceChunks));
+		System.clearProperty(DYNAMIC_TARGET_DISTANCE_PROPERTY);
+		System.setProperty(NVIDIA_ACCELERATION_PROPERTY, Boolean.toString(nvidiaAccelerationEnabled));
+		System.setProperty(DIRECT_GPU_UPLOAD_PROPERTY, Boolean.toString(directGpuUploadEnabled));
+		System.setProperty(TERRAIN_MORPHING_PROPERTY, terrainMorphingEnabled ? "1.0" : "0.0");
+	}
+
+	private static boolean isDynamicTargetDistanceReductionAllowed() {
+		return readBooleanProperty(ALLOW_DISTANCE_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicTargetDistanceReduction());
+	}
+
+	private static boolean isDynamicGenerationReductionAllowed() {
+		return readBooleanProperty(ALLOW_GENERATION_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicGenerationReduction());
+	}
+
+	private static boolean migrateProfileDefaults(int profileDefaultsVersion) {
+		if (profileDefaultsVersion >= PROFILE_DEFAULTS_VERSION) {
+			return false;
+		}
+
+		boolean changed = false;
+		if (targetDistanceChunks <= PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS) {
+			targetDistanceChunks = PauCLodGameplayProfile.defaultTargetDistanceChunks();
+			changed = true;
+		}
+		if (profileDefaultsVersion < 3) {
+			PauCLodGameplayProfile.Profile profile = PauCLodGameplayProfile.current();
+			if (profile == PauCLodGameplayProfile.Profile.COMPETITIVE && targetDistanceChunks == 64) {
+				targetDistanceChunks = PauCLodGameplayProfile.defaultTargetDistanceChunks();
+				changed = true;
+			} else if (profile == PauCLodGameplayProfile.Profile.BALANCED && targetDistanceChunks == 56) {
+				targetDistanceChunks = PauCLodGameplayProfile.defaultTargetDistanceChunks();
+				changed = true;
+			}
+		}
+
+		int profileGenerationDefault = PauCLodGameplayProfile.defaultGenerationRequestRateLimit(defaultGenerationRequestRateLimit());
+		if (generationRequestRateLimit < profileGenerationDefault) {
+			generationRequestRateLimit = profileGenerationDefault;
+			changed = true;
+		}
+
+		return changed;
 	}
 
 	private static int readIntProperty(String key, int fallback) {
@@ -276,6 +414,26 @@ public final class PauCLodClientSettings {
 	private static boolean readBooleanProperty(String key, boolean fallback) {
 		String rawValue = System.getProperty(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
+	}
+
+	private static boolean readEnabledStrengthProperty(String key, boolean fallback) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return fallback;
+		}
+
+		String normalized = rawValue.trim();
+		if (normalized.equalsIgnoreCase("true")) {
+			return true;
+		}
+		if (normalized.equalsIgnoreCase("false")) {
+			return false;
+		}
+		try {
+			return Float.parseFloat(normalized) > 0.0F;
+		} catch (NumberFormatException ignored) {
+			return fallback;
+		}
 	}
 
 	private static int readInt(String rawValue, int fallback) {
@@ -308,7 +466,7 @@ public final class PauCLodClientSettings {
 	}
 
 	private static int sanitizeGenerationRequestRateLimit(int value) {
-		return Math.max(20, Math.min(128, value));
+		return Math.max(20, Math.min(384, value));
 	}
 
 	private static int sanitizeRecommendedVanillaDistanceChunks(int value) {

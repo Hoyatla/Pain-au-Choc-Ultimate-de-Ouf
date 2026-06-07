@@ -8,11 +8,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class PauCShaderPackProgramPatches {
-	private static final Pattern PHOTON_CLOUD_TERRAIN_EARLY_EXIT = Pattern.compile(
-		"if\\s*\\(\\s*depth\\s*!=\\s*1\\.0\\s*\\)\\s*\\{\\s*"
-			+ "float\\s+view_distance_squared\\s*=\\s*"
-			+ "length_squared\\s*\\(\\s*screen_to_view_space\\s*\\(\\s*vec3\\s*\\(\\s*uv\\s*,\\s*depth\\s*\\)\\s*,\\s*true\\s*\\)\\s*\\)\\s*;\\s*"
-			+ "if\\s*\\(\\s*view_distance_squared\\s*<\\s*sqr\\s*\\(\\s*closest_distance\\s*\\)\\s*\\|\\|\\s*is_hand\\s*\\)\\s*\\{",
+	private static final Pattern PHOTON_CLOUD_DEPTH_DECLARATION = Pattern.compile(
+		"float\\s+depth\\s*=\\s*texelFetch\\s*\\(\\s*depthtex1\\s*,\\s*dst_texel\\s*,\\s*0\\s*\\)\\s*\\.\\s*x\\s*;",
+		Pattern.MULTILINE
+	);
+	private static final Pattern PHOTON_CLOUD_TERRAIN_DEPTH_TEST = Pattern.compile(
+		"if\\s*\\(\\s*depth\\s*!=\\s*1\\.0\\s*\\)",
+		Pattern.MULTILINE
+	);
+	private static final Pattern PHOTON_CLOUD_TERRAIN_DISTANCE = Pattern.compile(
+		"float\\s+view_distance_squared\\s*=\\s*"
+			+ "length_squared\\s*\\(\\s*screen_to_view_space\\s*\\(\\s*vec3\\s*\\(\\s*uv\\s*,\\s*depth\\s*\\)\\s*,\\s*true\\s*\\)\\s*\\)\\s*;",
 		Pattern.MULTILINE
 	);
 	private static final Pattern PHOTON_CLOUD_HISTORY_WRITE = Pattern.compile(
@@ -73,33 +79,46 @@ public final class PauCShaderPackProgramPatches {
 	private static String patchPhotonCloudLodDepth(String programName, String source) {
 		if (source.contains("paucPhotonCloudTerrainDepth")
 			|| !source.contains("combined_projection_matrix_inverse")
-			|| !source.contains("combined_depth")) {
+			|| !source.contains("combined_depth")
+			|| !source.contains("closest_distance")) {
 			return source;
 		}
 
-		String replacement = """
+		Matcher depthMatcher = PHOTON_CLOUD_DEPTH_DECLARATION.matcher(source);
+		if (!depthMatcher.find()) {
+			return source;
+		}
+		String depthDeclaration = depthMatcher.group(0)
+			+ """
+			
 			    float paucPhotonCloudTerrainDepth = depth;
 			#ifdef LOD_MOD_ACTIVE
 			    paucPhotonCloudTerrainDepth = combined_depth;
-			#endif
-			    if (paucPhotonCloudTerrainDepth != 1.0) {
-			        float view_distance_squared =
+			#endif""";
+		String withDepth = depthMatcher.replaceFirst(Matcher.quoteReplacement(depthDeclaration));
+		String withDepthTest = PHOTON_CLOUD_TERRAIN_DEPTH_TEST.matcher(withDepth)
+			.replaceFirst("if (paucPhotonCloudTerrainDepth != 1.0)");
+		if (withDepthTest.equals(withDepth)) {
+			return source;
+		}
+		String distanceReplacement = """
+			float view_distance_squared =
 			#ifdef LOD_MOD_ACTIVE
-			            length_squared(screen_to_view_space(combined_projection_matrix_inverse, vec3(uv, paucPhotonCloudTerrainDepth), true));
+			    length_squared(screen_to_view_space(combined_projection_matrix_inverse, vec3(uv, paucPhotonCloudTerrainDepth), true));
 			#else
-			            length_squared(screen_to_view_space(vec3(uv, paucPhotonCloudTerrainDepth), true));
+			    length_squared(screen_to_view_space(vec3(uv, paucPhotonCloudTerrainDepth), true));
 			#endif
-			        if (view_distance_squared < sqr(closest_distance) || is_hand) {
 			""";
-		Matcher matcher = PHOTON_CLOUD_TERRAIN_EARLY_EXIT.matcher(source);
-		String patched = matcher.replaceFirst(Matcher.quoteReplacement(replacement));
-		if (!patched.equals(source) && !photonCloudDepthPatchLogged) {
+		String patched = PHOTON_CLOUD_TERRAIN_DISTANCE.matcher(withDepthTest)
+			.replaceFirst(Matcher.quoteReplacement(distanceReplacement));
+		if (patched.equals(withDepthTest)) {
+			return source;
+		}
+		if (!photonCloudDepthPatchLogged) {
 			photonCloudDepthPatchLogged = true;
 			Iris.logger.info("PauC patched Photon cloud upscaling to occlude against DH LOD depth: {}.", programName);
 		}
-		if (!patched.equals(source)) {
-			photonCloudDepthPatchCount++;
-		}
+		photonCloudDepthPatchCount++;
 		return patched;
 	}
 

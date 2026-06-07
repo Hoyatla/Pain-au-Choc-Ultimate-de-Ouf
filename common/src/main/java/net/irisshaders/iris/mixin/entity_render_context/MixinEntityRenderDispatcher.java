@@ -48,6 +48,7 @@ public class MixinEntityRenderDispatcher {
 									PoseStack poseStack, MultiBufferSource bufferSource, int light,
 									CallbackInfo ci) {
 		if (PauCLodRenderCulling.shouldCullEntity(entity)) {
+			PauCVillagePerformanceDiagnostics.recordEntityCull(entity);
 			ci.cancel();
 			return;
 		}

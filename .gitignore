@@ -4,6 +4,8 @@ custom_sodium/
 # gradle
 
 .gradle/
+.gradle-user/
+.tools/
 build/
 out/
 classes/
@@ -44,3 +46,4 @@ run/
 .DS_Store
 .AppleDouble
 .LSOverride
+._tmp_meta.json

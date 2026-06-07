@@ -68,6 +68,10 @@ public final class PauCCompatManager {
 		VOICECHAT_DISCONNECTING_PLAYERS.clear();
 	}
 
+	public static boolean isServerStopping() {
+		return serverStopping;
+	}
+
 	public static void onPlayerLoggedIn(ServerPlayer player) {
 		VOICECHAT_DISCONNECTING_PLAYERS.remove(player.getUUID());
 	}

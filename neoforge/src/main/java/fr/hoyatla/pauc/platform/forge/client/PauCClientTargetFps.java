@@ -1,11 +1,19 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.minecraft.client.Minecraft;
 
 public final class PauCClientTargetFps {
 	private static final String TARGET_FPS_PROPERTY = "pauc.client.targetFps";
 	private static final int UNLIMITED_VANILLA_FRAMERATE_VALUE = 260;
-	private static final int DEFAULT_UNLIMITED_TARGET_FPS = 200;
+	private static final int DEFAULT_SHADER_ADAPTIVE_TARGET_FPS = 72;
+	private static final int DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS = 120;
+	private static final int MIN_SHADER_ADAPTIVE_TARGET_FPS = 45;
+	private static final int MAX_SHADER_ADAPTIVE_TARGET_FPS = 120;
+	private static final int MIN_VANILLA_ADAPTIVE_TARGET_FPS = 60;
+	private static final int MAX_VANILLA_ADAPTIVE_TARGET_FPS = 180;
+	private static volatile double shaderObservedFps = -1.0D;
+	private static volatile double vanillaObservedFps = -1.0D;
 
 	private PauCClientTargetFps() {
 	}
@@ -15,23 +23,49 @@ public final class PauCClientTargetFps {
 	}
 
 	public static int effectiveTargetFps(Minecraft minecraft) {
+		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		String override = System.getProperty(TARGET_FPS_PROPERTY);
 		if (override != null) {
-			return parseTarget(override, DEFAULT_UNLIMITED_TARGET_FPS);
+			return parseTarget(override, adaptiveUnlimitedTarget(minecraft, shaderActive));
 		}
 		if (minecraft == null || minecraft.options == null) {
-			return DEFAULT_UNLIMITED_TARGET_FPS;
+			return adaptiveUnlimitedTarget(minecraft, shaderActive);
 		}
 
 		try {
 			int framerateLimit = minecraft.options.framerateLimit().get();
 			if (framerateLimit <= 0 || framerateLimit >= UNLIMITED_VANILLA_FRAMERATE_VALUE) {
-				return DEFAULT_UNLIMITED_TARGET_FPS;
+				return adaptiveUnlimitedTarget(minecraft, shaderActive);
 			}
 			return sanitize(framerateLimit);
 		} catch (RuntimeException | LinkageError ignored) {
-			return DEFAULT_UNLIMITED_TARGET_FPS;
+			return adaptiveUnlimitedTarget(minecraft, shaderActive);
 		}
+	}
+
+	private static int adaptiveUnlimitedTarget(Minecraft minecraft, boolean shaderActive) {
+		int fps = PauCClientFrameMetrics.queryFps(minecraft);
+		double observed = shaderActive ? shaderObservedFps : vanillaObservedFps;
+		if (fps >= 15) {
+			observed = observed < 0.0D ? fps : smoothObservedFps(observed, fps);
+			if (shaderActive) {
+				shaderObservedFps = observed;
+			} else {
+				vanillaObservedFps = observed;
+			}
+		}
+
+		int fallback = shaderActive ? DEFAULT_SHADER_ADAPTIVE_TARGET_FPS : DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS;
+		int min = shaderActive ? MIN_SHADER_ADAPTIVE_TARGET_FPS : MIN_VANILLA_ADAPTIVE_TARGET_FPS;
+		int max = shaderActive ? MAX_SHADER_ADAPTIVE_TARGET_FPS : MAX_VANILLA_ADAPTIVE_TARGET_FPS;
+		double sourceFps = observed > 0.0D ? observed : fallback;
+		int target = (int) Math.round(sourceFps * (shaderActive ? 0.92D : 0.90D));
+		return sanitize(Math.max(min, Math.min(max, target)));
+	}
+
+	private static double smoothObservedFps(double previous, int fps) {
+		double blend = fps >= previous ? 0.08D : 0.035D;
+		return previous * (1.0D - blend) + fps * blend;
 	}
 
 	private static int parseTarget(String rawValue, int fallback) {

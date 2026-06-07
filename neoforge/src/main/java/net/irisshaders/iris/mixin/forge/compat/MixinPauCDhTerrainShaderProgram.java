@@ -7,7 +7,6 @@ import com.seibel.distanthorizons.common.render.openGl.terrain.GlDhTerrainShader
 import fr.hoyatla.pauc.lod.PauCLodFallbackVisuals;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
 import fr.hoyatla.pauc.lod.PauCLodShaderPresentation;
-import fr.hoyatla.pauc.lod.PauCLodSeamState;
 import org.slf4j.Logger;
 import org.lwjgl.opengl.GL32;
 import org.spongepowered.asm.mixin.Mixin;
@@ -131,9 +130,7 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 
 	@Inject(method = "fillUniformData", at = @At("TAIL"))
 	private void pauc$fillFallbackVisualUniforms(DhApiRenderParam renderParameters, CallbackInfo ci) {
-		PauCLodFallbackVisuals.State pendingState = PauCLodFallbackVisuals.currentState();
-		PauCLodSeamState.update(pendingState.seamClipDistance(), pendingState.seamMorphWidth());
-		PauCLodFallbackVisuals.State state = PauCLodFallbackVisuals.currentState();
+		PauCLodFallbackVisuals.State state = PauCLodFallbackVisuals.currentStateWithUpdatedSeam();
 		pauc$uniform1f(pauc$fallbackVisualStrength, state.strength());
 		pauc$uniform4f(pauc$fallbackFogColor, state.fogRed(), state.fogGreen(), state.fogBlue(), state.fogAlpha());
 		pauc$uniform1f(pauc$fallbackFogStart, state.fogStartBlocks());
@@ -162,11 +159,11 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 		pauc$uniform4f(pauc$seamCornerHeights, state.seamNorthWestHeight(), state.seamNorthEastHeight(), state.seamSouthWestHeight(), state.seamSouthEastHeight());
 		pauc$uniform1f(pauc$seamHeightStrength, state.seamHeightStrength());
 		pauc$uniform1f(pauc$seamMaxVerticalStep, state.seamMaxVerticalStep());
-		pauc$applyPaucBoundaryClip(renderParameters);
+		pauc$applyPaucBoundaryClip(renderParameters, state);
 	}
 
 	@Unique
-	private void pauc$applyPaucBoundaryClip(DhApiRenderParam renderParameters) {
+	private void pauc$applyPaucBoundaryClip(DhApiRenderParam renderParameters, PauCLodFallbackVisuals.State state) {
 		if (!PauCLodNearClipOverride.shouldOverrideCurrentRange()) {
 			return;
 		}
@@ -175,9 +172,8 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 		pauc$uniform1f(this.uClipDistance, boundaryClipBlocks);
 		if (!pauc$clipBoundaryLogged) {
 			pauc$clipBoundaryLogged = true;
-			PAUC_FALLBACK_SHADER_LOGGER.info("PauC applied vanilla-to-LOD boundary clip to embedded DH terrain shader: {} blocks.", boundaryClipBlocks);
+			PAUC_FALLBACK_SHADER_LOGGER.info("PauC applied vanilla-to-LOD clip policy to embedded DH terrain shader: {} blocks.", boundaryClipBlocks);
 		}
-		PauCLodFallbackVisuals.State state = PauCLodFallbackVisuals.currentState();
 		if (state.seamMorphStrength() <= 0.0F && !PauCLodShaderPresentation.shouldLateRenderFallbackLods()) {
 			return;
 		}
@@ -185,7 +181,7 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 		pauc$uniform1i(this.uDitherDhRendering, 0);
 		if (!pauc$clipFadeDisabledLogged) {
 			pauc$clipFadeDisabledLogged = true;
-			PAUC_FALLBACK_SHADER_LOGGER.info("PauC disabled DH dither fade for late fallback LOD rendering while keeping the vanilla-to-LOD boundary clip.");
+			PAUC_FALLBACK_SHADER_LOGGER.info("PauC disabled DH dither fade for late fallback LOD rendering while keeping the vanilla-to-LOD clip policy.");
 		}
 	}
 

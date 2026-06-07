@@ -28,6 +28,7 @@
     "compat.MixinPauCDhCloudParams",
     "compat.MixinPauCDhCloudParamsAccessor",
     "compat.MixinPauCDhCloudRenderHandler",
+    "compat.MixinPauCDhGenericObjectRenderer",
     "compat.MixinPauCDhGlShader",
     "compat.MixinPauCDhLevelRenderer",
     "compat.MixinPauCDhLightTexture",

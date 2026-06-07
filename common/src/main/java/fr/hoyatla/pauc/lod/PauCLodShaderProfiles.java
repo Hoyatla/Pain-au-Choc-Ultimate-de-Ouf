@@ -3,6 +3,191 @@ package fr.hoyatla.pauc.lod;
 import java.util.Locale;
 
 public final class PauCLodShaderProfiles {
+	private static final Profile COMPLEMENTARY_PROFILE = new Profile(
+		Family.COMPLEMENTARY,
+		"complementary",
+		true,
+		false,
+		false,
+		"0.10",
+		"0.07",
+		"0.08",
+		"0.09",
+		"0.12",
+		"32.0",
+		"88.0",
+		"0.72",
+		"0.42",
+		"0.46",
+		"vec3(0.62, 0.74, 0.86)",
+		"0.04",
+		"144.0",
+		"544.0",
+		"0.14",
+		"0.36",
+		"0.44",
+		false,
+		false
+	);
+	private static final Profile RETHINKING_PROFILE = new Profile(
+		Family.RETHINKING,
+		"rethinking",
+		true,
+		false,
+		false,
+		"0.11",
+		"0.08",
+		"0.10",
+		"0.10",
+		"0.12",
+		"96.0",
+		"96.0",
+		"0.50",
+		"0.40",
+		"0.38",
+		"vec3(0.56, 0.68, 0.82)",
+		"0.00",
+		"144.0",
+		"544.0",
+		"0.08",
+		"0.22",
+		"0.30",
+		false,
+		false
+	);
+	private static final Profile BSL_PROFILE = new Profile(
+		Family.BSL,
+		"bsl",
+		false,
+		true,
+		false,
+		"0.05",
+		"0.04",
+		"0.05",
+		"0.12",
+		"0.12",
+		"32.0",
+		"128.0",
+		"0.60",
+		"0.46",
+		"0.62",
+		"vec3(0.23, 0.36, 0.50)",
+		"0.00",
+		"144.0",
+		"528.0",
+		"0.17",
+		"0.40",
+		"0.48",
+		false,
+		false
+	);
+	private static final Profile BLISS_PROFILE = new Profile(
+		Family.BLISS,
+		"bliss",
+		true,
+		false,
+		true,
+		"1.00",
+		"1.00",
+		"1.00",
+		"1.00",
+		"1.00",
+		"96.0",
+		"192.0",
+		"0.84",
+		"0.22",
+		"0.44",
+		"vec3(0.50, 0.62, 0.76)",
+		"0.00",
+		"176.0",
+		"576.0",
+		"0.12",
+		"0.34",
+		"0.42",
+		false,
+		false
+	);
+	private static final Profile PHOTON_PROFILE = new Profile(
+		Family.PHOTON,
+		"photon",
+		false,
+		false,
+		false,
+		"0.03",
+		"0.04",
+		"0.03",
+		"0.08",
+		"0.05",
+		"24.0",
+		"160.0",
+		"0.52",
+		"0.24",
+		"0.34",
+		"vec3(0.54, 0.68, 0.82)",
+		"0.04",
+		"160.0",
+		"560.0",
+		"0.12",
+		"0.30",
+		"0.40",
+		true,
+		true
+	);
+	private static final Profile SOLAS_PROFILE = new Profile(
+		Family.SOLAS,
+		"solas",
+		false,
+		false,
+		true,
+		"0.16",
+		"0.12",
+		"0.18",
+		"0.18",
+		"0.12",
+		"40.0",
+		"80.0",
+		"0.82",
+		"0.34",
+		"0.42",
+		"vec3(0.64, 0.76, 0.88)",
+		"0.06",
+		"144.0",
+		"560.0",
+		"0.15",
+		"0.36",
+		"0.46",
+		false,
+		false
+	);
+	private static final Profile GENERIC_PROFILE = new Profile(
+		Family.GENERIC,
+		"generic",
+		false,
+		false,
+		false,
+		"0.16",
+		"0.10",
+		"0.18",
+		"0.18",
+		"0.12",
+		"48.0",
+		"96.0",
+		"0.86",
+		"0.36",
+		"0.52",
+		"vec3(0.50, 0.64, 0.78)",
+		"0.06",
+		"160.0",
+		"560.0",
+		"0.16",
+		"0.38",
+		"0.46",
+		false,
+		false
+	);
+	private static volatile String cachedFamilyKey = "";
+	private static volatile Family cachedFamily = Family.GENERIC;
+
 	private PauCLodShaderProfiles() {
 	}
 
@@ -15,7 +200,7 @@ public final class PauCLodShaderProfiles {
 	}
 
 	public static Family familyForPackName(String packName) {
-		return familyForKey(packName == null ? null : packName.toLowerCase(Locale.ROOT));
+		return familyForKey(packName);
 	}
 
 	public static Family familyForKey(String key) {
@@ -24,6 +209,18 @@ public final class PauCLodShaderProfiles {
 		}
 
 		String lower = key.toLowerCase(Locale.ROOT);
+		String cachedKey = cachedFamilyKey;
+		if (lower.equals(cachedKey)) {
+			return cachedFamily;
+		}
+
+		Family family = familyForLowerKey(lower);
+		cachedFamilyKey = lower;
+		cachedFamily = family;
+		return family;
+	}
+
+	private static Family familyForLowerKey(String lower) {
 		if (lower.contains("bliss")) {
 			return Family.BLISS;
 		}
@@ -47,188 +244,13 @@ public final class PauCLodShaderProfiles {
 
 	public static Profile profile(Family family) {
 		return switch (family == null ? Family.GENERIC : family) {
-			case COMPLEMENTARY -> new Profile(
-				Family.COMPLEMENTARY,
-				"complementary",
-				true,
-				false,
-				false,
-				"0.10",
-				"0.07",
-				"0.08",
-				"0.09",
-				"0.12",
-				"32.0",
-				"88.0",
-				"0.72",
-				"0.42",
-				"0.46",
-				"vec3(0.62, 0.74, 0.86)",
-				"0.04",
-				"144.0",
-				"544.0",
-				"0.14",
-				"0.36",
-				"0.44",
-				false,
-				false
-			);
-			case RETHINKING -> new Profile(
-				Family.RETHINKING,
-				"rethinking",
-				true,
-				false,
-				false,
-				"0.11",
-				"0.08",
-				"0.10",
-				"0.10",
-				"0.12",
-				"96.0",
-				"96.0",
-				"0.50",
-				"0.40",
-				"0.38",
-				"vec3(0.56, 0.68, 0.82)",
-				"0.00",
-				"144.0",
-				"544.0",
-				"0.08",
-				"0.22",
-				"0.30",
-				false,
-				false
-			);
-			case BSL -> new Profile(
-				Family.BSL,
-				"bsl",
-				false,
-				true,
-				false,
-				"0.05",
-				"0.04",
-				"0.05",
-				"0.12",
-				"0.12",
-				"32.0",
-				"128.0",
-				"0.60",
-				"0.46",
-				"0.62",
-				"vec3(0.23, 0.36, 0.50)",
-				"0.00",
-				"144.0",
-				"528.0",
-				"0.17",
-				"0.40",
-				"0.48",
-				false,
-				false
-			);
-			case BLISS -> new Profile(
-				Family.BLISS,
-				"bliss",
-				true,
-				false,
-				true,
-				"1.00",
-				"1.00",
-				"1.00",
-				"1.00",
-				"1.00",
-				"96.0",
-				"192.0",
-				"0.84",
-				"0.22",
-				"0.44",
-				"vec3(0.50, 0.62, 0.76)",
-				"0.00",
-				"176.0",
-				"576.0",
-				"0.12",
-				"0.34",
-				"0.42",
-				false,
-				false
-			);
-			case PHOTON -> new Profile(
-				Family.PHOTON,
-				"photon",
-				false,
-				false,
-				false,
-				"0.03",
-				"0.04",
-				"0.03",
-				"0.08",
-				"0.05",
-				"24.0",
-				"96.0",
-				"0.46",
-				"0.34",
-				"0.38",
-				"vec3(0.54, 0.68, 0.82)",
-				"0.08",
-				"160.0",
-				"560.0",
-				"0.12",
-				"0.30",
-				"0.40",
-				true,
-				true
-			);
-			case SOLAS -> new Profile(
-				Family.SOLAS,
-				"solas",
-				false,
-				false,
-				true,
-				"0.16",
-				"0.12",
-				"0.18",
-				"0.18",
-				"0.12",
-				"40.0",
-				"80.0",
-				"0.82",
-				"0.34",
-				"0.42",
-				"vec3(0.64, 0.76, 0.88)",
-				"0.06",
-				"144.0",
-				"560.0",
-				"0.15",
-				"0.36",
-				"0.46",
-				false,
-				false
-			);
-			case GENERIC -> new Profile(
-				Family.GENERIC,
-				"generic",
-				false,
-				false,
-				false,
-				"0.16",
-				"0.10",
-				"0.18",
-				"0.18",
-				"0.12",
-				"48.0",
-				"96.0",
-				"0.86",
-				"0.36",
-				"0.52",
-				"vec3(0.50, 0.64, 0.78)",
-				"0.06",
-				"160.0",
-				"560.0",
-				"0.16",
-				"0.38",
-				"0.46",
-				false,
-				false
-			);
+			case COMPLEMENTARY -> COMPLEMENTARY_PROFILE;
+			case RETHINKING -> RETHINKING_PROFILE;
+			case BSL -> BSL_PROFILE;
+			case BLISS -> BLISS_PROFILE;
+			case PHOTON -> PHOTON_PROFILE;
+			case SOLAS -> SOLAS_PROFILE;
+			case GENERIC -> GENERIC_PROFILE;
 		};
 	}
 

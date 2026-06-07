@@ -256,7 +256,10 @@ public class LodRendererEvents {
 					if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
 						event.cancelEvent();
 					} else if (getInstance().shouldOverride) {
-						GL43C.glClear(GL43C.GL_DEPTH_BUFFER_BIT);
+						DHCompatInternal instance = getInstance();
+						if (!instance.copyVanillaDepthIntoDhDepth(textureWidth, textureHeight)) {
+							GL43C.glClear(GL43C.GL_DEPTH_BUFFER_BIT);
+						}
 						event.cancelEvent();
 					}
 				}

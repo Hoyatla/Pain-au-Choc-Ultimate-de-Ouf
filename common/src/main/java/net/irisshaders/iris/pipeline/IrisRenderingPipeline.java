@@ -1008,11 +1008,14 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 
 		if (skyType == DimensionSpecialEffects.SkyType.NORMAL || Minecraft.getInstance().level.dimensionType().hasSkyLight()) {
 			RenderSystem.depthMask(false);
+			RenderSystem.enableBlend();
+			RenderSystem.defaultBlendFunc();
 
 			RenderSystem.setShaderColor(fogColor.x, fogColor.y, fogColor.z, fogColor.w);
 
-			horizonRenderer.renderHorizon(CapturedRenderingState.INSTANCE.getGbufferModelView(), CapturedRenderingState.INSTANCE.getGbufferProjection(), GameRenderer.getPositionShader());
+			horizonRenderer.renderHorizon(CapturedRenderingState.INSTANCE.getGbufferModelView(), CapturedRenderingState.INSTANCE.getGbufferProjection(), GameRenderer.getPositionColorShader());
 
+			RenderSystem.disableBlend();
 			RenderSystem.depthMask(true);
 
 			RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
@@ -1299,6 +1302,18 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		return resolver.resolve(ProgramId.DhTerrain);
 	}
 
+	public boolean hasExplicitDHTerrainShader() {
+		return resolver.has(ProgramId.DhTerrain);
+	}
+
+	public Optional<ProgramSource> getTerrainShader() {
+		return resolver.resolve(ProgramId.Terrain);
+	}
+
+	public Optional<ProgramSource> getBlockShader() {
+		return resolver.resolve(ProgramId.Block);
+	}
+
 	public Optional<ProgramSource> getDHGenericShader() {
 		return resolver.resolve(ProgramId.DhGeneric);
 	}
@@ -1307,8 +1322,17 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		return resolver.resolve(ProgramId.DhWater);
 	}
 
+	public Optional<ProgramSource> getWaterShader() {
+		return resolver.resolve(ProgramId.Water);
+	}
+
 	public Optional<ProgramSource> getDHShadowShader() {
 		return resolver.resolve(ProgramId.DhShadow);
+	}
+
+	public Optional<ProgramSource> getShadowTerrainShader() {
+		Optional<ProgramSource> shadowSolid = resolver.resolve(ProgramId.ShadowSolid);
+		return shadowSolid.isPresent() ? shadowSolid : resolver.resolve(ProgramId.Shadow);
 	}
 
 	public CustomUniforms getCustomUniforms() {

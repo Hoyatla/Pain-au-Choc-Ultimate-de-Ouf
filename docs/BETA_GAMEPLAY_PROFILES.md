@@ -1,0 +1,71 @@
+# PauC Beta Gameplay Profiles
+
+The beta runtime defaults to `pauc.client.gameplayProfile=auto`.
+
+## Auto
+
+- No shader pack active: uses the `competitive` path.
+- Shader pack active: uses the `cinematic` path.
+
+## Competitive
+
+Use for fast first-person gameplay without shader packs.
+
+- Default LOD target: 56 chunks.
+- Recommended vanilla render distance: 10 chunks.
+- Does not change Minecraft video settings unless explicitly enabled.
+- Keeps LOD distance stable by default.
+- Allows generation throttling when FPS pressure is detected.
+- Uses a clipped vanilla-to-LOD boundary without shaders to keep moving terrain cleaner.
+- Minimum LOD generation request rate: 144 requests/s.
+
+Override:
+
+```properties
+pauc.client.gameplayProfile=competitive
+```
+
+## Cinematic
+
+Use for shader-pack gameplay where frame pacing and visual stability matter more than maximum distance.
+
+- Default LOD target: 48 chunks.
+- Recommended vanilla render distance: 7 chunks.
+- Does not change Minecraft video settings unless explicitly enabled.
+- Allows dynamic LOD distance reduction under pressure.
+- Allows dynamic generation throttling under pressure.
+- Minimum LOD generation request rate: 80 requests/s.
+- If the shader pack has no native DH terrain shader, PauC uses the late fallback LOD renderer.
+- CUDA remains active for terrain preparation/cache, but the flat CUDA proxy terrain is not drawn by default.
+
+Override:
+
+```properties
+pauc.client.gameplayProfile=cinematic
+```
+
+## Player Video Settings
+
+Profiles only tune PauC/Distant Horizons defaults. They do not modify the player's Minecraft video settings by default.
+
+Opt-in only:
+
+```properties
+pauc.lod.autoReduceVanillaDistance=true
+```
+
+Debug-only shader proxy terrain:
+
+```properties
+pauc.lod.cuda.proxyTerrainShaderFallback=true
+pauc.lod.shaderFallbackProxyPrepass=true
+```
+
+## Beta Smoke Test
+
+1. Start without shaders, sprint and rotate quickly in an open area.
+2. Confirm logs mention `gameplayProfile[id=competitive`.
+3. Enable a heavy shader pack and reload the world.
+4. Confirm logs mention `gameplayProfile[id=cinematic`.
+5. Watch `logs/latest.log` for LOD fallback, shader transform, or DH bridge errors.
+6. Compare `minecraft/pauc_diagnostics/performance-*.json` after each session.

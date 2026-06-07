@@ -8,7 +8,7 @@ public record PauCLodRange(
 ) {
 	public static final int DEFAULT_TARGET_DISTANCE_CHUNKS = 32;
 	public static final int MIN_RENDER_DISTANCE_CHUNKS = 2;
-	public static final int MAX_TARGET_DISTANCE_CHUNKS = 32;
+	public static final int MAX_TARGET_DISTANCE_CHUNKS = 256;
 
 	public static PauCLodRange disabled(int vanillaRenderDistanceChunks, int targetDistanceChunks) {
 		int vanilla = sanitizeVanillaDistance(vanillaRenderDistanceChunks);

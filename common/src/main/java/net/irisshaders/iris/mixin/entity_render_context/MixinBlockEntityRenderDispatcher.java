@@ -47,6 +47,7 @@ public class MixinBlockEntityRenderDispatcher {
 	private void pauc$cullFarBlockEntity(BlockEntity blockEntity, float tickDelta, PoseStack matrix,
 										 MultiBufferSource bufferSource, CallbackInfo ci) {
 		if (PauCLodRenderCulling.shouldCullBlockEntity(blockEntity)) {
+			PauCVillagePerformanceDiagnostics.recordBlockEntityCull(blockEntity);
 			ci.cancel();
 			return;
 		}

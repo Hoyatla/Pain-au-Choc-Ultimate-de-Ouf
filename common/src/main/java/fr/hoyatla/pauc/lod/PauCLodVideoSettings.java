@@ -11,6 +11,8 @@ import java.util.function.Consumer;
 public final class PauCLodVideoSettings {
 	private static AbstractWidget lodDistanceWidget;
 	private static AbstractWidget lodCloudsWidget;
+	private static AbstractWidget nvidiaAccelerationWidget;
+	private static AbstractWidget terrainMorphingWidget;
 
 	public static final OptionInstance<Boolean> LODS_ENABLED = new PauCLodToggleOption(
 		"options.pauc.lods",
@@ -39,13 +41,33 @@ public final class PauCLodVideoSettings {
 		PauCLodVideoSettings::setLodCloudsEnabled
 	);
 
+	public static final OptionInstance<Boolean> NVIDIA_ACCELERATION = new PauCNvidiaAccelerationOption(
+		"options.pauc.nvidiaAcceleration",
+		minecraft -> Tooltip.create(Component.translatable("options.pauc.nvidiaAcceleration.tooltip")),
+		PauCLodVideoSettings::nvidiaAccelerationCaption,
+		OptionInstance.BOOLEAN_VALUES,
+		PauCLodClientSettings.isNvidiaAccelerationEnabled(),
+		PauCLodVideoSettings::setNvidiaAccelerationEnabled
+	);
+
+	public static final OptionInstance<Boolean> TERRAIN_MORPHING = new PauCTerrainMorphingOption(
+		"options.pauc.terrainMorphing",
+		minecraft -> Tooltip.create(Component.translatable("options.pauc.terrainMorphing.tooltip")),
+		PauCLodVideoSettings::terrainMorphingCaption,
+		OptionInstance.BOOLEAN_VALUES,
+		PauCLodClientSettings.isTerrainMorphingEnabled(),
+		PauCLodVideoSettings::setTerrainMorphingEnabled
+	);
+
 	private PauCLodVideoSettings() {
 	}
 
 	public static void syncFromClientSettings() {
 		LODS_ENABLED.set(PauCLodClientSettings.isLodsEnabled());
-		LOD_RENDER_DISTANCE.set(PauCLodClientSettings.targetDistanceChunks());
+		LOD_RENDER_DISTANCE.set(PauCLodClientSettings.configuredTargetDistanceChunks());
 		LOD_CLOUDS.set(PauCLodClientSettings.isLodCloudsEnabled());
+		NVIDIA_ACCELERATION.set(PauCLodClientSettings.isNvidiaAccelerationEnabled());
+		TERRAIN_MORPHING.set(PauCLodClientSettings.isTerrainMorphingEnabled());
 		updateLinkedWidgets();
 	}
 
@@ -56,6 +78,16 @@ public final class PauCLodVideoSettings {
 
 	private static void setLodCloudsEnabled(boolean enabled) {
 		PauCLodClientSettings.setLodCloudsEnabled(enabled);
+		updateLinkedWidgets();
+	}
+
+	private static void setNvidiaAccelerationEnabled(boolean enabled) {
+		PauCLodClientSettings.setNvidiaAccelerationEnabled(enabled);
+		updateLinkedWidgets();
+	}
+
+	private static void setTerrainMorphingEnabled(boolean enabled) {
+		PauCLodClientSettings.setTerrainMorphingEnabled(enabled);
 		updateLinkedWidgets();
 	}
 
@@ -79,17 +111,45 @@ public final class PauCLodVideoSettings {
 		return Component.translatable(enabled ? "options.pauc.lodClouds.enabled" : "options.pauc.lodClouds.disabled");
 	}
 
+	private static Component nvidiaAccelerationCaption(Component option, boolean enabled) {
+		if (!enabled) {
+			return Component.translatable("options.pauc.nvidiaAcceleration.disabled");
+		}
+		if (PauCLodClientSettings.isNvidiaAccelerationReady()) {
+			return Component.translatable("options.pauc.nvidiaAcceleration.enabled");
+		}
+		if (PauCLodClientSettings.isNvidiaCudaDriverAvailable()) {
+			return Component.translatable("options.pauc.nvidiaAcceleration.driverReady");
+		}
+		return Component.translatable("options.pauc.nvidiaAcceleration.waiting");
+	}
+
+	private static Component terrainMorphingCaption(Component option, boolean enabled) {
+		if (!PauCLodClientSettings.isLodsEnabled()) {
+			return Component.translatable("options.pauc.terrainMorphing.disabledWithLods");
+		}
+
+		return Component.translatable(enabled ? "options.pauc.terrainMorphing.enabled" : "options.pauc.terrainMorphing.disabled");
+	}
+
 	private static void updateLinkedWidgets() {
 		boolean enabled = PauCLodClientSettings.isLodsEnabled();
 		if (lodDistanceWidget != null) {
 			lodDistanceWidget.active = enabled;
 			lodDistanceWidget.setMessage(enabled
-				? distanceCaption(Component.translatable("options.pauc.lodDistance"), PauCLodClientSettings.targetDistanceChunks())
+				? distanceCaption(Component.translatable("options.pauc.lodDistance"), PauCLodClientSettings.configuredTargetDistanceChunks())
 				: Component.translatable("options.pauc.lodDistance.disabled"));
 		}
 		if (lodCloudsWidget != null) {
 			lodCloudsWidget.active = enabled;
 			lodCloudsWidget.setMessage(cloudsCaption(Component.translatable("options.pauc.lodClouds"), PauCLodClientSettings.isLodCloudsEnabled()));
+		}
+		if (nvidiaAccelerationWidget != null) {
+			nvidiaAccelerationWidget.setMessage(nvidiaAccelerationCaption(Component.translatable("options.pauc.nvidiaAcceleration"), PauCLodClientSettings.isNvidiaAccelerationEnabled()));
+		}
+		if (terrainMorphingWidget != null) {
+			terrainMorphingWidget.active = enabled;
+			terrainMorphingWidget.setMessage(terrainMorphingCaption(Component.translatable("options.pauc.terrainMorphing"), PauCLodClientSettings.isTerrainMorphingEnabled()));
 		}
 	}
 
@@ -150,6 +210,48 @@ public final class PauCLodVideoSettings {
 		public AbstractWidget createButton(Options options, int x, int y, int width) {
 			AbstractWidget widget = super.createButton(options, x, y, width);
 			lodCloudsWidget = widget;
+			updateLinkedWidgets();
+			return widget;
+		}
+	}
+
+	private static final class PauCNvidiaAccelerationOption extends OptionInstance<Boolean> {
+		private PauCNvidiaAccelerationOption(
+			String caption,
+			TooltipSupplier<Boolean> tooltip,
+			CaptionBasedToString<Boolean> captionBasedToString,
+			ValueSet<Boolean> values,
+			Boolean initialValue,
+			Consumer<Boolean> changeCallback
+		) {
+			super(caption, tooltip, captionBasedToString, values, initialValue, changeCallback);
+		}
+
+		@Override
+		public AbstractWidget createButton(Options options, int x, int y, int width) {
+			AbstractWidget widget = super.createButton(options, x, y, width);
+			nvidiaAccelerationWidget = widget;
+			updateLinkedWidgets();
+			return widget;
+		}
+	}
+
+	private static final class PauCTerrainMorphingOption extends OptionInstance<Boolean> {
+		private PauCTerrainMorphingOption(
+			String caption,
+			TooltipSupplier<Boolean> tooltip,
+			CaptionBasedToString<Boolean> captionBasedToString,
+			ValueSet<Boolean> values,
+			Boolean initialValue,
+			Consumer<Boolean> changeCallback
+		) {
+			super(caption, tooltip, captionBasedToString, values, initialValue, changeCallback);
+		}
+
+		@Override
+		public AbstractWidget createButton(Options options, int x, int y, int width) {
+			AbstractWidget widget = super.createButton(options, x, y, width);
+			terrainMorphingWidget = widget;
 			updateLinkedWidgets();
 			return widget;
 		}

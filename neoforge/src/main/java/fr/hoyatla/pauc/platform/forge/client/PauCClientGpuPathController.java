@@ -2,6 +2,7 @@ package fr.hoyatla.pauc.platform.forge.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import net.minecraft.client.Minecraft;
 import org.lwjgl.opengl.GL;
 import org.lwjgl.opengl.GL11C;
@@ -9,6 +10,9 @@ import org.lwjgl.opengl.GLCapabilities;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Field;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -19,6 +23,9 @@ public final class PauCClientGpuPathController {
 	private static volatile long lastCaptureAtMillis = -1L;
 	private static volatile GpuSnapshot lastSnapshot = GpuSnapshot.unavailable("not-captured");
 	private static volatile boolean startupLogged;
+	private static volatile boolean cudaDriverProbeAttempted;
+	private static volatile boolean cudaDriverAvailable;
+	private static volatile String cudaDriverStatus = "not-detected";
 
 	private PauCClientGpuPathController() {
 	}
@@ -67,6 +74,13 @@ public final class PauCClientGpuPathController {
 			boolean extMeshShader = hasBooleanCapability(caps, "GL_EXT_mesh_shader");
 			boolean meshShaderAvailable = nvMeshShader || extMeshShader;
 			boolean bindlessIndirect = caps.GL_NV_bindless_multi_draw_indirect;
+			boolean cudaRequested = PauCLodClientSettings.isNvidiaAccelerationEnabled();
+			CudaDriverProbe cudaProbe = probeCudaDriver(nvidiaVendor, cudaRequested);
+			PauCCudaWorker.WorkerState cudaWorkerState = PauCCudaWorker.ensureSelfTest(cudaRequested, nvidiaVendor, cudaProbe.driverAvailable());
+			boolean cudaWorkerAvailable = cudaWorkerState.available();
+			boolean cudaAccelerationReady = cudaRequested && nvidiaVendor && cudaProbe.driverAvailable() && cudaWorkerAvailable;
+			String cudaStatus = cudaRuntimeStatus(cudaRequested, nvidiaVendor, cudaProbe, cudaWorkerState);
+			publishCudaRuntimeState(cudaAccelerationReady, cudaProbe.driverAvailable(), cudaStatus);
 
 			boolean nvidiaOnly = readBoolean("pauc.client.gpu.nvidiaOnly", false);
 			boolean requireTuring = readBoolean("pauc.client.gpu.requireTuring", true);
@@ -129,11 +143,113 @@ public final class PauCClientGpuPathController {
 				requireMeshShader,
 				renderPath,
 				dlssPath,
+				cudaRequested,
+				cudaProbe.driverAvailable(),
+				cudaWorkerAvailable,
+				cudaAccelerationReady,
+				cudaStatus,
 				String.join("|", blockers)
 			);
 		} catch (Throwable throwable) {
+			publishCudaRuntimeState(false, false, "probe-error:" + throwable.getClass().getSimpleName());
 			return GpuSnapshot.unavailable("probe-error:" + throwable.getClass().getSimpleName());
 		}
+	}
+
+	private static CudaDriverProbe probeCudaDriver(boolean nvidiaVendor, boolean cudaRequested) {
+		if (!cudaRequested) {
+			return new CudaDriverProbe(false, "disabled");
+		}
+		if (!nvidiaVendor) {
+			return new CudaDriverProbe(false, "gpu-not-nvidia");
+		}
+		if (cudaDriverProbeAttempted) {
+			return new CudaDriverProbe(cudaDriverAvailable, cudaDriverStatus);
+		}
+
+		synchronized (PauCClientGpuPathController.class) {
+			if (cudaDriverProbeAttempted) {
+				return new CudaDriverProbe(cudaDriverAvailable, cudaDriverStatus);
+			}
+
+			String library = cudaDriverLibraryName();
+			try {
+				System.loadLibrary(library);
+				cudaDriverAvailable = true;
+				cudaDriverStatus = "driver-ready";
+			} catch (UnsatisfiedLinkError error) {
+				Path driverPath = findCudaDriverPath();
+				if (driverPath == null) {
+					cudaDriverAvailable = false;
+					cudaDriverStatus = "driver-missing";
+				} else {
+					try {
+						System.load(driverPath.toString());
+						cudaDriverAvailable = true;
+						cudaDriverStatus = "driver-ready";
+					} catch (UnsatisfiedLinkError loadError) {
+						cudaDriverAvailable = false;
+						cudaDriverStatus = "driver-load-failed";
+					}
+				}
+			} catch (Throwable throwable) {
+				cudaDriverAvailable = false;
+				cudaDriverStatus = "driver-error:" + throwable.getClass().getSimpleName();
+			}
+			cudaDriverProbeAttempted = true;
+			return new CudaDriverProbe(cudaDriverAvailable, cudaDriverStatus);
+		}
+	}
+
+	private static String cudaDriverLibraryName() {
+		String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+		return osName.contains("win") ? "nvcuda" : "cuda";
+	}
+
+	private static Path findCudaDriverPath() {
+		String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+		if (osName.contains("win")) {
+			String windir = System.getenv("WINDIR");
+			if (windir == null || windir.isBlank()) {
+				windir = "C:\\Windows";
+			}
+
+			Path system32 = Paths.get(windir, "System32", "nvcuda.dll");
+			if (Files.isRegularFile(system32)) {
+				return system32.toAbsolutePath();
+			}
+
+			Path sysWow64 = Paths.get(windir, "SysWOW64", "nvcuda.dll");
+			if (Files.isRegularFile(sysWow64)) {
+				return sysWow64.toAbsolutePath();
+			}
+			return null;
+		}
+
+		Path linuxDriver = Paths.get("/usr/lib/x86_64-linux-gnu/libcuda.so.1");
+		if (Files.isRegularFile(linuxDriver)) {
+			return linuxDriver.toAbsolutePath();
+		}
+		return null;
+	}
+
+	private static String cudaRuntimeStatus(boolean cudaRequested, boolean nvidiaVendor, CudaDriverProbe cudaProbe, PauCCudaWorker.WorkerState cudaWorkerState) {
+		if (!cudaRequested) {
+			return "disabled";
+		}
+		if (!nvidiaVendor) {
+			return "gpu-not-nvidia";
+		}
+		if (!cudaProbe.driverAvailable()) {
+			return cudaProbe.status();
+		}
+		return cudaWorkerState.available() ? "ready;" + cudaWorkerState.status() + ";terrain-seam-feature-batched" : "driver-ready;" + cudaWorkerState.status();
+	}
+
+	private static void publishCudaRuntimeState(boolean available, boolean driverAvailable, String status) {
+		System.setProperty("pauc.client.cuda.available", Boolean.toString(available));
+		System.setProperty("pauc.client.cuda.driverAvailable", Boolean.toString(driverAvailable));
+		System.setProperty("pauc.client.cuda.status", status == null || status.isBlank() ? "unknown" : status);
 	}
 
 	private static boolean isLikelyTuringOrNewer(String renderer) {
@@ -207,6 +323,9 @@ public final class PauCClientGpuPathController {
 		return value == null || value.isBlank() ? fallback : value;
 	}
 
+	private record CudaDriverProbe(boolean driverAvailable, String status) {
+	}
+
 	public enum RenderPath {
 		LEGACY_OPENGL("legacy"),
 		INDIRECT_OPENGL("indirect"),
@@ -256,6 +375,11 @@ public final class PauCClientGpuPathController {
 		boolean requireMeshShader,
 		RenderPath renderPath,
 		DlssSkeletonPath dlssPath,
+		boolean cudaRequested,
+		boolean cudaDriverAvailable,
+		boolean cudaWorkerAvailable,
+		boolean cudaAccelerationReady,
+		String cudaStatus,
 		String blockers
 	) {
 		public static GpuSnapshot unavailable(String reason) {
@@ -275,6 +399,11 @@ public final class PauCClientGpuPathController {
 				true,
 				RenderPath.LEGACY_OPENGL,
 				DlssSkeletonPath.DISABLED,
+				false,
+				false,
+				false,
+				false,
+				"not-detected",
 				reason
 			);
 		}
@@ -292,6 +421,20 @@ public final class PauCClientGpuPathController {
 				+ renderPath.id()
 				+ ", dlss="
 				+ dlssPath.id()
+				+ ", cuda="
+				+ cudaAccelerationReady
+				+ "/"
+				+ cudaStatus
+				+ ", cudaRequested="
+				+ cudaRequested
+				+ ", cudaDriver="
+				+ cudaDriverAvailable
+				+ ", cudaWorker="
+				+ cudaWorkerAvailable
+				+ ", "
+				+ PauCCudaWorker.describeState()
+				+ ", "
+				+ PauCCudaWorker.describeMetrics()
 				+ ", nvidiaOnly="
 				+ nvidiaOnly
 				+ ", turingReq="
@@ -310,6 +453,8 @@ public final class PauCClientGpuPathController {
 				+ extMeshShader
 				+ ", bindless="
 				+ bindlessIndirect
+				+ ", "
+				+ PauCEmbeddedDhBridge.describeGpuUploadState()
 				+ ", rendererBridge="
 				+ PauCorRendererBridge.describeState()
 				+ (blockers.isBlank() ? "" : ", blockers=" + blockers)

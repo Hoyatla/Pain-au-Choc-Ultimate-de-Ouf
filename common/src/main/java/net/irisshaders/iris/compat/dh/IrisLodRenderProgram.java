@@ -7,6 +7,7 @@ import com.seibel.distanthorizons.api.objects.math.DhApiVec3f;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
+import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
@@ -50,6 +51,9 @@ public class IrisLodRenderProgram {
 	private static final String BLISS_BORDER_FOG_MIX = "0.12";
 	private static final String ROUND_HORIZON_SHADER_FOG_STRENGTH_PROPERTY = "pauc.lod.roundHorizonShaderFogStrength";
 	private static final String ROUND_HORIZON_WATER_FOG_STRENGTH_PROPERTY = "pauc.lod.roundHorizonWaterFogStrength";
+	private static final String NATIVE_RUNTIME_UNDERWATER_FOG_PROPERTY = "pauc.lod.nativeShaderRuntimeUnderwaterFog";
+	private static final String SYNTHETIC_LOD_SHADOW_PROPERTY = "pauc.lod.shaderSyntheticLodShadow";
+	private static final String BOUNDARY_LOD_SHADOW_PROPERTY = "pauc.lod.shaderBoundaryShadowBridge";
 	private static final Pattern DH_FOG_CALL = Pattern.compile(
 		"DoFog\\s*\\(\\s*(color\\s*,\\s*sky\\s*,\\s*lViewPos\\s*,\\s*playerPos\\s*,\\s*VdotU\\s*,\\s*VdotS\\s*,\\s*dither\\s*,\\s*false\\s*,\\s*0\\.0)\\s*\\)\\s*;"
 	);
@@ -146,6 +150,7 @@ public class IrisLodRenderProgram {
 	private static boolean paucNativeBlissWaterSeamPatchLogged;
 	private static boolean paucNativeLodMaterialConstantsLogged;
 	private static boolean paucNativeUnderwaterFogPatchLogged;
+	private static boolean paucNativeUnderwaterFogBypassLogged;
 	private static final char[] LOD_BLOCK_PREFIX = new char[] {'D', 'H', '_'};
 	private static final String[][] LOD_BLOCK_MATERIAL_CONSTANTS = {
 		{"UNKNOWN", "0"},
@@ -375,7 +380,12 @@ public class IrisLodRenderProgram {
 	}
 
 	private static String farFogStrength(PauCLodShaderProfiles.Profile profile) {
-		return readClampedFloatString(ROUND_HORIZON_SHADER_FOG_STRENGTH_PROPERTY, 1.0F, 0.0F, 1.0F);
+		return readClampedFloatString(
+			ROUND_HORIZON_SHADER_FOG_STRENGTH_PROPERTY,
+			profileFloat(profile.farFogStrength(), 1.0F),
+			0.0F,
+			1.0F
+		);
 	}
 
 	private static String waterGradientStrength(PauCLodShaderProfiles.Profile profile) {
@@ -383,7 +393,12 @@ public class IrisLodRenderProgram {
 	}
 
 	private static String waterEndFogStrength(PauCLodShaderProfiles.Profile profile) {
-		return readClampedFloatString(ROUND_HORIZON_WATER_FOG_STRENGTH_PROPERTY, 1.0F, 0.0F, 1.0F);
+		return readClampedFloatString(
+			ROUND_HORIZON_WATER_FOG_STRENGTH_PROPERTY,
+			profileFloat(profile.waterEndFogStrength(), 1.0F),
+			0.0F,
+			1.0F
+		);
 	}
 
 	private static String waterDeepTone(PauCLodShaderProfiles.Profile profile) {
@@ -416,6 +431,22 @@ public class IrisLodRenderProgram {
 		return Float.toString(Math.max(min, Math.min(max, value)));
 	}
 
+	private static boolean readBoolean(String key, boolean fallback) {
+		String rawValue = System.getProperty(key);
+		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue.trim());
+	}
+
+	private static float profileFloat(String rawValue, float fallback) {
+		if (rawValue == null) {
+			return fallback;
+		}
+		try {
+			return Float.parseFloat(rawValue.trim());
+		} catch (NumberFormatException ignored) {
+			return fallback;
+		}
+	}
+
 	private static String waterOpacityBoost(PauCLodShaderProfiles.Profile profile) {
 		return switch (profile.family()) {
 			case BLISS -> "0.04";
@@ -429,6 +460,16 @@ public class IrisLodRenderProgram {
 		return waterProgram && (profile.family() == PauCLodShaderProfiles.Family.BLISS
 			|| profile.family() == PauCLodShaderProfiles.Family.BSL
 			|| profile.family() == PauCLodShaderProfiles.Family.RETHINKING);
+	}
+
+	private static boolean shouldApplyNativeRuntimeUnderwaterFog(PauCLodShaderProfiles.Profile profile, String programName) {
+		boolean defaultEnabled = !profile.preservesNativeDhPresentation();
+		boolean enabled = Boolean.parseBoolean(System.getProperty(NATIVE_RUNTIME_UNDERWATER_FOG_PROPERTY, Boolean.toString(defaultEnabled)));
+		if (!enabled && profile.preservesNativeDhPresentation() && !paucNativeUnderwaterFogBypassLogged) {
+			paucNativeUnderwaterFogBypassLogged = true;
+			Iris.logger.info("PauC keeps native shader underwater fog for DH LOD presentation: {} (profile={}).", programName, profile.id());
+		}
+		return enabled;
 	}
 
 	private static String waterRingGradient(PauCLodShaderProfiles.Profile profile, String target, String distanceExpression, String marker) {
@@ -451,6 +492,19 @@ public class IrisLodRenderProgram {
 			+ "    " + rgb + " = mix(" + rgb + ", " + marker + "GradedWater, " + waterGradientStrength(profile) + " * " + marker + "Tone);\n"
 			+ "    " + alpha + " = mix(" + alpha + ", min(1.0, " + alpha + " + (1.0 - " + alpha + ") * " + waterOpacityBoost(profile) + "), " + marker + "Tone);\n"
 			+ "    " + alpha + " *= 1.0 - " + waterTransparencyStrength(profile) + " * " + marker + "Tone;\n";
+	}
+
+	private static String photonWaterHorizonGradient(PauCLodShaderProfiles.Profile profile, String target, String distanceExpression, String marker) {
+		String rgb = target + ".rgb";
+		String alpha = target + ".a";
+		return ""
+			+ "    float " + marker + "NearBlend = smoothstep(max(float(paucLodStartDistance) - 32.0, 0.0), float(paucLodStartDistance) + 112.0, " + distanceExpression + ");\n"
+			+ "    float " + marker + "FarBlend = smoothstep(max(float(paucLodEndDistance) - " + farFogWidth(profile) + " * 1.35, float(paucLodStartDistance) + 160.0), float(paucLodEndDistance), " + distanceExpression + ");\n"
+			+ "    float " + marker + "Tone = clamp(0.18 * " + marker + "NearBlend + 0.42 * " + marker + "FarBlend, 0.0, 1.0);\n"
+			+ "    vec3 " + marker + "FoggedWater = mix(" + rgb + ", iris_FogColor.rgb, 0.24 + 0.34 * " + marker + "FarBlend);\n"
+			+ "    " + rgb + " = mix(" + rgb + ", " + marker + "FoggedWater, " + waterGradientStrength(profile) + " * " + marker + "Tone);\n"
+			+ "    " + alpha + " = mix(" + alpha + ", min(1.0, " + alpha + " + (1.0 - " + alpha + ") * 0.04), 0.35 * " + marker + "Tone);\n"
+			+ "    " + alpha + " *= 1.0 - (" + waterTransparencyStrength(profile) + " * 0.45) * " + marker + "Tone;\n";
 	}
 
 	private static String farAlphaFade(PauCLodShaderProfiles.Profile profile, boolean albedoTarget) {
@@ -883,24 +937,27 @@ public class IrisLodRenderProgram {
 		String farStrength = waterProgram ? waterEndFogStrength(profile) : farFogStrength(profile);
 		String waterGradient = waterProgram ? waterRingGradient(profile, "color", "lengthCylinder", "paucDhWater") : "";
 		String albedoWaterGradient = waterProgram ? waterRingGradient(profile, "albedo", "paucDhAlbedoDistance", "paucDhWater") : "";
+		boolean runtimeUnderwaterFog = shouldApplyNativeRuntimeUnderwaterFog(profile, programName);
 		String directNearBlend = shouldUseSoftWaterNearBlend(profile, waterProgram)
 			? "    color.rgb = mix(color.rgb, iris_FogColor.rgb, " + waterNearFogStrength(profile) + " * (1.0 - paucDhNearBlend));\n"
 			: "    color.rgb = mix(iris_FogColor.rgb, color.rgb, paucDhNearBlend);\n";
 		String albedoNearBlend = shouldUseSoftWaterNearBlend(profile, waterProgram)
 			? "    albedo.rgb = mix(albedo.rgb, iris_FogColor.rgb, " + waterNearFogStrength(profile) + " * (1.0 - paucDhNearBlend));\n"
 			: "";
-		String directUnderwaterFog = "    if (isEyeInWater == 1) { // paucDhUnderwaterRuntimeFog\n"
+		String directUnderwaterFog = runtimeUnderwaterFog ? "    if (isEyeInWater == 1) { // paucDhUnderwaterRuntimeFog\n"
 			+ "        float paucDhUnderwaterFog = smoothstep(float(paucLodStartDistance), max(float(paucLodStartDistance) + 64.0, float(paucLodEndDistance) * 0.62), lengthCylinder);\n"
 			+ "        vec3 paucDhUnderwaterColor = mix(iris_FogColor.rgb, vec3(0.06, 0.18, 0.24), 0.26);\n"
 			+ "        color.rgb = mix(color.rgb, paucDhUnderwaterColor, 0.76 * paucDhUnderwaterFog);\n"
 			+ "        color.a = mix(color.a, 1.0, 0.30 * paucDhUnderwaterFog);\n"
-			+ "    }\n";
-		String albedoUnderwaterFog = "    if (isEyeInWater == 1) { // paucDhUnderwaterRuntimeFog\n"
+			+ "    }\n"
+			: "";
+		String albedoUnderwaterFog = runtimeUnderwaterFog ? "    if (isEyeInWater == 1) { // paucDhUnderwaterRuntimeFog\n"
 			+ "        float paucDhUnderwaterFog = smoothstep(float(paucLodStartDistance), max(float(paucLodStartDistance) + 64.0, float(paucLodEndDistance) * 0.62), paucDhAlbedoDistance);\n"
 			+ "        vec3 paucDhUnderwaterColor = mix(iris_FogColor.rgb, vec3(0.06, 0.18, 0.24), 0.26);\n"
 			+ "        albedo.rgb = mix(albedo.rgb, paucDhUnderwaterColor, 0.76 * paucDhUnderwaterFog);\n"
 			+ "        albedo.a = mix(albedo.a, 1.0, 0.30 * paucDhUnderwaterFog);\n"
-			+ "    }\n";
+			+ "    }\n"
+			: "";
 		String rewritten = source;
 		boolean patched = false;
 		if (directColorPresentation && rewritten.contains("lengthCylinder") && rewritten.contains("color")) {
@@ -974,7 +1031,7 @@ public class IrisLodRenderProgram {
 			String replacement = "{\n"
 				+ "    float paucDhPhotonWaterDistance = length(scene_pos.xz);\n"
 				+ "    float paucDhPhotonWaterEndFog = smoothstep(max(float(paucLodEndDistance) - " + farFogWidth(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON)) + ", 0.0), float(paucLodEndDistance), paucDhPhotonWaterDistance);\n"
-				+ waterRingGradient(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON), "fragment_color", "paucDhPhotonWaterDistance", "paucDhPhotonWater")
+				+ photonWaterHorizonGradient(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON), "fragment_color", "paucDhPhotonWaterDistance", "paucDhPhotonWater")
 				+ "    fragment_color.rgb = mix(fragment_color.rgb, iris_FogColor.rgb, " + waterEndFogStrength(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON)) + " * paucDhPhotonWaterEndFog);\n"
 				+ "}\n"
 				+ "fragment_color.rgb = fragment_color.rgb * fog.a + fog.rgb;";
@@ -1082,16 +1139,32 @@ public class IrisLodRenderProgram {
 		StringBuffer rewritten = new StringBuffer(source.length());
 		boolean patched = false;
 		PauCLodShaderProfiles.Profile profile = currentShaderLodProfile();
-		if (!profile.shouldApplySyntheticLodShadow()) {
+		if (!shouldApplyAnyPaucLodShadow(profile)) {
 			return source;
 		}
+		boolean syntheticShadow = shouldApplyPaucSyntheticLodShadow(profile);
+		String joinNear = syntheticShadow
+			? profile.lodShadowJoinNear()
+			: "max(float(paucLodStartDistance) - 24.0, 0.0)";
+		String joinFar = syntheticShadow
+			? profile.lodShadowJoinFar()
+			: "float(paucLodStartDistance) + 112.0";
+		String nearStrength = syntheticShadow
+			? profile.lodShadowNearStrength()
+			: formatFloat(boundaryShadowNearStrength(profile));
+		String sideStrength = syntheticShadow
+			? profile.lodShadowSideStrength()
+			: formatFloat(boundaryShadowSideStrength(profile));
+		String shadowMax = syntheticShadow
+			? profile.lodShadowMax()
+			: formatFloat(boundaryShadowMax(profile));
 		while (matcher.find()) {
 			patched = true;
 			String replacement = "{\n"
-				+ "    float paucDhLodJoin = 1.0 - smoothstep(" + profile.lodShadowJoinNear() + ", " + profile.lodShadowJoinFar() + ", lengthCylinder);\n"
+				+ "    float paucDhLodJoin = 1.0 - smoothstep(" + joinNear + ", " + joinFar + ", lengthCylinder);\n"
 				+ "    float paucDhLodFacing = clamp(dot(normalize(normal), normalize(sunVec)), 0.0, 1.0);\n"
-				+ "    float paucDhLodSideShadow = pow(1.0 - paucDhLodFacing, 1.35);\n"
-				+ "    float paucDhLodShadow = clamp(" + profile.lodShadowNearStrength() + " * paucDhLodJoin + " + profile.lodShadowSideStrength() + " * paucDhLodSideShadow, 0.0, " + profile.lodShadowMax() + ");\n"
+				+ "    float paucDhLodSideShadow = pow(1.0 - paucDhLodFacing, " + (syntheticShadow ? "1.35" : "1.20") + ");\n"
+				+ "    float paucDhLodShadow = clamp(" + nearStrength + " * paucDhLodJoin + " + sideStrength + " * paucDhLodSideShadow * paucDhLodJoin, 0.0, " + shadowMax + ");\n"
 				+ "    color.rgb *= 1.0 - paucDhLodShadow;\n"
 				+ "}\n"
 				+ "gl_FragData[0] = color;";
@@ -1100,13 +1173,54 @@ public class IrisLodRenderProgram {
 		matcher.appendTail(rewritten);
 		if (patched && !paucNativeLodShadowPatchLogged) {
 			paucNativeLodShadowPatchLogged = true;
-			Iris.logger.info("PauC applied native DH LOD shadow gradient for shader terrain continuity: {}.", programName);
+			Iris.logger.info("PauC applied native DH LOD shadow bridge for shader terrain continuity: {}.", programName);
 		}
-		return patched ? rewritten.toString() : source;
+		return patched ? ensurePaucDistanceUniforms(rewritten.toString()) : source;
+	}
+
+	private static boolean shouldApplyAnyPaucLodShadow(PauCLodShaderProfiles.Profile profile) {
+		return shouldApplyPaucSyntheticLodShadow(profile) || shouldApplyPaucBoundaryLodShadow(profile);
+	}
+
+	private static boolean shouldApplyPaucSyntheticLodShadow(PauCLodShaderProfiles.Profile profile) {
+		return readBoolean(SYNTHETIC_LOD_SHADOW_PROPERTY, false) && profile.shouldApplySyntheticLodShadow();
+	}
+
+	private static boolean shouldApplyPaucBoundaryLodShadow(PauCLodShaderProfiles.Profile profile) {
+		return readBoolean(BOUNDARY_LOD_SHADOW_PROPERTY, true)
+			&& profile != null
+			&& profile.family() != PauCLodShaderProfiles.Family.PHOTON
+			&& profile.family() != PauCLodShaderProfiles.Family.SOLAS
+			&& profile.family() != PauCLodShaderProfiles.Family.GENERIC
+			&& profile.preservesNativeDhPresentation();
+	}
+
+	private static float boundaryShadowNearStrength(PauCLodShaderProfiles.Profile profile) {
+		float raw = profileFloat(profile.lodShadowNearStrength(), 0.18F) * 0.45F;
+		return Math.max(0.08F, Math.min(0.20F, raw));
+	}
+
+	private static float boundaryShadowSideStrength(PauCLodShaderProfiles.Profile profile) {
+		float raw = profileFloat(profile.lodShadowSideStrength(), 0.30F) * 0.35F;
+		return Math.max(0.06F, Math.min(0.18F, raw));
+	}
+
+	private static float boundaryShadowMax(PauCLodShaderProfiles.Profile profile) {
+		float raw = profileFloat(profile.lodShadowMax(), 0.40F) * 0.40F;
+		return Math.max(0.10F, Math.min(0.22F, raw));
+	}
+
+	private static String formatFloat(float value) {
+		return String.format(Locale.ROOT, "%.3f", value);
 	}
 
 	private static String applyPaucUnderwaterRuntimeFog(String source, boolean isShadowPass, String programName) {
 		if (isShadowPass || source == null || source.contains("paucDhUnderwaterRuntimeFog")) {
+			return source;
+		}
+
+		PauCLodShaderProfiles.Profile profile = currentShaderLodProfile();
+		if (!shouldApplyNativeRuntimeUnderwaterFog(profile, programName)) {
 			return source;
 		}
 
@@ -1230,7 +1344,7 @@ public class IrisLodRenderProgram {
 
 		// Fog/Clip Uniforms
 		float dhNearClipDistance = DhApi.Delayed.renderProxy.getNearClipPlaneDistanceInBlocks(partialTicks);
-		float paucBoundaryClipDistance = PauCLodNearClipOverride.currentBoundaryClipBlocks(dhNearClipDistance);
+		float paucBoundaryClipDistance = PauCLodNearClipOverride.overrideNearClipBlocks(dhNearClipDistance);
 		setUniform(clipDistanceUniform, paucBoundaryClipDistance);
 
 		samplers.update();

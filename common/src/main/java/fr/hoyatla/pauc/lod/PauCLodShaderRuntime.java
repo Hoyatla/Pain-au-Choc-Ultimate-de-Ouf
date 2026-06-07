@@ -5,8 +5,10 @@ import java.util.Locale;
 public final class PauCLodShaderRuntime {
 	private static final String ENABLED_PROPERTY = "pauc.lod.shaderRuntime";
 	private static final String KEEP_LOD_CLOUDS_PROPERTY = "pauc.lod.shaderRuntime.keepLodClouds";
+	private static final String PROTECT_LOD_CLOUD_CENTER_PROPERTY = "pauc.lod.shaderRuntime.protectLodCloudCenter";
 	private static final String MANAGE_NATIVE_DH_SHADOW_PROPERTY = "pauc.lod.shaderRuntime.manageNativeDhShadow";
 	private static final String SHADOW_FALLBACK_BUDGET_PROPERTY = "pauc.lod.shaderRuntime.shadowFallbackBudgetChunks";
+	private static final String MAX_GENERATION_RATE_PROPERTY = "pauc.lod.shaderRuntime.maxGenerationRateLimit";
 	private static volatile State state = State.off();
 
 	private PauCLodShaderRuntime() {
@@ -28,8 +30,17 @@ public final class PauCLodShaderRuntime {
 		}
 
 		double ratio = fps > 0 ? fps / (double) targetFps : 0.0D;
+		PauCLodShaderContext.DhShaderMode shaderMode = PauCLodShaderContext.effectiveDhMode();
 		Pressure pressure;
-		if (ratio < 0.72D || heapPressure > 0.90D) {
+		if (shaderMode == PauCLodShaderContext.DhShaderMode.SYNTHETIC_NATIVE) {
+			if (ratio < 0.78D || heapPressure > 0.88D) {
+				pressure = Pressure.RELIEF;
+			} else if (ratio < 1.08D || heapPressure > 0.80D) {
+				pressure = Pressure.BALANCED;
+			} else {
+				pressure = Pressure.HEADROOM;
+			}
+		} else if (ratio < 0.72D || heapPressure > 0.90D) {
 			pressure = Pressure.RELIEF;
 		} else if (ratio < 1.02D || heapPressure > 0.82D) {
 			pressure = Pressure.BALANCED;
@@ -40,6 +51,7 @@ public final class PauCLodShaderRuntime {
 		state = new State(
 			true,
 			family == null ? PauCLodShaderProfiles.Family.GENERIC : family,
+			shaderMode,
 			pressure,
 			fps,
 			targetFps,
@@ -70,7 +82,11 @@ public final class PauCLodShaderRuntime {
 	}
 
 	public static boolean shouldProtectLodCloudCenter() {
-		return shouldKeepPauCLodCloudsVisible();
+		if (!shouldKeepPauCLodCloudsVisible()) {
+			return false;
+		}
+		boolean defaultProtect = !PauCLodShaderContext.isFallbackActive() && !isUnderPressure();
+		return readBoolean(PROTECT_LOD_CLOUD_CENTER_PROPERTY, defaultProtect);
 	}
 
 	public static boolean shouldCreateNativeDhShadowProgram(boolean dhShadowEnabled) {
@@ -81,7 +97,7 @@ public final class PauCLodShaderRuntime {
 			return true;
 		}
 
-		return currentFamily() != PauCLodShaderProfiles.Family.PHOTON;
+		return true;
 	}
 
 	public static boolean shouldRenderNativeDhShadowThisFrame() {
@@ -90,13 +106,13 @@ public final class PauCLodShaderRuntime {
 		}
 
 		PauCLodShaderProfiles.Family family = currentFamily();
-		if (family == PauCLodShaderProfiles.Family.PHOTON) {
-			return false;
-		}
 		if (pressure() == Pressure.RELIEF) {
 			return false;
 		}
-		return family != PauCLodShaderProfiles.Family.SOLAS || pressure() == Pressure.HEADROOM;
+		if (family == PauCLodShaderProfiles.Family.PHOTON || family == PauCLodShaderProfiles.Family.SOLAS) {
+			return true;
+		}
+		return true;
 	}
 
 	public static int shadowFallbackChunkBudget(int availableChunks) {
@@ -141,18 +157,19 @@ public final class PauCLodShaderRuntime {
 		}
 
 		double scale = switch (pressure()) {
-			case RELIEF -> 0.68D;
-			case BALANCED -> 0.86D;
+			case RELIEF -> 0.82D;
+			case BALANCED -> 0.96D;
 			case HEADROOM -> 1.10D;
 			default -> 1.0D;
 		};
 		if (currentFamily() == PauCLodShaderProfiles.Family.SOLAS && pressure() != Pressure.HEADROOM) {
-			scale *= 0.88D;
+			scale *= 0.94D;
 		}
 		if (state.nvidiaMeshPath() && state.multiDrawIndirect()) {
 			scale *= 1.08D;
 		}
-		return Math.max(8, Math.min(128, (int) Math.round(policyLimit * scale)));
+		int maxRate = readInt(MAX_GENERATION_RATE_PROPERTY, 512, 64, 1024);
+		return Math.max(20, Math.min(maxRate, (int) Math.round(policyLimit * scale)));
 	}
 
 	public static double uploadBudgetScale() {
@@ -161,8 +178,8 @@ public final class PauCLodShaderRuntime {
 		}
 
 		double scale = switch (pressure()) {
-			case RELIEF -> 0.58D;
-			case BALANCED -> 0.82D;
+			case RELIEF -> 0.72D;
+			case BALANCED -> 0.92D;
 			case HEADROOM -> 1.12D;
 			default -> 1.0D;
 		};
@@ -178,8 +195,8 @@ public final class PauCLodShaderRuntime {
 		}
 
 		double scale = switch (pressure()) {
-			case RELIEF -> 0.70D;
-			case BALANCED -> 0.88D;
+			case RELIEF -> 0.82D;
+			case BALANCED -> 0.94D;
 			case HEADROOM -> 1.05D;
 			default -> 1.0D;
 		};
@@ -192,6 +209,8 @@ public final class PauCLodShaderRuntime {
 			+ isActive()
 			+ ", family="
 			+ currentFamily().name().toLowerCase(Locale.ROOT)
+			+ ", mode="
+			+ snapshot.shaderMode().id()
 			+ ", pressure="
 			+ pressure().id
 			+ ", fps="
@@ -250,6 +269,7 @@ public final class PauCLodShaderRuntime {
 	private record State(
 		boolean active,
 		PauCLodShaderProfiles.Family family,
+		PauCLodShaderContext.DhShaderMode shaderMode,
 		Pressure pressure,
 		int fps,
 		int targetFps,
@@ -263,6 +283,7 @@ public final class PauCLodShaderRuntime {
 			return new State(
 				false,
 				PauCLodShaderProfiles.Family.GENERIC,
+				PauCLodShaderContext.DhShaderMode.SHADER_OFF,
 				Pressure.OFF,
 				-1,
 				-1,

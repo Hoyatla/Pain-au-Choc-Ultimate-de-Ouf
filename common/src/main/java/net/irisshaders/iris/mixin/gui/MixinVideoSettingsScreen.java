@@ -40,12 +40,26 @@ public abstract class MixinVideoSettingsScreen extends Screen {
 		index = 0
 	)
 	private OptionInstance<?>[] iris$addShaderPackScreenButton(OptionInstance<?>[] $$0) {
-		OptionInstance<?>[] options = new OptionInstance[$$0.length + 4];
+		OptionInstance<?>[] paucOptions = (($$0.length & 1) == 0)
+			? new OptionInstance<?>[] {
+				IrisVideoSettings.RENDER_DISTANCE,
+				PauCLodVideoSettings.LODS_ENABLED,
+				PauCLodVideoSettings.LOD_RENDER_DISTANCE,
+				PauCLodVideoSettings.LOD_CLOUDS,
+				PauCLodVideoSettings.NVIDIA_ACCELERATION,
+				PauCLodVideoSettings.TERRAIN_MORPHING
+			}
+			: new OptionInstance<?>[] {
+				IrisVideoSettings.RENDER_DISTANCE,
+				PauCLodVideoSettings.LODS_ENABLED,
+				PauCLodVideoSettings.LOD_RENDER_DISTANCE,
+				PauCLodVideoSettings.NVIDIA_ACCELERATION,
+				PauCLodVideoSettings.TERRAIN_MORPHING,
+				PauCLodVideoSettings.LOD_CLOUDS
+			};
+		OptionInstance<?>[] options = new OptionInstance[$$0.length + paucOptions.length];
 		System.arraycopy($$0, 0, options, 0, $$0.length);
-		options[$$0.length] = IrisVideoSettings.RENDER_DISTANCE;
-		options[$$0.length + 1] = PauCLodVideoSettings.LODS_ENABLED;
-		options[$$0.length + 2] = PauCLodVideoSettings.LOD_RENDER_DISTANCE;
-		options[$$0.length + 3] = PauCLodVideoSettings.LOD_CLOUDS;
+		System.arraycopy(paucOptions, 0, options, $$0.length, paucOptions.length);
 		return options;
 	}
 

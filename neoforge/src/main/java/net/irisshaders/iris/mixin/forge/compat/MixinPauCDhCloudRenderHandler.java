@@ -36,7 +36,8 @@ public abstract class MixinPauCDhCloudRenderHandler {
 													   @Coerce Object cloudParams,
 													   CallbackInfoReturnable<Boolean> cir) {
 		MixinPauCDhCloudParamsAccessor accessor = (MixinPauCDhCloudParamsAccessor) cloudParams;
-		if (PauCLodRenderCulling.shouldCullLodCloudInstance(accessor.pauc$getInstanceOffsetX(), accessor.pauc$getInstanceOffsetZ())) {
+		if (PauCLodRenderCulling.shouldCullLodCloudInstance(accessor.pauc$getInstanceOffsetX(), accessor.pauc$getInstanceOffsetZ())
+			|| PauCLodRenderCulling.shouldCullLowNearLodCloud(minPosY, accessor.pauc$getInstanceOffsetX(), accessor.pauc$getInstanceOffsetZ())) {
 			cir.setReturnValue(true);
 		}
 	}

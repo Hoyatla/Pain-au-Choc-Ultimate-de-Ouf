@@ -19,6 +19,7 @@ public final class PauCLodShaderPresentation {
 	private static final String FOG_END_MARGIN_PROPERTY = "pauc.lod.shaderFogEndMargin";
 	private static final String LATE_FALLBACK_RENDER_PROPERTY = "pauc.lod.shaderFallbackLateRender";
 	private static final String EXTEND_SHADER_CAMERA_FAR_PROPERTY = "pauc.lod.extendShaderCameraFar";
+	private static final String EXTEND_LATE_FALLBACK_SHADER_CAMERA_FAR_PROPERTY = "pauc.lod.extendLateFallbackShaderCameraFar";
 	private static long lastFogNeutralizationLogMs;
 	private static long lastLateFallbackRenderLogMs;
 
@@ -31,10 +32,6 @@ public final class PauCLodShaderPresentation {
 
 	public static int shaderRenderDistanceBlocks(int realDhRenderDistanceBlocks) {
 		if (!isPresentationEnabled()) {
-			return realDhRenderDistanceBlocks;
-		}
-
-		if (shouldLateRenderFallbackLods()) {
 			return realDhRenderDistanceBlocks;
 		}
 
@@ -66,10 +63,13 @@ public final class PauCLodShaderPresentation {
 		}
 
 		if (shouldLateRenderFallbackLods()) {
-			return realCameraFarBlocks;
+			if (!readBoolean(EXTEND_LATE_FALLBACK_SHADER_CAMERA_FAR_PROPERTY, true)) {
+				return realCameraFarBlocks;
+			}
+			return Math.max(realCameraFarBlocks, shaderPresentationDistanceBlocks(realCameraFarBlocks));
 		}
 
-		if (!readBoolean(EXTEND_SHADER_CAMERA_FAR_PROPERTY, false)) {
+		if (!readBoolean(EXTEND_SHADER_CAMERA_FAR_PROPERTY, PauCLodShaderContext.isFallbackActive())) {
 			return realCameraFarBlocks;
 		}
 
@@ -117,7 +117,7 @@ public final class PauCLodShaderPresentation {
 		PauCLodRange range = currentRange();
 		return isPresentationEnabled()
 			&& readBoolean(FOG_NEUTRALIZATION_PROPERTY, true)
-			&& !readBoolean(LATE_FALLBACK_RENDER_PROPERTY, true)
+			&& !readBoolean(LATE_FALLBACK_RENDER_PROPERTY, defaultLateFallbackRender())
 			&& PauCLodShaderContext.isFallbackActive()
 			&& range.enabled();
 	}
@@ -139,7 +139,7 @@ public final class PauCLodShaderPresentation {
 
 	public static boolean shouldLateRenderFallbackLods() {
 		return isPresentationEnabled()
-			&& readBoolean(LATE_FALLBACK_RENDER_PROPERTY, true)
+			&& readBoolean(LATE_FALLBACK_RENDER_PROPERTY, defaultLateFallbackRender())
 			&& PauCLodShaderContext.isFallbackActive()
 			&& currentRange().enabled();
 	}
@@ -184,6 +184,10 @@ public final class PauCLodShaderPresentation {
 	private static PauCLodRange currentRange() {
 		PauCLodRange range = PauCLodHorizonState.currentRange();
 		return range == null ? PauCLodRange.disabled(2, PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS) : range;
+	}
+
+	private static boolean defaultLateFallbackRender() {
+		return true;
 	}
 
 	private static int shaderPresentationDistanceBlocks(int realRenderDistanceBlocks) {

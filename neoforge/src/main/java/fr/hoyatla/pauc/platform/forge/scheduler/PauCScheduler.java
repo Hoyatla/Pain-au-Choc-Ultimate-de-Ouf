@@ -22,17 +22,30 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class PauCScheduler {
 	private static final Logger LOGGER = LogUtils.getLogger();
-	private static final int SERVER_PREPARE_THREADS = Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() / 4));
-	private static final int CLIENT_PREPARE_THREADS = Math.max(1, Math.min(2, Runtime.getRuntime().availableProcessors() / 6));
-	private static final int IO_THREADS = 1;
-	private static final int SERVER_PREPARE_QUEUE_CAPACITY = 64;
-	private static final int CLIENT_PREPARE_QUEUE_CAPACITY = 64;
-	private static final int IO_QUEUE_CAPACITY = 128;
+	private static final int AVAILABLE_PROCESSORS = Math.max(1, Runtime.getRuntime().availableProcessors());
+	private static final int SERVER_PREPARE_THREADS = readInt("pauc.scheduler.serverPrepareThreads", Math.max(1, Math.min(2, AVAILABLE_PROCESSORS / 4)), 1, 8);
+	private static final int CLIENT_PREPARE_THREADS = readInt("pauc.scheduler.clientPrepareThreads", Math.max(2, Math.min(4, AVAILABLE_PROCESSORS / 4)), 1, 8);
+	private static final int IO_THREADS = readInt("pauc.scheduler.ioThreads", Math.max(1, Math.min(2, AVAILABLE_PROCESSORS / 8)), 1, 4);
+	private static final int SERVER_PREPARE_QUEUE_CAPACITY = readInt("pauc.scheduler.serverPrepareQueue", 96, 16, 512);
+	private static final int CLIENT_PREPARE_QUEUE_CAPACITY = readInt("pauc.scheduler.clientPrepareQueue", 192, 32, 768);
+	private static final int IO_QUEUE_CAPACITY = readInt("pauc.scheduler.ioQueue", 512, 64, 2048);
 
 	private static final Map<PauCTaskLane, LaneExecutor> LANES = new ConcurrentHashMap<>();
 	private static volatile boolean bootstrapped;
 
 	private PauCScheduler() {
+	}
+
+	private static int readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
 	}
 
 	public static synchronized void bootstrap() {

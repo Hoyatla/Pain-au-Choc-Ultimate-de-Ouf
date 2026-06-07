@@ -1,6 +1,6 @@
 modLoader = "javafml"
 loaderVersion = "*"
-license = "All Rights Reserved"
+license = "GNU Lesser General Public License v3.0"
 
 [[mods]]
 modId = "paucultimate"

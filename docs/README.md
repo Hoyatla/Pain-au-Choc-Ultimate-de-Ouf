@@ -5,7 +5,7 @@ This active source tree is the Forge-only PauC Ultimate branch.
 ## Current Runtime Shape
 
 - Public Forge mod id: `paucultimate`.
-- Release artifact: `Pain_au_Choc_Ultimate_de_Ouf-0.9a.jar`.
+- Release artifact: `Pain_au_Choc_Ultimate_de_Ouf-0.1.0.jar`.
 - Embedded long-distance terrain runtime is published under PauC-owned jar names and runtime resource names.
 - Legacy loader documentation and inherited user guides were removed from the active source tree; the preserved reference copy remains available at:
   `D:\Dev\Pain_au_Choc_Ultimate_de_Ouf - Road Beta\PauCUltimate_REFERENCE_BEFORE_PROPRIETARY_FORGE`

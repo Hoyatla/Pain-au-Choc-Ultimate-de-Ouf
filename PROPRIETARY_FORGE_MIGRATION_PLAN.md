@@ -1,4 +1,6 @@
-# PauCUltimate Proprietary Forge Migration Plan
+# PauCUltimate Forge Migration Plan
+
+Licensing update: as of 2026-06-07, the active project license is the GNU Lesser General Public License v3.0. The former proprietary migration objective is superseded; this document now tracks Forge packaging, namespace isolation, and third-party attribution cleanup.
 
 Reference copy: `D:\Dev\Pain_au_Choc_Ultimate_de_Ouf - Road Beta\PauCUltimate_REFERENCE_BEFORE_PROPRIETARY_FORGE`
 
@@ -8,7 +10,7 @@ Reference copy: `D:\Dev\Pain_au_Choc_Ultimate_de_Ouf - Road Beta\PauCUltimate_RE
 - Stop claiming ownership of external mod ids: no `sodium`, `indium`, `iris`, or `oculus` aliases in Forge metadata.
 - Keep only minimal Iris-style shader-pack compatibility where it is still needed for shader-pack parsing/rendering.
 - Isolate embedded LOD code so it cannot collide with a real Distant Horizons installation.
-- Move toward a proprietary codebase by replacing inherited Iris, Sodium, Indium, and Distant Horizons implementation pieces with PauC-owned equivalents.
+- Keep inherited Iris, Sodium, Indium, and Distant Horizons implementation pieces compatible with the active LGPL v3.0 distribution path, while replacing or isolating code where needed for maintainability and attribution clarity.
 
 ## Immediate Changes
 
@@ -16,7 +18,7 @@ Reference copy: `D:\Dev\Pain_au_Choc_Ultimate_de_Ouf - Road Beta\PauCUltimate_RE
 2. Convert `common` away from Fabric Loom so the shared source holder is no longer a Fabric project.
 3. Remove Fabric repositories/properties that are no longer required by the active build.
 4. Update Forge `mods.toml` files:
-   - license becomes proprietary for PauC-owned code,
+   - license becomes GNU Lesser General Public License v3.0,
    - `provides` keeps only PauC ids,
    - external renderer ids are not exposed,
    - Fabric renderer metadata is removed.
@@ -38,9 +40,9 @@ Required end state:
 - Change all direct `com.seibel.distanthorizons` references in PauC mixins/bridges to the relocated namespace.
 - Keep external Distant Horizons compatibility optional and disabled by default when PauC embedded LOD is active.
 
-## Proprietary Replacement Track
+## Third-Party Code Replacement Track
 
-PauCUltimate currently contains inherited Iris-style shader code and vendored Distant Horizons/Sodium-derived code. Renaming is not enough to make that code proprietary.
+PauCUltimate currently contains inherited Iris-style shader code and vendored Distant Horizons/Sodium-derived code. Renaming is not enough to change the licensing obligations of that code.
 
 Required end state:
 
@@ -50,7 +52,7 @@ Required end state:
   - `net.caffeinemc.*`,
   - `com.seibel.distanthorizons.*`,
   - `common/src/vendored`.
-- Replace these blocks incrementally with PauC-owned implementations, or keep them clearly excluded from proprietary licensing.
+- Replace these blocks incrementally with PauC-owned implementations where useful, or keep them clearly attributed under their compatible third-party licenses.
 - Remove inherited README/docs/license claims from release artifacts once replacement is complete.
 - Keep legal attribution files only for any third-party code that remains.
 
@@ -70,7 +72,7 @@ Required end state:
 ## Execution Log - 2026-05-24
 
 - Removed the Fabric module from the active build and converted `common` to a plain Java source holder.
-- Updated Forge metadata to PauC-owned ids and proprietary licensing.
+- Updated Forge metadata to PauC-owned ids and LGPL v3.0 licensing.
 - Removed Indigo/Indium compatibility resources from the active source tree.
 - Added generated-jar sanitization for legacy public ids and embedded LOD names.
 - Fixed the sanitizer after the Prism session showed a GLSL parser/ANTLR initialization error: jar entry names are still renamed, but arbitrary third-party binary class bodies are no longer rewritten.
@@ -89,7 +91,7 @@ Required end state:
   `META-INF/services/net.paucshaders.pauc.platform.PauCPlatformHelpers`
   -> `net.paucshaders.pauc.platform.PauCForgeHelpers`.
 
-Remaining proprietary work:
+Remaining third-party cleanup work:
 
-- Replace inherited `net.irisshaders.*`, `net.caffeinemc.*`, and embedded LOD implementation code with PauC-owned implementations where legal ownership, not just packaging isolation, is required.
+- Replace inherited `net.irisshaders.*`, `net.caffeinemc.*`, and embedded LOD implementation code with PauC-owned implementations where maintenance or packaging isolation requires it.
 - Keep the binary sanitizer until source-level package relocation is complete, especially for embedded LOD classes.

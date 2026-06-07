@@ -1,6 +1,8 @@
 package fr.hoyatla.pauc.platform.forge;
 
 import fr.hoyatla.pauc.PauCIdentity;
+import fr.hoyatla.pauc.lod.PauCLodCudaBridge;
+import fr.hoyatla.pauc.platform.forge.client.PauCCudaWorker;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatEventBridge;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatManager;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatibilityGuards;
@@ -47,6 +49,7 @@ public final class PauCForgeBootstrap {
 		PauCCompatManager.bootstrap();
 		PauCScheduler.bootstrap();
 		PauCEmbeddedDhBootstrap.bootstrapClient();
+		PauCLodCudaBridge.registerSeamHeightAverager(PauCCudaWorker::averageSeamHeights);
 		bootstrapOptionalPauCorBridge(modVersion);
 		ModLoadingContext.get().registerExtensionPoint(
 			ConfigScreenHandler.ConfigScreenFactory.class,

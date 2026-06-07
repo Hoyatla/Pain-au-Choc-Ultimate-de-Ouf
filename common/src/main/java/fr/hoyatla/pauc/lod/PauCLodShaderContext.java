@@ -24,8 +24,11 @@ public final class PauCLodShaderContext {
 	private static volatile ShaderPackDhScan dhScan = ShaderPackDhScan.unavailable("shader-off");
 	private static volatile boolean shaderPackInUse;
 	private static volatile boolean dhNativeShaderAvailable;
+	private static volatile boolean dhExplicitNativeShaderAvailable;
+	private static volatile boolean dhSyntheticShaderAvailable;
 	private static volatile boolean incompatibleDhShaderPack;
 	private static volatile boolean fallbackActive;
+	private static volatile DhShaderMode effectiveDhMode = DhShaderMode.SHADER_OFF;
 	private static volatile String status = "shader-off";
 	private static volatile int transitionHoldFrames;
 
@@ -46,18 +49,27 @@ public final class PauCLodShaderContext {
 		dhScan = inUse ? scanShaderPackDhCapabilities(shaderDirectory) : ShaderPackDhScan.unavailable("shader-off");
 		if (!inUse) {
 			dhNativeShaderAvailable = false;
+			dhExplicitNativeShaderAvailable = false;
+			dhSyntheticShaderAvailable = false;
 			incompatibleDhShaderPack = false;
 			fallbackActive = false;
+			effectiveDhMode = DhShaderMode.SHADER_OFF;
 			status = "shader-off";
 		} else if (isCurrentPackCachedIncompatible()) {
 			dhNativeShaderAvailable = false;
+			dhExplicitNativeShaderAvailable = false;
+			dhSyntheticShaderAvailable = false;
 			incompatibleDhShaderPack = true;
 			fallbackActive = readBoolean(FALLBACK_PROPERTY, true);
+			effectiveDhMode = fallbackActive ? DhShaderMode.FALLBACK : DhShaderMode.INCOMPATIBLE;
 			status = fallbackActive ? "pauc-fallback:cached-missing-dh-shader" : "dh-incompatible:cached-missing-dh-shader";
 		} else if (changed) {
 			dhNativeShaderAvailable = false;
+			dhExplicitNativeShaderAvailable = false;
+			dhSyntheticShaderAvailable = false;
 			incompatibleDhShaderPack = false;
 			fallbackActive = false;
+			effectiveDhMode = DhShaderMode.PENDING;
 			status = "shader-pending-dh-compat";
 		}
 
@@ -67,32 +79,57 @@ public final class PauCLodShaderContext {
 	}
 
 	public static void markDhShaderCompatibility(boolean nativeShaderAvailable, String reason) {
-		markDhShaderCompatibility(nativeShaderAvailable, reason, true);
+		markDhShaderCompatibility(nativeShaderAvailable, false, reason, true);
 	}
 
 	public static void markDhShaderCompatibility(boolean nativeShaderAvailable, String reason, boolean cacheIncompatibility) {
+		markDhShaderCompatibility(nativeShaderAvailable, false, reason, cacheIncompatibility);
+	}
+
+	public static void markDhShaderCompatibility(
+		boolean explicitNativeShaderAvailable,
+		boolean syntheticShaderAvailable,
+		String reason,
+		boolean cacheIncompatibility
+	) {
 		boolean previousFallback = fallbackActive;
 		boolean previousNative = dhNativeShaderAvailable;
-		boolean forcedFallback = nativeShaderAvailable && shouldForceFallbackForCurrentPack();
-		boolean effectiveNativeShaderAvailable = nativeShaderAvailable && !forcedFallback;
+		DhShaderMode previousMode = effectiveDhMode;
+		boolean requestedDhShaderPath = explicitNativeShaderAvailable || syntheticShaderAvailable;
+		boolean forcedFallback = requestedDhShaderPath && shouldForceFallbackForCurrentPack();
+		boolean effectiveExplicitShaderAvailable = explicitNativeShaderAvailable && !forcedFallback;
+		boolean effectiveSyntheticShaderAvailable = !effectiveExplicitShaderAvailable && syntheticShaderAvailable && !forcedFallback;
+		boolean effectiveNativeShaderAvailable = effectiveExplicitShaderAvailable || effectiveSyntheticShaderAvailable;
 		if (shaderPackInUse && !effectiveNativeShaderAvailable && cacheIncompatibility && !dhScan.suggestsDhSupport()) {
 			INCOMPATIBLE_SHADER_PACKS.put(shaderPackKey, Boolean.TRUE);
 		}
 
 		dhNativeShaderAvailable = effectiveNativeShaderAvailable;
+		dhExplicitNativeShaderAvailable = effectiveExplicitShaderAvailable;
+		dhSyntheticShaderAvailable = effectiveSyntheticShaderAvailable;
 		incompatibleDhShaderPack = shaderPackInUse && !effectiveNativeShaderAvailable;
 		fallbackActive = incompatibleDhShaderPack && readBoolean(FALLBACK_PROPERTY, true);
 		if (!shaderPackInUse) {
+			effectiveDhMode = DhShaderMode.SHADER_OFF;
 			status = "shader-off";
-		} else if (effectiveNativeShaderAvailable) {
-			status = "dh-native";
+		} else if (effectiveExplicitShaderAvailable) {
+			effectiveDhMode = DhShaderMode.EXPLICIT_NATIVE;
+			status = "dh-native-explicit";
+		} else if (effectiveSyntheticShaderAvailable) {
+			effectiveDhMode = DhShaderMode.SYNTHETIC_NATIVE;
+			status = "dh-native-synthetic";
 		} else if (fallbackActive) {
+			effectiveDhMode = DhShaderMode.FALLBACK;
 			status = "pauc-fallback:" + sanitizeReason(forcedFallback ? "cached-missing-dh-shader" : reason);
+		} else if (effectiveNativeShaderAvailable) {
+			effectiveDhMode = DhShaderMode.EXPLICIT_NATIVE;
+			status = "dh-native-explicit";
 		} else {
+			effectiveDhMode = DhShaderMode.INCOMPATIBLE;
 			status = "dh-incompatible:" + sanitizeReason(forcedFallback ? "cached-missing-dh-shader" : reason);
 		}
 
-		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable) {
+		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable || previousMode != effectiveDhMode) {
 			armTransitionHold();
 		}
 	}
@@ -100,24 +137,48 @@ public final class PauCLodShaderContext {
 	public static void markDhShaderRuntimeFallback(String reason) {
 		boolean previousFallback = fallbackActive;
 		boolean previousNative = dhNativeShaderAvailable;
+		DhShaderMode previousMode = effectiveDhMode;
 		dhNativeShaderAvailable = false;
+		dhExplicitNativeShaderAvailable = false;
+		dhSyntheticShaderAvailable = false;
 		incompatibleDhShaderPack = shaderPackInUse;
 		fallbackActive = incompatibleDhShaderPack && readBoolean(FALLBACK_PROPERTY, true);
 		if (!shaderPackInUse) {
+			effectiveDhMode = DhShaderMode.SHADER_OFF;
 			status = "shader-off";
 		} else if (fallbackActive) {
+			effectiveDhMode = DhShaderMode.FALLBACK;
 			status = "pauc-fallback:" + sanitizeReason(reason);
 		} else {
+			effectiveDhMode = DhShaderMode.INCOMPATIBLE;
 			status = "dh-incompatible:" + sanitizeReason(reason);
 		}
 
-		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable) {
+		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable || previousMode != effectiveDhMode) {
 			armTransitionHold();
 		}
 	}
 
 	public static boolean shouldForceFallbackForCurrentPack() {
 		return shaderPackInUse && isCurrentPackCachedIncompatible();
+	}
+
+	public static boolean blocksSyntheticDhTerrainShader() {
+		return shaderPackInUse && dhScan.available() && !dhScan.terrainProgram() && !shouldUseSyntheticDhTerrainShader();
+	}
+
+	public static boolean shouldUseSyntheticDhTerrainShader() {
+		if (!shaderPackInUse) {
+			return false;
+		}
+		return switch (PauCLodShaderProfiles.currentFamily()) {
+			case PHOTON, SOLAS -> true;
+			default -> false;
+		};
+	}
+
+	public static boolean hasScannedDhTerrainProgram() {
+		return shaderPackInUse && dhScan.available() && dhScan.terrainProgram();
 	}
 
 	public static boolean shouldUseConservativeEmbeddedShaderFallback() {
@@ -134,6 +195,18 @@ public final class PauCLodShaderContext {
 
 	public static boolean isDhNativeShaderActive() {
 		return shaderPackInUse && dhNativeShaderAvailable;
+	}
+
+	public static boolean isExplicitDhNativeShaderActive() {
+		return shaderPackInUse && dhExplicitNativeShaderAvailable;
+	}
+
+	public static boolean isSyntheticDhShaderActive() {
+		return shaderPackInUse && dhSyntheticShaderAvailable;
+	}
+
+	public static DhShaderMode effectiveDhMode() {
+		return effectiveDhMode;
 	}
 
 	public static String shaderPackKey() {
@@ -167,8 +240,14 @@ public final class PauCLodShaderContext {
 			+ shaderPackInUse
 			+ ", "
 			+ dhScan.describe()
-			+ ", dhNative="
+			+ ", dhMode="
+			+ effectiveDhMode.id
+			+ ", dhEffective="
 			+ dhNativeShaderAvailable
+			+ ", dhExplicit="
+			+ dhExplicitNativeShaderAvailable
+			+ ", dhSynthetic="
+			+ dhSyntheticShaderAvailable
 			+ ", incompatible="
 			+ incompatibleDhShaderPack
 			+ ", fallback="
@@ -180,6 +259,29 @@ public final class PauCLodShaderContext {
 			+ ", status="
 			+ status
 			+ "]";
+	}
+
+	public enum DhShaderMode {
+		SHADER_OFF("shader-off"),
+		PENDING("pending"),
+		EXPLICIT_NATIVE("native-explicit"),
+		SYNTHETIC_NATIVE("native-synthetic"),
+		FALLBACK("fallback"),
+		INCOMPATIBLE("incompatible");
+
+		private final String id;
+
+		DhShaderMode(String id) {
+			this.id = id;
+		}
+
+		public String id() {
+			return id;
+		}
+
+		public boolean usesDhShaderPath() {
+			return this == EXPLICIT_NATIVE || this == SYNTHETIC_NATIVE;
+		}
 	}
 
 	private static void armTransitionHold() {
@@ -241,9 +343,10 @@ public final class PauCLodShaderContext {
 				.forEach(path -> {
 					scannedFiles[0]++;
 					String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
-					terrain[0] |= isProgramFile(fileName, "dh_terrain");
-					water[0] |= isProgramFile(fileName, "dh_water");
-					shadow[0] |= isProgramFile(fileName, "dh_shadow");
+					String relativeName = shaderDirectory.relativize(path).toString().toLowerCase(Locale.ROOT).replace('\\', '/');
+					terrain[0] |= isProgramFile(fileName, "dh_terrain") || isProgramFile(relativeName, "dh_terrain");
+					water[0] |= isProgramFile(fileName, "dh_water") || isProgramFile(relativeName, "dh_water");
+					shadow[0] |= isProgramFile(fileName, "dh_shadow") || isProgramFile(relativeName, "dh_shadow");
 					markers[0] |= containsDhMarker(path, fileName);
 				});
 			return new ShaderPackDhScan(true, terrain[0], water[0], shadow[0], markers[0], scannedFiles[0], "ok");
@@ -253,12 +356,35 @@ public final class PauCLodShaderContext {
 	}
 
 	private static boolean isProgramFile(String fileName, String programName) {
-		return fileName.startsWith(programName + ".")
-			&& (fileName.endsWith(".vsh")
-				|| fileName.endsWith(".fsh")
-				|| fileName.endsWith(".gsh")
-				|| fileName.endsWith(".tcs")
-				|| fileName.endsWith(".tes"));
+		if (!isShaderProgramFile(fileName)) {
+			return false;
+		}
+
+		int start = fileName.indexOf(programName);
+		if (start < 0) {
+			return false;
+		}
+
+		int end = start + programName.length();
+		return hasProgramBoundary(fileName, start - 1)
+			&& hasProgramBoundary(fileName, end);
+	}
+
+	private static boolean isShaderProgramFile(String fileName) {
+		return fileName.endsWith(".vsh")
+			|| fileName.endsWith(".fsh")
+			|| fileName.endsWith(".gsh")
+			|| fileName.endsWith(".tcs")
+			|| fileName.endsWith(".tes");
+	}
+
+	private static boolean hasProgramBoundary(String fileName, int index) {
+		if (index < 0 || index >= fileName.length()) {
+			return true;
+		}
+
+		char character = fileName.charAt(index);
+		return character == '.' || character == '_' || character == '-' || character == '/' || character == '\\';
 	}
 
 	private static boolean containsDhMarker(Path path, String fileName) {

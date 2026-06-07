@@ -1,6 +1,9 @@
 package fr.hoyatla.pauc.platform.forge.worldgen;
 
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
+import fr.hoyatla.pauc.platform.forge.compat.PauCClientRenderShutdownGuard;
+import fr.hoyatla.pauc.platform.forge.compat.PauCCompatManager;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCServerPhase;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCServerPhaseBudgetController;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCStallGovernor;
@@ -35,6 +38,9 @@ public final class FarChunkPlacementBroker {
 		@Nullable String generationHint,
 		BlockPosSnapshot snapshot
 	) {
+		if (shouldSuspendWorldMutation(level)) {
+			return SubmissionResult.HANDLED_TRUE;
+		}
 		if (level.isOutsideBuildHeight(snapshot.pos())) {
 			return SubmissionResult.HANDLED_FALSE;
 		}
@@ -63,6 +69,10 @@ public final class FarChunkPlacementBroker {
 	}
 
 	public static int flushChunk(ServerLevel level, ChunkPos chunkPos) {
+		if (shouldSuspendWorldMutation(level)) {
+			return 0;
+		}
+
 		PreparedChunkSidecarStorage storage = PreparedChunkSidecarStorage.get(level);
 		runPlanners(level, chunkPos, storage);
 		int appliedPlacements = storage.materializeChunk(level, chunkPos, FarChunkPlacementBroker::applyNow);
@@ -75,6 +85,11 @@ public final class FarChunkPlacementBroker {
 	}
 
 	public static void tick(ServerLevel level) {
+		if (shouldSuspendWorldMutation(level)) {
+			FarChunkPreparationPipeline.shutdownLevel(level);
+			return;
+		}
+
 		PreparedChunkSidecarStorage storage = PreparedChunkSidecarStorage.get(level);
 		int dirtyBudget = PauCServerPhaseBudgetController.scaledBudget(
 			level.getServer(),
@@ -134,6 +149,16 @@ public final class FarChunkPlacementBroker {
 
 	private static void runPlanners(ServerLevel level, ChunkPos chunkPos, PreparedChunkSidecarStorage storage) {
 		FarChunkPreparationPipeline.request(level, chunkPos, storage);
+	}
+
+	private static boolean shouldSuspendWorldMutation(ServerLevel level) {
+		if (level == null) {
+			return true;
+		}
+
+		return PauCCompatManager.isServerStopping()
+			|| PauCRenderLifecycle.isClientLogoutInProgress()
+			|| PauCClientRenderShutdownGuard.isShutdownInProgress();
 	}
 
 	public static String describeState(ServerLevel level) {

@@ -1,6 +1,11 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.lod.PauCLodCudaBridge;
+import fr.hoyatla.pauc.lod.PauCLodHorizonState;
+import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
+import fr.hoyatla.pauc.lod.PauCLodRange;
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatManager;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatModule;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
@@ -8,6 +13,7 @@ import fr.hoyatla.pauc.platform.forge.scheduler.PauCTaskPriority;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -31,13 +37,52 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 
 public final class PauCClientFrontierWarmupManager {
 	private static final Logger LOGGER = LogUtils.getLogger();
-	private static final int PLAN_COMPLETION_BUDGET_PER_TICK = 6;
+	public static final int LOD_CACHE_STATE_DIRTY = 0;
+	public static final int LOD_CACHE_STATE_METADATA_CLEAN = 1;
+	public static final int LOD_CACHE_STATE_CPU_PREPARED = 2;
+	public static final int LOD_CACHE_STATE_CUDA_PREPARED = 3;
+	public static final int LOD_CACHE_STATE_RENDER_READY = 4;
+	public static final int LOD_QUALITY_UNKNOWN = 0;
+	public static final int LOD_QUALITY_COARSE = 1;
+	public static final int LOD_QUALITY_MEDIUM = 2;
+	public static final int LOD_QUALITY_FINE = 3;
+	private static final int WARM_CACHE_SCHEMA_VERSION = 3;
+	private static final int PLAN_COMPLETION_BUDGET_PER_TICK = 10;
 	private static final int PLAN_COMPLETION_BUDGET_MIN = 1;
-	private static final long PLAN_RESCHEDULE_COOLDOWN_MS = 300L;
+	private static final long PLAN_RESCHEDULE_COOLDOWN_MS = 150L;
 	private static final long STALE_RECORD_TTL_MS = 120_000L;
+	private static final String PRESENTATION_STABILIZE_RATIO_PROPERTY = "pauc.lod.stabilizePresentationCoverageRatio";
+	private static final String SHADER_PRESENTATION_STABILIZE_RATIO_PROPERTY = "pauc.lod.shaderStabilizePresentationCoverageRatio";
+	private static final String PRESENTATION_STABILIZE_HOLD_MS_PROPERTY = "pauc.lod.stabilizePresentationHoldMs";
+	private static final String COARSE_FILL_COVERAGE_RATIO_PROPERTY = "pauc.lod.coarseFillCoverageRatio";
+	private static final String COARSE_FILL_CATCHUP_COVERAGE_RATIO_PROPERTY = "pauc.lod.coarseFillCatchupCoverageRatio";
+	private static final String DISK_SEED_ENABLED_PROPERTY = "pauc.client.cache.diskSeedEnabled";
+	private static final String DISK_SEED_INTERVAL_MS_PROPERTY = "pauc.client.cache.diskSeedIntervalMs";
+	private static final String DISK_SEED_REGION_TTL_MS_PROPERTY = "pauc.client.cache.diskSeedRegionTtlMs";
+	private static final String DISK_SEED_MAX_PENDING_REGIONS_PROPERTY = "pauc.client.cache.diskSeedMaxPendingRegions";
+	private static final String DISK_SEED_MAX_REGIONS_PER_TICK_PROPERTY = "pauc.client.cache.diskSeedMaxRegionsPerTick";
+	private static final String DISK_SEED_MAX_CHUNKS_PER_REGION_PROPERTY = "pauc.client.cache.diskSeedMaxChunksPerRegion";
+	private static final String DISK_SEED_DRAIN_BATCHES_PROPERTY = "pauc.client.cache.diskSeedDrainBatchesPerTick";
+	private static final String DISK_SEED_DRAIN_CHUNKS_PROPERTY = "pauc.client.cache.diskSeedDrainChunksPerTick";
+	private static final String CUDA_WORLD_CACHE_ENABLED_PROPERTY = "pauc.lod.cuda.worldCachePreparation";
+	private static final String CUDA_WORLD_CACHE_INTERVAL_MS_PROPERTY = "pauc.lod.cuda.worldCacheIntervalMs";
+	private static final String CUDA_WORLD_CACHE_MAX_PENDING_PROPERTY = "pauc.lod.cuda.worldCacheMaxPendingBatches";
+	private static final String CUDA_WORLD_CACHE_BATCH_FEATURES_PROPERTY = "pauc.lod.cuda.worldCacheBatchFeatures";
+	private static final String CUDA_WORLD_CACHE_DRAIN_CELLS_PROPERTY = "pauc.lod.cuda.worldCacheDrainCells";
+	private static final String CUDA_WORLD_CACHE_PERSIST_BATCH_CELLS_PROPERTY = "pauc.lod.cuda.worldCachePersistBatchCells";
+	private static final String CUDA_WORLD_CACHE_RETRY_MS_PROPERTY = "pauc.lod.cuda.worldCacheRetryMs";
+	private static final String CUDA_WORLD_CACHE_MIN_SCORE_PROPERTY = "pauc.lod.cuda.worldCacheMinScore";
+	private static final String CUDA_WORLD_CACHE_BACKGROUND_EXTRA_PROPERTY = "pauc.lod.cuda.worldCacheBackgroundExtraChunks";
+	private static final String CUDA_WORLD_CACHE_LOG_INTERVAL_MS_PROPERTY = "pauc.lod.cuda.worldCacheLogIntervalMs";
+	private static final int[] FILL_BANDS = { 32, 64, 96, 128, 256 };
 	private static final ConcurrentMap<Long, WarmChunkRecord> TRACKED_CHUNKS = new ConcurrentHashMap<>();
 	private static final Set<Long> PENDING_PLANS = ConcurrentHashMap.newKeySet();
 	private static final ConcurrentLinkedDeque<PreparedWarmPlan> COMPLETED_PLANS = new ConcurrentLinkedDeque<>();
+	private static final Set<String> PENDING_DISK_SEED_REGIONS = ConcurrentHashMap.newKeySet();
+	private static final ConcurrentMap<String, Long> DISK_SEED_REGION_SCAN_TIMES = new ConcurrentHashMap<>();
+	private static final ConcurrentLinkedDeque<List<WarmChunkMetadata>> COMPLETED_DISK_SEEDS = new ConcurrentLinkedDeque<>();
+	private static final Set<Long> PENDING_CUDA_PREP = ConcurrentHashMap.newKeySet();
+	private static final ConcurrentLinkedDeque<CudaPreparedBatch> COMPLETED_CUDA_PREPARATIONS = new ConcurrentLinkedDeque<>();
 	private static final AtomicInteger SESSION_GENERATION = new AtomicInteger();
 	@Nullable
 	private static volatile Field clientChunkStorageField;
@@ -55,6 +100,44 @@ public final class PauCClientFrontierWarmupManager {
 	private static volatile int zeroVisibleChunkStreak;
 	private static volatile boolean lastSnapMode;
 	private static volatile boolean lastFastTravel;
+	private static volatile boolean lastMovementCatchup;
+	private static volatile CoverageSnapshot lastCoverageSnapshot = CoverageSnapshot.unavailable();
+	private static volatile long lastCoveragePresentationHoldUntilMillis;
+	private static volatile long lastDiskSeedScheduleAtMillis;
+	private static volatile long lastCudaPreparationScheduleAtMillis;
+	private static volatile long lastCudaPreparationLogAtMillis;
+	private static volatile String lastCudaPreparationStatus = "not-run";
+	private static volatile int lastCudaScheduledCells;
+	private static volatile int lastCudaCompletedCells;
+	private static final Comparator<WarmChunkRecord> PLAN_CANDIDATE_ORDER = (left, right) -> {
+		int scoreCompare = Double.compare(right.lastPriorityScore, left.lastPriorityScore);
+		if (scoreCompare != 0) {
+			return scoreCompare;
+		}
+		int radialCompare = Double.compare(left.currentRadialDistance, right.currentRadialDistance);
+		if (radialCompare != 0) {
+			return radialCompare;
+		}
+		return Integer.compare(left.currentDistance, right.currentDistance);
+	};
+	private static final Comparator<WarmChunkRecord> PROXY_CELL_ORDER = (left, right) -> {
+		int distanceCompare = Integer.compare(left.currentDistance, right.currentDistance);
+		if (distanceCompare != 0) {
+			return distanceCompare;
+		}
+		int radialCompare = Double.compare(left.currentRadialDistance, right.currentRadialDistance);
+		if (radialCompare != 0) {
+			return radialCompare;
+		}
+		return Double.compare(right.lastPriorityScore, left.lastPriorityScore);
+	};
+	private static final Comparator<RetentionCandidate> STALE_RETENTION_ORDER = Comparator
+		.comparingDouble(RetentionCandidate::score)
+		.thenComparingLong(RetentionCandidate::retainedAtMillis);
+	private static final Comparator<Map.Entry<Long, WarmChunkRecord>> TRACKED_RECORD_PRUNE_ORDER = Comparator
+		.comparingInt((Map.Entry<Long, WarmChunkRecord> entry) -> entry.getValue().lodCacheState >= LOD_CACHE_STATE_CUDA_PREPARED ? 1 : 0)
+		.thenComparingDouble(entry -> entry.getValue().lastPriorityScore)
+		.thenComparingLong(entry -> entry.getValue().lastSeenAtMillis);
 
 	private PauCClientFrontierWarmupManager() {
 	}
@@ -101,9 +184,7 @@ public final class PauCClientFrontierWarmupManager {
 			return record;
 		});
 		lastKnownDimension = metadata.dimensionId();
-		if (PauCorRendererBridge.isAvailable()) {
-			PauCClientWarmChunkDiskCache.persist(level, metadata);
-		}
+		PauCClientWarmChunkDiskCache.persist(level, metadata);
 	}
 
 	public static void onChunkDropped(@Nullable ClientLevel level, long chunkKey) {
@@ -137,39 +218,60 @@ public final class PauCClientFrontierWarmupManager {
 			return;
 		}
 
-		lastBudget = PauCClientMemoryBudgetController.capture(frame.renderDistanceChunks(), PauCClientChunkRetentionManager.getRetentionMarginChunks());
+		lastBudget = PauCClientMemoryBudgetController.capture(frame.renderDistanceChunks(), Math.max(0, frame.warmRadiusChunks() - frame.renderDistanceChunks()));
 		PauCorRendererBridge.RendererStats rendererStats = PauCorRendererBridge.getStats(level);
 		if (!rendererStats.available()) {
 			PauCCompatManager.logActionOnce(
 				PauCCompatModule.CLIENT_FRONTIER_WARMUP_PIPELINE,
-				"paucor-unavailable-passive",
-				"PauC keeps client frontier warmup in passive mode while the PauCor renderer bridge is unavailable."
+				"paucor-unavailable-metadata",
+				"PauC keeps client frontier warmup in metadata mode while the PauCor renderer bridge is unavailable."
 			);
+			seedTrackedChunksFromLiveStorage(level);
+			drainDiskSeedResults(level, frame);
+		refreshPriorities(frame, retainedChunks);
+		lastCoverageSnapshot = CoverageSnapshot.capture(level, frame, false, TRACKED_CHUNKS.values());
+		updateTerrainContinuityHold();
+		requestCoarseFillRenderRefreshIfNeeded();
 			lastKnownQueuedMeshSections = 0;
 			lastKnownHotMeshSections = 0;
+			lastKnownRetainedChunks = retainedChunks.size();
 			zeroVisibleChunkStreak = 0;
 			PENDING_PLANS.clear();
 			COMPLETED_PLANS.clear();
 			PauCClientUploadBudgetController.reset();
 			PauCClientRenderPrep.reset();
+			lastSnapMode = frame.snapMode();
+			lastFastTravel = frame.fastTravel();
+			lastMovementCatchup = frame.movementCatchup();
+			drainCompletedCudaPreparations(level);
+			scheduleCudaPreparations(level, frame);
+			scheduleDiskSeedScan(level, frame);
 			pruneTrackedRecords();
 			return;
 		}
 
 		seedTrackedChunksFromLiveStorage(level);
+		drainDiskSeedResults(level, frame);
 		refreshPriorities(frame, retainedChunks);
+		lastCoverageSnapshot = CoverageSnapshot.capture(level, frame, true, TRACKED_CHUNKS.values());
+		updateTerrainContinuityHold();
+		requestCoarseFillRenderRefreshIfNeeded();
 		refreshHotMeshCounts(level, rendererStats);
 		PauCClientUploadBudgetController.onClientTick(
 			Minecraft.getInstance(),
 			rendererStats,
 			lastBudget,
-			frame.fastTravel() || frame.snapMode()
+			frame.fastTravel() || frame.snapMode() || frame.movementCatchup()
 		);
 		PauCClientRenderPrep.onClientTick(level, frame, lastBudget, rendererStats);
 
 		runVisualRecovery(level, frame, rendererStats);
 		lastSnapMode = frame.snapMode();
 		lastFastTravel = frame.fastTravel();
+		lastMovementCatchup = frame.movementCatchup();
+		drainCompletedCudaPreparations(level);
+		scheduleCudaPreparations(level, frame);
+		scheduleDiskSeedScan(level, frame);
 		drainCompletedPlans(level, frame);
 		schedulePlans(level, frame);
 		pruneTrackedRecords();
@@ -190,7 +292,7 @@ public final class PauCClientFrontierWarmupManager {
 			}
 
 			retainedRamBytes += record.estimatedRamBytes;
-			boolean protectFastAhead = lastFastTravel && record.ahead && record.currentDistance <= PauCClientChunkRetentionManager.getRetentionRadiusChunks();
+			boolean protectFastAhead = (lastFastTravel || lastMovementCatchup) && record.ahead && record.currentDistance <= PauCClientChunkRetentionManager.getRetentionRadiusChunks();
 			boolean protectSnapRing = lastSnapMode && record.currentDistance <= PauCClientChunkRetentionManager.getRetentionRadiusChunks();
 			boolean stale = !protectFastAhead && !protectSnapRing && (record.lastPriorityScore < 0.20D
 				|| record.currentDistance > PauCClientChunkRetentionManager.getRetentionRadiusChunks()
@@ -204,12 +306,18 @@ public final class PauCClientFrontierWarmupManager {
 		boolean overRetainedChunks = candidates.size() > lastBudget.maxRetainedChunks();
 		boolean overRamBudget = retainedRamBytes > lastBudget.ramBudgetBytes();
 		if (!overRetainedChunks && !overRamBudget) {
-			return candidates.stream()
-				.filter(RetentionCandidate::stale)
-				.sorted(Comparator.comparingDouble(RetentionCandidate::score).thenComparingLong(RetentionCandidate::retainedAtMillis))
-				.limit(8)
-				.map(RetentionCandidate::chunkKey)
-				.toList();
+			List<RetentionCandidate> staleCandidates = new ArrayList<>(8);
+			for (RetentionCandidate candidate : candidates) {
+				if (candidate.stale()) {
+					addBoundedCandidate(staleCandidates, candidate, 8, STALE_RETENTION_ORDER);
+				}
+			}
+			staleCandidates.sort(STALE_RETENTION_ORDER);
+			List<Long> evictions = new ArrayList<>(staleCandidates.size());
+			for (RetentionCandidate candidate : staleCandidates) {
+				evictions.add(candidate.chunkKey());
+			}
+			return evictions;
 		}
 
 		List<RetentionCandidate> ordered = new ArrayList<>(candidates);
@@ -272,8 +380,14 @@ public final class PauCClientFrontierWarmupManager {
 			+ lastSnapMode
 			+ ", fastTravel="
 			+ lastFastTravel
+			+ ", movementCatchup="
+			+ lastMovementCatchup
+			+ ", "
+			+ lastCoverageSnapshot.describe()
 			+ ", dimension="
 			+ (lastKnownDimension != null ? lastKnownDimension : "-")
+			+ ", "
+			+ PauCEmbeddedLodRuntimeDiagnostics.describeFillPresentationState()
 			+ ", "
 			+ lastBudget.describe()
 			+ ", "
@@ -282,7 +396,177 @@ public final class PauCClientFrontierWarmupManager {
 			+ PauCClientUploadBudgetController.describeState()
 			+ ", "
 			+ PauCClientRenderPrep.describeState()
+			+ ", "
+			+ describeWorldCacheState()
+			+ ", "
+			+ PauCCudaLodProxyRenderer.describeState()
+			+ ", "
+			+ PauCEmbeddedLodRuntimeDiagnostics.describeState()
 			+ "]";
+	}
+
+	public static boolean shouldPreferCoarseFill() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (snapshot.available()) {
+			return snapshot.preferCoarseFill();
+		}
+		PauCLodRange range = PauCClientLodGovernor.currentRange();
+		return range != null && range.enabled();
+	}
+
+	public static int activeFillRadiusChunks(int fallbackRadiusChunks) {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (snapshot.available() && snapshot.activeBandEnd() > 0) {
+			return Math.max(0, Math.min(fallbackRadiusChunks, snapshot.activeBandEnd()));
+		}
+		PauCLodRange range = PauCClientLodGovernor.currentRange();
+		if (range == null || !range.enabled()) {
+			return Math.max(0, fallbackRadiusChunks);
+		}
+		return Math.max(0, Math.min(fallbackRadiusChunks, firstFillBandEnd(range.lodEndChunk())));
+	}
+
+	public static int requestedFillRadiusChunks(int fallbackRadiusChunks) {
+		int targetRadius = sanitizeFillRadiusChunks(fallbackRadiusChunks);
+		if (targetRadius <= 0) {
+			return 0;
+		}
+
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		boolean coverageHold = shouldHoldPresentationForCoverage();
+		if (snapshot.available()) {
+			if (!snapshot.preferCoarseFill() && !coverageHold) {
+				return targetRadius;
+			}
+			int activeRadius = Math.max(0, Math.min(targetRadius, snapshot.activeBandEnd()));
+			if (activeRadius > 0) {
+				return advanceFillBandEnd(activeRadius, targetRadius, requestedFillBandLead(snapshot));
+			}
+		}
+
+		PauCLodRange range = PauCClientLodGovernor.currentRange();
+		if (range == null || !range.enabled()) {
+			return targetRadius;
+		}
+		int seedRadius = firstFillBandEnd(Math.min(targetRadius, range.lodEndChunk()));
+		int seedLead = targetRadius >= 128 || shaderFallbackFillActive() || coverageHold ? 2 : 1;
+		if (isActiveTravelFill()) {
+			seedLead++;
+		}
+		return advanceFillBandEnd(seedRadius, targetRadius, seedLead);
+	}
+
+	public static int backgroundFillRadiusChunks(int fallbackRadiusChunks) {
+		int targetRadius = sanitizeFillRadiusChunks(fallbackRadiusChunks);
+		if (targetRadius <= 0) {
+			return 0;
+		}
+
+		int requestRadius = requestedFillRadiusChunks(targetRadius);
+		if (requestRadius >= targetRadius) {
+			return targetRadius;
+		}
+
+		boolean coverageHold = shouldHoldPresentationForCoverage();
+		int extraBands = isActiveTravelFill() || shaderFallbackFillActive() ? 2 : shouldPreferCoarseFill() ? 1 : 0;
+		if (coverageHold && PauCLodShaderContext.isShaderPackInUse()) {
+			extraBands = Math.max(extraBands, isActiveTravelFill() ? 3 : 2);
+		}
+		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode() && !shaderFallbackFillActive() && !isActiveTravelFill()) {
+			extraBands = Math.max(0, extraBands - 1);
+		}
+		return advanceFillBandEnd(requestRadius, targetRadius, extraBands);
+	}
+
+	public static boolean isActiveTravelFill() {
+		return lastSnapMode || lastFastTravel || lastMovementCatchup || PauCClientChunkPriorityScorer.isMovementCatchupActive();
+	}
+
+	private static boolean shaderFallbackFillActive() {
+		return PauCLodShaderContext.isShaderPackInUse() && PauCLodShaderContext.isFallbackActive();
+	}
+
+	public static boolean shouldStabilizeLodPresentation() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.available()) {
+			PauCLodRange range = PauCClientLodGovernor.currentRange();
+			return (range != null && range.enabled()) && PauCEmbeddedLodRuntimeDiagnostics.shouldKeepFillPresentation();
+		}
+		return shouldHoldPresentationForCoverage();
+	}
+
+	public static boolean shouldHoldPresentationForCoverage() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.available()) {
+			return false;
+		}
+
+		long now = System.currentTimeMillis();
+		if (coverageNeedsPresentationHold(snapshot)) {
+			long defaultHoldMs = PauCLodShaderContext.isShaderPackInUse()
+				? (isActiveTravelFill() ? 850L : 650L)
+				: (isActiveTravelFill() ? 500L : 320L);
+			long holdMs = readLong(PRESENTATION_STABILIZE_HOLD_MS_PROPERTY, defaultHoldMs, 0L, 5_000L);
+			lastCoveragePresentationHoldUntilMillis = Math.max(lastCoveragePresentationHoldUntilMillis, now + holdMs);
+			return true;
+		}
+
+		return now < lastCoveragePresentationHoldUntilMillis;
+	}
+
+	private static void requestCoarseFillRenderRefreshIfNeeded() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.preferCoarseFill() && !coverageNeedsPresentationHold(snapshot)) {
+			return;
+		}
+		PauCEmbeddedDhBridge.refreshRenderCacheForCoarseFill(snapshot.ratio(), snapshot.expected(), snapshot.covered());
+	}
+
+	private static void requestCudaReadyRenderRefreshIfNeeded(int readyCells) {
+		if (readyCells <= 0) {
+			return;
+		}
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.available()) {
+			return;
+		}
+		if (!snapshot.preferCoarseFill() && !shaderFallbackFillActive() && !coverageNeedsPresentationHold(snapshot)) {
+			return;
+		}
+		PauCEmbeddedDhBridge.refreshRenderCacheForCoarseFill(snapshot.ratio(), snapshot.expected(), snapshot.covered());
+	}
+
+	private static boolean coverageNeedsPresentationHold(CoverageSnapshot snapshot) {
+		if (!snapshot.available()) {
+			return false;
+		}
+
+		double stabilizeRatio = readDouble(PRESENTATION_STABILIZE_RATIO_PROPERTY, 0.78D, 0.20D, 0.98D);
+		if (snapshot.preferCoarseFill() || snapshot.ratio() < stabilizeRatio) {
+			return true;
+		}
+
+		boolean shaderRuntime = PauCLodShaderContext.isShaderPackInUse() && !PauCLodShaderContext.isFallbackActive();
+		if (!shaderRuntime || snapshot.activeBandExpected() <= 0) {
+			return false;
+		}
+
+		double defaultShaderRatio = isActiveTravelFill() ? 0.90D : 0.84D;
+		double shaderRatio = readDouble(SHADER_PRESENTATION_STABILIZE_RATIO_PROPERTY, defaultShaderRatio, 0.20D, 0.99D);
+		return snapshot.activeBandRatio() < shaderRatio;
+	}
+
+	private static void updateTerrainContinuityHold() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.available()) {
+			PauCLodNearClipOverride.setTerrainContinuityHold(false, "coverage-unavailable");
+			return;
+		}
+
+		boolean continuityRisk = shouldHoldPresentationForCoverage()
+			|| snapshot.ratio() < 0.18D
+			|| snapshot.activeBandRatio() < 0.55D;
+		PauCLodNearClipOverride.setTerrainContinuityHold(continuityRisk, continuityRisk ? "coverage-recovery" : "");
 	}
 
 	private static void refreshPriorities(
@@ -519,6 +803,7 @@ public final class PauCClientFrontierWarmupManager {
 	}
 
 	private static void drainCompletedPlans(ClientLevel level, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		boolean acceleratedWarmup = frame.snapMode() || frame.fastTravel() || frame.movementCatchup();
 		int queuedMeshBudget = Math.max(0, lastBudget.maxQueuedMeshSections() - lastKnownQueuedMeshSections);
 		int hotMeshBudget = Math.max(0, lastBudget.maxHotMeshSections() - lastKnownHotMeshSections);
 		int vramMeshBudget = Math.max(0, lastBudget.maxVramMeshSections() - lastKnownHotMeshSections);
@@ -527,18 +812,18 @@ public final class PauCClientFrontierWarmupManager {
 			PLAN_COMPLETION_BUDGET_MIN,
 			Math.min(
 				baseSectionBudget,
-				frame.snapMode() ? PLAN_COMPLETION_BUDGET_PER_TICK * 3 : PLAN_COMPLETION_BUDGET_PER_TICK * 2
+				acceleratedWarmup ? PLAN_COMPLETION_BUDGET_PER_TICK * 4 : PLAN_COMPLETION_BUDGET_PER_TICK * 3
 			)
 		);
 		baseSectionBudget = scaleWarmupBudget(baseSectionBudget, PauCClientFpsGovernor.warmupAggressionScale(), PLAN_COMPLETION_BUDGET_MIN);
-		baseSectionBudget = PauCClientRenderPrep.limitWarmupSectionBudget(baseSectionBudget, frame.snapMode());
-		int sectionBudget = PauCClientUploadBudgetController.acquireSectionBudget(baseSectionBudget, frame.snapMode());
+		baseSectionBudget = PauCClientRenderPrep.limitWarmupSectionBudget(baseSectionBudget, acceleratedWarmup);
+		int sectionBudget = PauCClientUploadBudgetController.acquireSectionBudget(baseSectionBudget, acceleratedWarmup);
 		if (sectionBudget <= 0) {
 			return;
 		}
 
 		int completionBudget = scaleWarmupBudget(
-			frame.snapMode() ? PLAN_COMPLETION_BUDGET_PER_TICK * 2 : PLAN_COMPLETION_BUDGET_PER_TICK,
+			acceleratedWarmup ? PLAN_COMPLETION_BUDGET_PER_TICK * 2 : PLAN_COMPLETION_BUDGET_PER_TICK,
 			PauCClientFpsGovernor.warmupAggressionScale(),
 			PLAN_COMPLETION_BUDGET_MIN
 		);
@@ -569,34 +854,698 @@ public final class PauCClientFrontierWarmupManager {
 		}
 		if (frame.snapMode()) {
 			planSlots = Math.max(2, (planSlots * 2) / 3);
+		} else if (frame.fastTravel() || frame.movementCatchup()) {
+			planSlots = Math.max(2, (planSlots * 3) / 4);
 		}
 		planSlots = scaleWarmupBudget(planSlots, PauCClientFpsGovernor.warmupAggressionScale(), 1);
 
 		long now = System.currentTimeMillis();
-		double minScore = frame.snapMode() ? 0.34D : (frame.fastTravel() ? 0.40D : 0.45D);
-		if (PauCClientFpsGovernor.isUnderPressure()) {
-			minScore += 0.12D;
+		double minScore = frame.snapMode() ? 0.34D : (frame.movementCatchup() ? 0.36D : (frame.fastTravel() ? 0.40D : 0.45D));
+		if (PauCClientFpsGovernor.isUnderPressure() && !frame.movementCatchup()) {
+			minScore += 0.06D;
 		} else if (PauCClientFpsGovernor.warmupAggressionScale() > 1.0D) {
 			minScore = Math.max(0.30D, minScore - 0.05D);
 		}
 		double adjustedMinScore = minScore;
-		List<WarmChunkRecord> candidates = TRACKED_CHUNKS.values().stream()
-			.filter(record -> record.dimensionId.equals(level.dimension().location().toString()))
-			.filter(record -> record.nonEmptySectionCount > 0)
-			.filter(record -> record.currentDistance <= frame.warmRadiusChunks())
-			.filter(record -> record.lastPriorityScore >= adjustedMinScore)
-			.filter(record -> record.live || record.retained)
-			.filter(record -> !PENDING_PLANS.contains(record.chunkPos.toLong()))
-			.filter(record -> now - record.lastPlannedAtMillis >= PLAN_RESCHEDULE_COOLDOWN_MS)
-			.sorted(Comparator.comparingDouble((WarmChunkRecord record) -> record.lastPriorityScore).reversed()
-				.thenComparingDouble(record -> record.currentRadialDistance)
-				.thenComparingInt(record -> record.currentDistance))
-			.limit(planSlots)
-			.toList();
+		String dimensionId = level.dimension().location().toString();
+		List<WarmChunkRecord> candidates = new ArrayList<>(Math.min(planSlots, 64));
+		for (WarmChunkRecord record : TRACKED_CHUNKS.values()) {
+			if (!record.dimensionId.equals(dimensionId)
+				|| record.nonEmptySectionCount <= 0
+				|| record.currentDistance > frame.warmRadiusChunks()
+				|| record.lastPriorityScore < adjustedMinScore
+				|| (!record.live && !record.retained)
+				|| PENDING_PLANS.contains(record.chunkPos.toLong())
+				|| now - record.lastPlannedAtMillis < PLAN_RESCHEDULE_COOLDOWN_MS) {
+				continue;
+			}
+			addBoundedCandidate(candidates, record, planSlots, PLAN_CANDIDATE_ORDER);
+		}
+		candidates.sort(PLAN_CANDIDATE_ORDER);
 
 		for (WarmChunkRecord candidate : candidates) {
 			schedulePlan(level, frame, candidate);
 		}
+	}
+
+	private static void drainDiskSeedResults(ClientLevel level, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int fillRadius = backgroundFillRadiusChunks(frame.warmRadiusChunks());
+		int batchBudget = readInt(DISK_SEED_DRAIN_BATCHES_PROPERTY, defaultDiskSeedDrainBatches(fillRadius, frame), 1, 32);
+		int chunkBudget = readInt(DISK_SEED_DRAIN_CHUNKS_PROPERTY, defaultDiskSeedDrainChunks(fillRadius, frame), 16, 8192);
+		int drainedChunks = 0;
+		long now = System.currentTimeMillis();
+		String dimensionId = level.dimension().location().toString();
+
+		for (int batch = 0; batch < batchBudget && drainedChunks < chunkBudget; batch++) {
+			List<WarmChunkMetadata> metadataBatch = COMPLETED_DISK_SEEDS.pollFirst();
+			if (metadataBatch == null) {
+				return;
+			}
+
+			for (int index = 0; index < metadataBatch.size(); index++) {
+				WarmChunkMetadata metadata = metadataBatch.get(index);
+				if (drainedChunks >= chunkBudget) {
+					COMPLETED_DISK_SEEDS.addFirst(metadataBatch.subList(index, metadataBatch.size()));
+					return;
+				}
+				if (!metadata.dimensionId().equals(dimensionId)) {
+					continue;
+				}
+				int distance = Math.max(Math.abs(metadata.chunkPos().x - frame.playerChunkX()), Math.abs(metadata.chunkPos().z - frame.playerChunkZ()));
+				if (distance > frame.warmRadiusChunks()) {
+					continue;
+				}
+
+				TRACKED_CHUNKS.compute(metadata.chunkPos().toLong(), (chunkKey, existing) -> {
+					WarmChunkRecord record = existing != null ? existing : WarmChunkRecord.placeholder(metadata.dimensionId(), metadata.chunkPos());
+					if (!record.live) {
+						record.applyMetadata(metadata);
+						record.diskSeeded = true;
+						record.lastSeenAtMillis = now;
+					}
+					return record;
+				});
+				drainedChunks++;
+			}
+		}
+	}
+
+	private static void scheduleDiskSeedScan(ClientLevel level, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		if (!readBoolean(DISK_SEED_ENABLED_PROPERTY, true)) {
+			return;
+		}
+
+		long now = System.currentTimeMillis();
+		long intervalMillis = readLong(DISK_SEED_INTERVAL_MS_PROPERTY, 450L, 50L, 10_000L);
+		if (now - lastDiskSeedScheduleAtMillis < intervalMillis) {
+			return;
+		}
+		lastDiskSeedScheduleAtMillis = now;
+
+		int fillRadius = backgroundFillRadiusChunks(frame.warmRadiusChunks());
+		int maxPendingRegions = readInt(DISK_SEED_MAX_PENDING_REGIONS_PROPERTY, defaultDiskSeedPendingRegions(fillRadius, frame), 1, 32);
+		if (PENDING_DISK_SEED_REGIONS.size() >= maxPendingRegions) {
+			return;
+		}
+
+		int radius = Math.max(0, Math.min(frame.warmRadiusChunks(), fillRadius));
+		int minRegionX = (frame.playerChunkX() - radius) >> 5;
+		int maxRegionX = (frame.playerChunkX() + radius) >> 5;
+		int minRegionZ = (frame.playerChunkZ() - radius) >> 5;
+		int maxRegionZ = (frame.playerChunkZ() + radius) >> 5;
+		int playerRegionX = frame.playerChunkX() >> 5;
+		int playerRegionZ = frame.playerChunkZ() >> 5;
+		long regionTtlMillis = readLong(DISK_SEED_REGION_TTL_MS_PROPERTY, 12_000L, 500L, 120_000L);
+		List<RegionCandidate> candidates = new ArrayList<>();
+
+		for (int regionX = minRegionX; regionX <= maxRegionX; regionX++) {
+			for (int regionZ = minRegionZ; regionZ <= maxRegionZ; regionZ++) {
+				String regionKey = diskSeedRegionKey(frame.dimensionId(), regionX, regionZ);
+				if (PENDING_DISK_SEED_REGIONS.contains(regionKey)) {
+					continue;
+				}
+				Long lastScan = DISK_SEED_REGION_SCAN_TIMES.get(regionKey);
+				if (lastScan != null && now - lastScan < regionTtlMillis) {
+					continue;
+				}
+				int distance = Math.max(Math.abs(regionX - playerRegionX), Math.abs(regionZ - playerRegionZ));
+				candidates.add(new RegionCandidate(regionKey, regionX, regionZ, distance));
+			}
+		}
+
+		if (candidates.isEmpty()) {
+			return;
+		}
+
+		candidates.sort(Comparator.comparingInt(RegionCandidate::distance));
+		int maxRegions = Math.min(
+			readInt(DISK_SEED_MAX_REGIONS_PER_TICK_PROPERTY, defaultDiskSeedRegionsPerTick(fillRadius, frame), 1, 24),
+			Math.max(0, maxPendingRegions - PENDING_DISK_SEED_REGIONS.size())
+		);
+		int chunkLimit = readInt(DISK_SEED_MAX_CHUNKS_PER_REGION_PROPERTY, defaultDiskSeedChunkLimit(fillRadius, frame), 8, 2048);
+		Path sessionRoot = PauCClientWarmChunkDiskCache.resolveSessionRoot(level);
+
+		for (int index = 0; index < maxRegions && index < candidates.size(); index++) {
+			RegionCandidate candidate = candidates.get(index);
+			if (!PENDING_DISK_SEED_REGIONS.add(candidate.key())) {
+				continue;
+			}
+			DISK_SEED_REGION_SCAN_TIMES.put(candidate.key(), now);
+			String description = "client warm cache seed " + frame.dimensionId() + " region " + candidate.regionX() + "," + candidate.regionZ();
+			CompletableFuture<List<WarmChunkMetadata>> future = PauCScheduler.submitIo(
+				PauCTaskPriority.BACKGROUND,
+				description,
+				() -> PauCClientWarmChunkDiskCache.readRegion(
+					sessionRoot,
+					frame.dimensionId(),
+					candidate.regionX(),
+					candidate.regionZ(),
+					frame.playerChunkX(),
+					frame.playerChunkZ(),
+					frame.warmRadiusChunks(),
+					chunkLimit
+				)
+			);
+			future.whenComplete((metadata, throwable) -> {
+				PENDING_DISK_SEED_REGIONS.remove(candidate.key());
+				if (throwable != null || metadata == null || metadata.isEmpty()) {
+					return;
+				}
+				COMPLETED_DISK_SEEDS.addLast(metadata);
+			});
+		}
+	}
+
+	private static int defaultDiskSeedPendingRegions(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int base = fillRadius >= 192 ? 16 : fillRadius >= 128 ? 12 : fillRadius >= 96 ? 8 : 5;
+		return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? Math.min(24, base + 4) : base;
+	}
+
+	private static int defaultDiskSeedRegionsPerTick(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int base = fillRadius >= 192 ? 8 : fillRadius >= 128 ? 6 : fillRadius >= 64 ? 4 : 2;
+		return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? Math.min(12, base + 3) : base;
+	}
+
+	private static int defaultDiskSeedChunkLimit(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int base = fillRadius >= 192 ? 640 : fillRadius >= 128 ? 448 : fillRadius >= 64 ? 224 : 128;
+		return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? Math.min(960, base + 192) : base;
+	}
+
+	private static int defaultDiskSeedDrainBatches(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int base = fillRadius >= 192 ? 8 : fillRadius >= 128 ? 6 : fillRadius >= 64 ? 4 : 3;
+		return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? Math.min(12, base + 2) : base;
+	}
+
+	private static int defaultDiskSeedDrainChunks(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int base = fillRadius >= 192 ? 2048 : fillRadius >= 128 ? 1536 : fillRadius >= 64 ? 768 : 384;
+		return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? Math.min(4096, base + 768) : base;
+	}
+
+	private static void drainCompletedCudaPreparations(ClientLevel level) {
+		int drainBudget = readInt(CUDA_WORLD_CACHE_DRAIN_CELLS_PROPERTY, defaultCudaDrainCells(), 16, 4096);
+		int persistBudget = readInt(CUDA_WORLD_CACHE_PERSIST_BATCH_CELLS_PROPERTY, defaultCudaPersistCells(drainBudget), 16, 4096);
+		int consumed = 0;
+		int applied = 0;
+		int renderReady = 0;
+		int stale = 0;
+		long now = System.currentTimeMillis();
+		List<WarmChunkMetadata> metadataBatch = new ArrayList<>(Math.min(drainBudget, persistBudget));
+
+		while (consumed < drainBudget) {
+			CudaPreparedBatch batch = COMPLETED_CUDA_PREPARATIONS.pollFirst();
+			if (batch == null) {
+				break;
+			}
+			List<CudaPreparedChunk> chunks = batch.chunks();
+			if (batch.sessionGeneration() != SESSION_GENERATION.get()) {
+				stale += chunks.size();
+				consumed += chunks.size();
+				continue;
+			}
+
+			int index = 0;
+			for (; index < chunks.size() && consumed < drainBudget; index++) {
+				CudaPreparedChunk prepared = chunks.get(index);
+				consumed++;
+				WarmChunkRecord record = TRACKED_CHUNKS.get(prepared.chunkPos().toLong());
+				if (record == null || !record.dimensionId.equals(prepared.dimensionId()) || record.sourceFingerprint != prepared.sourceFingerprint()) {
+					stale++;
+					continue;
+				}
+				record.applyCudaPreparation(prepared);
+				if (record.lodCacheState >= LOD_CACHE_STATE_RENDER_READY) {
+					renderReady++;
+				}
+				if (metadataBatch.size() < persistBudget) {
+					metadataBatch.add(record.toMetadata(now));
+				}
+				applied++;
+			}
+
+			if (index < chunks.size()) {
+				COMPLETED_CUDA_PREPARATIONS.addFirst(new CudaPreparedBatch(
+					batch.sessionGeneration(),
+					batch.shaderRuntime(),
+					batch.shaderFallback(),
+					batch.cudaAvailable(),
+					batch.cudaProfile(),
+					batch.preparedAtMillis(),
+					new ArrayList<>(chunks.subList(index, chunks.size()))
+				));
+				break;
+			}
+		}
+
+		if (!metadataBatch.isEmpty()) {
+			PauCClientWarmChunkDiskCache.persistAll(level, metadataBatch);
+		}
+		if (applied > 0) {
+			lastCudaCompletedCells += applied;
+			requestCudaReadyRenderRefreshIfNeeded(renderReady);
+			logCudaPreparationStatus("drained:" + applied + "/ready=" + renderReady + "/stale=" + stale);
+		}
+	}
+
+	private static void scheduleCudaPreparations(ClientLevel level, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		if (!readBoolean(CUDA_WORLD_CACHE_ENABLED_PROPERTY, true)) {
+			lastCudaPreparationStatus = "disabled";
+			return;
+		}
+		int priorityRadius = activeFillRadiusChunks(frame.warmRadiusChunks());
+		int requestRadius = requestedFillRadiusChunks(frame.warmRadiusChunks());
+		int fillRadius = backgroundFillRadiusChunks(frame.warmRadiusChunks());
+		int backgroundExtra = readInt(CUDA_WORLD_CACHE_BACKGROUND_EXTRA_PROPERTY, defaultCudaBackgroundExtra(requestRadius, frame), 0, 128);
+		int cudaRadius = Math.min(frame.warmRadiusChunks(), fillRadius + backgroundExtra);
+		boolean shaderFallback = shaderFallbackFillActive();
+		int maxPending = readInt(CUDA_WORLD_CACHE_MAX_PENDING_PROPERTY, defaultCudaMaxPending(requestRadius, frame), 1, shaderFallback ? 24 : 14);
+		if (countPendingCudaBatches() >= maxPending) {
+			lastCudaPreparationStatus = "pending-full:" + PENDING_CUDA_PREP.size() + "/" + maxPending;
+			return;
+		}
+
+		long now = System.currentTimeMillis();
+		long intervalMillis = readLong(CUDA_WORLD_CACHE_INTERVAL_MS_PROPERTY, defaultCudaIntervalMillis(requestRadius, frame), 20L, 10_000L);
+		if (now - lastCudaPreparationScheduleAtMillis < intervalMillis) {
+			return;
+		}
+
+		int samplesPerFeature = 3;
+		int minimumFeatures = Math.max(1, (PauCCudaWorker.preferredTerrainBatchSize() + samplesPerFeature - 1) / samplesPerFeature);
+		int batchFeatures = readInt(CUDA_WORLD_CACHE_BATCH_FEATURES_PROPERTY, defaultCudaBatchFeatures(minimumFeatures, requestRadius, frame), 8, 2048);
+		int minimumCandidateCount = minimumCudaCandidateCount(minimumFeatures, batchFeatures, requestRadius, frame);
+		long retryMillis = readLong(CUDA_WORLD_CACHE_RETRY_MS_PROPERTY, 5_000L, 500L, 120_000L);
+		double minScore = readDouble(CUDA_WORLD_CACHE_MIN_SCORE_PROPERTY, shouldPreferCoarseFill() || shaderFallback ? 0.0D : 0.04D, 0.0D, 1.0D);
+		Comparator<WarmChunkRecord> cudaCandidateOrder = (left, right) -> compareCudaCandidate(left, right, priorityRadius);
+		String dimensionId = level.dimension().location().toString();
+		List<WarmChunkRecord> candidates = new ArrayList<>(Math.min(batchFeatures, 128));
+		for (WarmChunkRecord record : TRACKED_CHUNKS.values()) {
+			if (!record.dimensionId.equals(dimensionId)
+				|| record.nonEmptySectionCount <= 0
+				|| record.currentDistance > cudaRadius
+				|| !(record.lastPriorityScore >= minScore
+					|| record.currentDistance <= frame.renderDistanceChunks() + 2
+					|| record.currentDistance <= priorityRadius
+					|| record.currentDistance <= requestRadius
+					|| (shaderFallback && record.currentDistance <= fillRadius)
+					|| record.ahead)
+				|| PENDING_CUDA_PREP.contains(record.chunkPos.toLong())
+				|| !record.needsCudaPreparation(now, retryMillis)) {
+				continue;
+			}
+			addBoundedCandidate(candidates, record, batchFeatures, cudaCandidateOrder);
+		}
+		candidates.sort(cudaCandidateOrder);
+
+		if (candidates.size() < minimumCandidateCount) {
+			lastCudaPreparationStatus = "waiting:candidates=" + candidates.size() + "/" + minimumCandidateCount + ", radius=" + cudaRadius + ", request=" + requestRadius;
+			logCudaPreparationStatus(lastCudaPreparationStatus);
+			return;
+		}
+
+		List<CudaPrepRecord> workRecords = new ArrayList<>(candidates.size());
+		for (WarmChunkRecord candidate : candidates) {
+			long chunkKey = candidate.chunkPos.toLong();
+			if (!PENDING_CUDA_PREP.add(chunkKey)) {
+				continue;
+			}
+			candidate.lastCudaAttemptAtMillis = now;
+			workRecords.add(candidate.toCudaPrepRecord(requestRadius, fillRadius));
+		}
+		if (workRecords.isEmpty()) {
+			lastCudaPreparationStatus = "waiting:dedupe-empty";
+			return;
+		}
+
+		lastCudaPreparationScheduleAtMillis = now;
+		lastCudaScheduledCells += workRecords.size();
+		lastCudaPreparationStatus = "scheduled:cells=" + workRecords.size() + ", radius=" + cudaRadius + ", band=" + priorityRadius + ", request=" + requestRadius;
+		logCudaPreparationStatus(lastCudaPreparationStatus);
+		CudaPrepWorkItem workItem = new CudaPrepWorkItem(
+			SESSION_GENERATION.get(),
+			frame.minSectionY(),
+			samplesPerFeature,
+			PauCLodShaderContext.isShaderPackInUse(),
+			shaderFallback,
+			workRecords
+		);
+		String description = "client world LOD CUDA cache " + workRecords.size() + " cells";
+		PauCTaskPriority taskPriority = shaderFallback || shouldPreferCoarseFill() || isActiveTravelFill()
+			? PauCTaskPriority.ACTIVE
+			: PauCTaskPriority.BACKGROUND;
+		CompletableFuture<CudaPreparedBatch> future = PauCScheduler.submitClientPrepare(taskPriority, description, () -> prepareCudaBatch(workItem));
+		future.whenComplete((preparedBatch, throwable) -> {
+			for (CudaPrepRecord record : workRecords) {
+				PENDING_CUDA_PREP.remove(record.chunkPos().toLong());
+			}
+			if (throwable != null) {
+				lastCudaPreparationStatus = "error:" + throwable.getClass().getSimpleName();
+				logCudaPreparationStatus(lastCudaPreparationStatus);
+				LOGGER.debug("PauC world LOD CUDA cache preparation failed.", throwable);
+				return;
+			}
+			if (preparedBatch == null || preparedBatch.chunks().isEmpty() || workItem.sessionGeneration() != SESSION_GENERATION.get()) {
+				return;
+			}
+			COMPLETED_CUDA_PREPARATIONS.addLast(preparedBatch);
+			lastCudaPreparationStatus = "ready:" + preparedBatch.chunks().size() + " cells";
+			logCudaPreparationStatus(lastCudaPreparationStatus);
+		});
+	}
+
+	private static CudaPreparedBatch prepareCudaBatch(CudaPrepWorkItem workItem) {
+		List<CudaPrepRecord> records = workItem.records();
+		if (records.isEmpty()) {
+			return new CudaPreparedBatch(
+				workItem.sessionGeneration(),
+				workItem.shaderRuntime(),
+				workItem.shaderFallback(),
+				false,
+				"empty",
+				System.currentTimeMillis(),
+				List.of()
+			);
+		}
+
+		int samplesPerFeature = workItem.samplesPerFeature();
+		int[] sums = new int[records.size() * samplesPerFeature];
+		int[] counts = new int[sums.length];
+		float[] cpuFallback = new float[records.size()];
+		long cpuStarted = System.nanoTime();
+		for (int index = 0; index < records.size(); index++) {
+			CudaPrepRecord record = records.get(index);
+			int minSectionY = sectionIndexToY(workItem.minSectionY(), record.terrainMinSectionIndex(), record.surfaceSectionIndex());
+			int surfaceSectionY = sectionIndexToY(workItem.minSectionY(), record.surfaceSectionIndex(), record.terrainMaxSectionIndex());
+			int maxSectionY = sectionIndexToY(workItem.minSectionY(), record.terrainMaxSectionIndex(), record.surfaceSectionIndex());
+			int offset = index * samplesPerFeature;
+			sums[offset] = minSectionY;
+			counts[offset] = 1;
+			sums[offset + 1] = surfaceSectionY;
+			counts[offset + 1] = 1;
+			sums[offset + 2] = maxSectionY;
+			counts[offset + 2] = 1;
+			cpuFallback[index] = (minSectionY + surfaceSectionY + maxSectionY) / 3.0F;
+		}
+		long cpuMicros = Math.max(1L, (System.nanoTime() - cpuStarted) / 1_000L);
+		PauCLodCudaBridge.Result result = PauCCudaWorker.averageSeamHeights(sums, counts, samplesPerFeature, cpuFallback, cpuMicros);
+		float[] preparedHeights = result.heights() != null && result.heights().length == records.size() ? result.heights() : cpuFallback;
+		boolean cudaAvailable = result.available();
+		long preparedAtMillis = System.currentTimeMillis();
+		lastCudaPreparationStatus = (cudaAvailable ? "cuda" : "fallback") + ":" + result.status() + "/cells=" + records.size();
+
+		List<CudaPreparedChunk> prepared = new ArrayList<>(records.size());
+		for (int index = 0; index < records.size(); index++) {
+			CudaPrepRecord record = records.get(index);
+			int fineRadius = Math.max(8, record.requestRadius() / 3);
+			int qualityTier = !cudaAvailable
+				? LOD_QUALITY_COARSE
+				: record.currentDistance() <= fineRadius
+					? LOD_QUALITY_FINE
+					: record.currentDistance() <= record.requestRadius()
+						? LOD_QUALITY_MEDIUM
+						: LOD_QUALITY_COARSE;
+			int cacheState = cudaAvailable && Float.isFinite(preparedHeights[index])
+				? LOD_CACHE_STATE_RENDER_READY
+				: LOD_CACHE_STATE_CPU_PREPARED;
+			prepared.add(new CudaPreparedChunk(
+				record.dimensionId(),
+				record.chunkPos(),
+				record.sourceFingerprint(),
+				preparedHeights[index],
+				cudaAvailable,
+				result.status(),
+				qualityTier,
+				cacheState,
+				record.currentDistance(),
+				record.priorityScore(),
+				record.ahead(),
+				workItem.shaderRuntime(),
+				workItem.shaderFallback(),
+				preparedAtMillis
+			));
+		}
+		return new CudaPreparedBatch(
+			workItem.sessionGeneration(),
+			workItem.shaderRuntime(),
+			workItem.shaderFallback(),
+			cudaAvailable,
+			result.status(),
+			preparedAtMillis,
+			prepared
+		);
+	}
+
+	private static int sectionIndexToY(int minSectionY, int preferredIndex, int fallbackIndex) {
+		int index = preferredIndex >= 0 ? preferredIndex : fallbackIndex;
+		return minSectionY + Math.max(0, index);
+	}
+
+	private static int countPendingCudaBatches() {
+		int preferredBatchSize = Math.max(1, PauCCudaWorker.preferredTerrainBatchSize() / 3);
+		return Math.max(0, (PENDING_CUDA_PREP.size() + preferredBatchSize - 1) / preferredBatchSize);
+	}
+
+	private static int defaultCudaMaxPending(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		boolean shaderFallback = shaderFallbackFillActive();
+		int base = shaderFallback ? (fillRadius >= 192 ? 16 : fillRadius >= 128 ? 12 : 7) : fillRadius >= 192 ? 8 : fillRadius >= 128 ? 6 : 3;
+		int travelCap = shaderFallback ? 24 : 14;
+		if (frame.fpsFirstVanilla() && !shaderFallback) {
+			base = Math.max(2, base - (frame.fastTravel() || frame.snapMode() || frame.movementCatchup() ? 1 : 2));
+			travelCap = Math.min(travelCap, 8);
+		}
+		return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? Math.min(travelCap, base + 3) : base;
+	}
+
+	private static long defaultCudaIntervalMillis(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		if (shaderFallbackFillActive()) {
+			return (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? 20L : 30L;
+		}
+		if (frame.fpsFirstVanilla()) {
+			if (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) {
+				return 40L;
+			}
+			return fillRadius >= 128 ? 70L : 95L;
+		}
+		if (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) {
+			return 30L;
+		}
+		return fillRadius >= 128 ? 45L : 70L;
+	}
+
+	private static int defaultCudaBatchFeatures(int minimumFeatures, int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		int base = fillRadius >= 192 ? 384 : fillRadius >= 128 ? 256 : fillRadius >= 64 ? 128 : 64;
+		if (shaderFallbackFillActive()) {
+			base = Math.max(base, fillRadius >= 192 ? 1024 : fillRadius >= 128 ? 768 : 256);
+		}
+		if (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) {
+			base = Math.min(shaderFallbackFillActive() ? 1280 : 640, base + 192);
+		}
+		if (frame.fpsFirstVanilla() && !shaderFallbackFillActive()) {
+			double scale = (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) ? 0.75D : 0.55D;
+			base = Math.max(minimumFeatures, (int) Math.floor(base * scale));
+		}
+		return Math.max(minimumFeatures, base);
+	}
+
+	private static int minimumCudaCandidateCount(
+		int minimumFeatures,
+		int batchFeatures,
+		int requestRadius,
+		PauCClientChunkPriorityScorer.PriorityFrame frame
+	) {
+		int normalMinimum = Math.min(minimumFeatures, batchFeatures);
+		if (requestRadius <= FILL_BANDS[0]
+			|| shouldPreferCoarseFill()
+			|| frame.fastTravel()
+			|| frame.snapMode()
+			|| frame.movementCatchup()) {
+			return 1;
+		}
+		return normalMinimum;
+	}
+
+	private static int defaultCudaBackgroundExtra(int fillRadius, PauCClientChunkPriorityScorer.PriorityFrame frame) {
+		if (shaderFallbackFillActive()) {
+			return fillRadius >= 192 ? 128 : fillRadius >= 128 ? 96 : 64;
+		}
+		if (frame.fpsFirstVanilla()) {
+			if (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) {
+				return fillRadius >= 128 ? 48 : 24;
+			}
+			return fillRadius >= 128 ? 24 : 12;
+		}
+		if (frame.fastTravel() || frame.snapMode() || frame.movementCatchup()) {
+			return fillRadius >= 128 ? 96 : 48;
+		}
+		return fillRadius >= 128 ? 48 : 24;
+	}
+
+	private static int defaultCudaDrainCells() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		boolean shaderFallback = shaderFallbackFillActive();
+		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
+		int base = shaderFallback ? 1536 : fpsFirstVanilla ? 320 : 512;
+		if (snapshot.available() && snapshot.activeBandRatio() < 0.35D) {
+			base += shaderFallback ? 1024 : fpsFirstVanilla ? 192 : 512;
+		}
+		if (isActiveTravelFill()) {
+			base += shaderFallback ? 1024 : fpsFirstVanilla ? 256 : 512;
+		}
+		return Math.min(shaderFallback ? 4096 : fpsFirstVanilla ? 1024 : 2048, base);
+	}
+
+	private static int defaultCudaPersistCells(int drainBudget) {
+		int fallback = shaderFallbackFillActive() ? 1536 : 768;
+		return Math.min(drainBudget, fallback);
+	}
+
+	private static int firstFillBandEnd(int targetDistance) {
+		int sanitizedTarget = sanitizeFillRadiusChunks(targetDistance);
+		return Math.min(sanitizedTarget, FILL_BANDS[0]);
+	}
+
+	private static int sanitizeFillRadiusChunks(int targetDistance) {
+		return Math.max(0, Math.min(PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS, targetDistance));
+	}
+
+	private static int requestedFillBandLead(CoverageSnapshot snapshot) {
+		int lead = isActiveTravelFill() ? 3 : 2;
+		if (shaderFallbackFillActive()) {
+			lead++;
+		}
+		if (snapshot.activeBandRatio() >= 0.08D) {
+			lead++;
+		}
+		if (snapshot.activeBandRatio() >= 0.22D || snapshot.ratio() >= 0.10D) {
+			lead++;
+		}
+		if (snapshot.activeBandRatio() >= 0.45D || snapshot.ratio() >= 0.24D) {
+			lead++;
+		}
+		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode() && !shaderFallbackFillActive()) {
+			lead -= isActiveTravelFill() ? 1 : 2;
+			if (snapshot.activeBandRatio() < 0.30D && snapshot.ratio() < 0.18D) {
+				lead = Math.min(lead, isActiveTravelFill() ? 2 : 1);
+			}
+			lead = Math.min(lead, 3);
+		}
+		return Math.max(1, Math.min(FILL_BANDS.length, lead));
+	}
+
+	private static int advanceFillBandEnd(int currentRadius, int targetRadius, int bandLead) {
+		int radius = Math.max(0, Math.min(targetRadius, currentRadius));
+		if (radius >= targetRadius || bandLead <= 0) {
+			return radius;
+		}
+		int remaining = bandLead;
+		for (int band : FILL_BANDS) {
+			if (band <= radius) {
+				continue;
+			}
+			radius = Math.min(targetRadius, band);
+			remaining--;
+			if (remaining <= 0 || radius >= targetRadius) {
+				return radius;
+			}
+		}
+		return targetRadius;
+	}
+
+	private static int fillBandRank(int distanceChunks) {
+		for (int index = 0; index < FILL_BANDS.length; index++) {
+			if (distanceChunks <= FILL_BANDS[index]) {
+				return index;
+			}
+		}
+		return FILL_BANDS.length;
+	}
+
+	private static int normalizeCacheState(int lodCacheState, float cudaTerrainSectionY) {
+		if (lodCacheState >= LOD_CACHE_STATE_CUDA_PREPARED && Float.isFinite(cudaTerrainSectionY)) {
+			return LOD_CACHE_STATE_RENDER_READY;
+		}
+		return Math.max(LOD_CACHE_STATE_DIRTY, Math.min(LOD_CACHE_STATE_RENDER_READY, lodCacheState));
+	}
+
+	private static void logCudaPreparationStatus(String status) {
+		long now = System.currentTimeMillis();
+		long intervalMs = readLong(CUDA_WORLD_CACHE_LOG_INTERVAL_MS_PROPERTY, 5_000L, 1_000L, 60_000L);
+		if (now - lastCudaPreparationLogAtMillis < intervalMs) {
+			return;
+		}
+		lastCudaPreparationLogAtMillis = now;
+		LOGGER.info(
+			"PauC world LOD CUDA cache: status={}, scheduledCells={}, completedCells={}, pendingCells={}, readyCells={}, {}.",
+			status,
+			lastCudaScheduledCells,
+			lastCudaCompletedCells,
+			PENDING_CUDA_PREP.size(),
+			countReadyCudaCells(),
+			PauCCudaWorker.describeMetrics()
+		);
+	}
+
+	private static int countReadyCudaCells() {
+		int cells = 0;
+		for (CudaPreparedBatch batch : COMPLETED_CUDA_PREPARATIONS) {
+			cells += batch.chunks().size();
+		}
+		return cells;
+	}
+
+	private static String diskSeedRegionKey(String dimensionId, int regionX, int regionZ) {
+		return dimensionId + ":" + regionX + ":" + regionZ;
+	}
+
+	private static String describeWorldCacheState() {
+		int diskSeeded = 0;
+		int metadataClean = 0;
+		int cpuPrepared = 0;
+		int cudaPrepared = 0;
+		int renderReady = 0;
+		int dirty = 0;
+		for (WarmChunkRecord record : TRACKED_CHUNKS.values()) {
+			if (record.diskSeeded) {
+				diskSeeded++;
+			}
+			if (record.lodCacheState == LOD_CACHE_STATE_DIRTY) {
+				dirty++;
+			} else if (record.lodCacheState >= LOD_CACHE_STATE_RENDER_READY) {
+				renderReady++;
+			} else if (record.lodCacheState == LOD_CACHE_STATE_CUDA_PREPARED) {
+				cudaPrepared++;
+			} else if (record.lodCacheState == LOD_CACHE_STATE_CPU_PREPARED) {
+				cpuPrepared++;
+			} else if (record.lodCacheState == LOD_CACHE_STATE_METADATA_CLEAN) {
+				metadataClean++;
+			}
+		}
+		return "worldCache[diskSeeded="
+			+ diskSeeded
+			+ ", clean="
+			+ metadataClean
+			+ ", cpuPrepared="
+			+ cpuPrepared
+			+ ", cudaPrepared="
+			+ cudaPrepared
+			+ ", renderReady="
+			+ renderReady
+			+ ", dirty="
+			+ dirty
+			+ ", diskPending="
+			+ PENDING_DISK_SEED_REGIONS.size()
+			+ ", diskReady="
+			+ COMPLETED_DISK_SEEDS.size()
+			+ ", cudaPending="
+			+ PENDING_CUDA_PREP.size()
+			+ ", cudaReady="
+			+ countReadyCudaCells()
+			+ ", cudaScheduled="
+			+ lastCudaScheduledCells
+			+ ", cudaCompleted="
+			+ lastCudaCompletedCells
+			+ ", lastCuda="
+			+ lastCudaPreparationStatus
+			+ "]";
 	}
 
 	private static void schedulePlan(ClientLevel level, PauCClientChunkPriorityScorer.PriorityFrame frame, WarmChunkRecord record) {
@@ -613,13 +1562,16 @@ public final class PauCClientFrontierWarmupManager {
 			record.chunkPos,
 			record.nonEmptySectionMask,
 			record.nonEmptySectionCount,
+			record.structureSectionMask,
+			record.fluidSectionMask,
+			record.surfaceSectionIndex,
 			record.lastPriorityScore,
 			frame.playerSectionY(),
 			frame.minSectionY(),
 			frame.maxSectionY(),
 			sessionRoot
 		);
-		PauCTaskPriority priority = record.lastPriorityScore >= 0.75D ? PauCTaskPriority.FOV : PauCTaskPriority.ACTIVE;
+		PauCTaskPriority priority = frame.snapMode() || frame.fastTravel() || frame.movementCatchup() || record.lastPriorityScore >= 0.75D ? PauCTaskPriority.FOV : PauCTaskPriority.ACTIVE;
 		String description = "client warm " + record.chunkPos + " " + record.dimensionId;
 		CompletableFuture<PreparedWarmPlan> future = PauCScheduler.submitClientPrepare(priority, description, () -> preparePlan(workItem));
 		future.whenComplete((plan, throwable) -> {
@@ -638,11 +1590,17 @@ public final class PauCClientFrontierWarmupManager {
 	private static PreparedWarmPlan preparePlan(WarmChunkWorkItem workItem) {
 		int sectionMask = workItem.nonEmptySectionMask();
 		int nonEmptySections = workItem.nonEmptySectionCount();
+		int structureSectionMask = workItem.structureSectionMask();
+		int fluidSectionMask = workItem.fluidSectionMask();
+		int surfaceSectionIndex = workItem.surfaceSectionIndex();
 		if (sectionMask == 0 || nonEmptySections <= 0) {
 			WarmChunkMetadata diskMetadata = PauCClientWarmChunkDiskCache.read(workItem.sessionRoot(), workItem.dimensionId(), workItem.chunkPos());
 			if (diskMetadata != null) {
 				sectionMask = diskMetadata.nonEmptySectionMask();
 				nonEmptySections = diskMetadata.nonEmptySectionCount();
+				structureSectionMask = diskMetadata.structureSectionMask();
+				fluidSectionMask = diskMetadata.fluidSectionMask();
+				surfaceSectionIndex = diskMetadata.surfaceSectionIndex();
 			}
 		}
 
@@ -659,16 +1617,42 @@ public final class PauCClientFrontierWarmupManager {
 		}
 
 		int playerSectionY = workItem.playerSectionY();
-		orderedSections.sort(Comparator.comparingInt(sectionY -> Math.abs(sectionY - playerSectionY)));
+		int minSectionY = workItem.minSectionY();
+		int surfaceSectionY = surfaceSectionIndex >= 0 ? minSectionY + surfaceSectionIndex : playerSectionY;
+		int finalStructureSectionMask = structureSectionMask;
+		int finalFluidSectionMask = fluidSectionMask;
+		orderedSections.sort(Comparator
+			.comparingInt((Integer sectionY) -> preloadRank(sectionY, minSectionY, surfaceSectionY, playerSectionY, finalStructureSectionMask, finalFluidSectionMask))
+			.thenComparingInt(sectionY -> Math.abs(sectionY - playerSectionY))
+			.thenComparingInt(sectionY -> Math.abs(sectionY - surfaceSectionY)));
 		return new PreparedWarmPlan(
 			workItem.sessionGeneration(),
 			workItem.dimensionId(),
 			workItem.chunkPos(),
 			orderedSections,
+			structureSectionMask,
+			fluidSectionMask,
+			surfaceSectionY,
 			workItem.priorityScore(),
 			PauCClientMemoryBudgetController.estimateRamBytes(nonEmptySections),
 			PauCClientMemoryBudgetController.estimateGpuSectionCost(nonEmptySections)
 		);
+	}
+
+	private static int preloadRank(int sectionY, int minSectionY, int surfaceSectionY, int playerSectionY, int structureSectionMask, int fluidSectionMask) {
+		int sectionIndex = sectionY - minSectionY;
+		boolean structureSection = sectionIndex >= 0 && sectionIndex < 32 && (structureSectionMask & (1 << sectionIndex)) != 0;
+		boolean fluidSection = sectionIndex >= 0 && sectionIndex < 32 && (fluidSectionMask & (1 << sectionIndex)) != 0;
+		if (sectionY == surfaceSectionY || structureSection) {
+			return 0;
+		}
+		if (fluidSection) {
+			return 1;
+		}
+		if (Math.abs(sectionY - playerSectionY) <= 1) {
+			return 2;
+		}
+		return 3;
 	}
 
 	private static int scaleWarmupBudget(int budget, double scale, int minimum) {
@@ -682,20 +1666,26 @@ public final class PauCClientFrontierWarmupManager {
 	private static void pruneTrackedRecords() {
 		long now = System.currentTimeMillis();
 		if (TRACKED_CHUNKS.size() <= lastBudget.maxTrackedChunks()) {
-			TRACKED_CHUNKS.entrySet().removeIf(entry -> !entry.getValue().live && !entry.getValue().retained && now - entry.getValue().lastSeenAtMillis > STALE_RECORD_TTL_MS);
+			TRACKED_CHUNKS.entrySet().removeIf(entry -> !entry.getValue().live
+				&& !entry.getValue().retained
+				&& entry.getValue().lodCacheState < LOD_CACHE_STATE_CUDA_PREPARED
+				&& now - entry.getValue().lastSeenAtMillis > STALE_RECORD_TTL_MS);
 			return;
 		}
 
-		List<Map.Entry<Long, WarmChunkRecord>> candidates = TRACKED_CHUNKS.entrySet().stream()
-			.filter(entry -> !entry.getValue().live && !entry.getValue().retained)
-			.sorted(Comparator
-				.comparingDouble((Map.Entry<Long, WarmChunkRecord> entry) -> entry.getValue().lastPriorityScore)
-				.thenComparingLong(entry -> entry.getValue().lastSeenAtMillis))
-			.toList();
-
 		int toRemove = TRACKED_CHUNKS.size() - lastBudget.maxTrackedChunks();
-		for (int i = 0; i < toRemove && i < candidates.size(); i++) {
-			TRACKED_CHUNKS.remove(candidates.get(i).getKey());
+		List<Map.Entry<Long, WarmChunkRecord>> candidates = new ArrayList<>(Math.min(toRemove, 256));
+		for (Map.Entry<Long, WarmChunkRecord> entry : TRACKED_CHUNKS.entrySet()) {
+			WarmChunkRecord record = entry.getValue();
+			if (record.live || record.retained) {
+				continue;
+			}
+			addBoundedCandidate(candidates, entry, toRemove, TRACKED_RECORD_PRUNE_ORDER);
+		}
+		candidates.sort(TRACKED_RECORD_PRUNE_ORDER);
+
+		for (Map.Entry<Long, WarmChunkRecord> candidate : candidates) {
+			TRACKED_CHUNKS.remove(candidate.getKey(), candidate.getValue());
 		}
 	}
 
@@ -707,6 +1697,11 @@ public final class PauCClientFrontierWarmupManager {
 		COMPLETED_PLANS.clear();
 		PauCClientRenderPrep.reset();
 		PauCClientUploadBudgetController.reset();
+		PENDING_DISK_SEED_REGIONS.clear();
+		DISK_SEED_REGION_SCAN_TIMES.clear();
+		COMPLETED_DISK_SEEDS.clear();
+		PENDING_CUDA_PREP.clear();
+		COMPLETED_CUDA_PREPARATIONS.clear();
 		lastKnownDimension = null;
 		lastKnownRetainedRamBytes = 0L;
 		lastKnownRetainedChunks = 0;
@@ -715,6 +1710,16 @@ public final class PauCClientFrontierWarmupManager {
 		zeroVisibleChunkStreak = 0;
 		lastSnapMode = false;
 		lastFastTravel = false;
+		lastMovementCatchup = false;
+		lastCoverageSnapshot = CoverageSnapshot.unavailable();
+		PauCLodNearClipOverride.setTerrainContinuityHold(false, "session-reset");
+		lastCoveragePresentationHoldUntilMillis = 0L;
+		lastDiskSeedScheduleAtMillis = 0L;
+		lastCudaPreparationScheduleAtMillis = 0L;
+		lastCudaPreparationLogAtMillis = 0L;
+		lastCudaPreparationStatus = "not-run";
+		lastCudaScheduledCells = 0;
+		lastCudaCompletedCells = 0;
 	}
 
 	public record WarmChunkMetadata(
@@ -722,17 +1727,48 @@ public final class PauCClientFrontierWarmupManager {
 		ChunkPos chunkPos,
 		int nonEmptySectionMask,
 		int nonEmptySectionCount,
+		int structureSectionMask,
+		int fluidSectionMask,
+		int surfaceSectionIndex,
+		int terrainMinSectionIndex,
+		int terrainMaxSectionIndex,
+		int cacheVersion,
+		long sourceFingerprint,
+		int lodCacheState,
+		int lodQualityTier,
+		float cudaTerrainSectionY,
+		long cudaPreparedAtMillis,
+		String cudaProfile,
 		long savedAtMillis
 	) {
 		public static WarmChunkMetadata capture(ClientLevel level, LevelChunk chunk) {
 			LevelChunkSection[] sections = chunk.getSections();
 			int sectionMask = 0;
+			int fluidSectionMask = 0;
 			int nonEmptySections = 0;
+			int surfaceSectionIndex = -1;
+			int minSectionIndex = -1;
+			int maxSectionIndex = -1;
 			for (int index = 0; index < sections.length && index < 32; index++) {
 				LevelChunkSection section = sections[index];
 				if (section != null && !section.hasOnlyAir()) {
 					sectionMask |= 1 << index;
 					nonEmptySections++;
+					if (minSectionIndex < 0) {
+						minSectionIndex = index;
+					}
+					maxSectionIndex = index;
+					surfaceSectionIndex = index;
+					if (section.maybeHas(blockState -> !blockState.getFluidState().isEmpty())) {
+						fluidSectionMask |= 1 << index;
+					}
+				}
+			}
+			int structureSectionMask = 0;
+			for (BlockPos blockPos : chunk.getBlockEntities().keySet()) {
+				int sectionIndex = (blockPos.getY() >> 4) - level.getMinSection();
+				if (sectionIndex >= 0 && sectionIndex < 32) {
+					structureSectionMask |= 1 << sectionIndex;
 				}
 			}
 			return new WarmChunkMetadata(
@@ -740,8 +1776,59 @@ public final class PauCClientFrontierWarmupManager {
 				chunk.getPos(),
 				sectionMask,
 				nonEmptySections,
+				structureSectionMask,
+				fluidSectionMask,
+				surfaceSectionIndex,
+				minSectionIndex,
+				maxSectionIndex,
+				WARM_CACHE_SCHEMA_VERSION,
+				computeSourceFingerprint(sectionMask, nonEmptySections, structureSectionMask, fluidSectionMask, surfaceSectionIndex, minSectionIndex, maxSectionIndex),
+				LOD_CACHE_STATE_METADATA_CLEAN,
+				LOD_QUALITY_COARSE,
+				Float.NaN,
+				0L,
+				"",
 				System.currentTimeMillis()
 			);
+		}
+
+		public static int minFilledSectionIndex(int sectionMask) {
+			if (sectionMask == 0) {
+				return -1;
+			}
+			return Integer.numberOfTrailingZeros(sectionMask);
+		}
+
+		public static int maxFilledSectionIndex(int sectionMask) {
+			if (sectionMask == 0) {
+				return -1;
+			}
+			return 31 - Integer.numberOfLeadingZeros(sectionMask);
+		}
+
+		public static long computeSourceFingerprint(
+			int sectionMask,
+			int nonEmptySections,
+			int structureSectionMask,
+			int fluidSectionMask,
+			int surfaceSectionIndex,
+			int terrainMinSectionIndex,
+			int terrainMaxSectionIndex
+		) {
+			long fingerprint = 0xcbf29ce484222325L;
+			fingerprint = mixFingerprint(fingerprint, sectionMask);
+			fingerprint = mixFingerprint(fingerprint, nonEmptySections);
+			fingerprint = mixFingerprint(fingerprint, structureSectionMask);
+			fingerprint = mixFingerprint(fingerprint, fluidSectionMask);
+			fingerprint = mixFingerprint(fingerprint, surfaceSectionIndex);
+			fingerprint = mixFingerprint(fingerprint, terrainMinSectionIndex);
+			fingerprint = mixFingerprint(fingerprint, terrainMaxSectionIndex);
+			return fingerprint;
+		}
+
+		private static long mixFingerprint(long fingerprint, int value) {
+			long mixed = fingerprint ^ (value & 0xFFFFFFFFL);
+			return mixed * 0x100000001b3L;
 		}
 	}
 
@@ -750,10 +1837,117 @@ public final class PauCClientFrontierWarmupManager {
 		String dimensionId,
 		ChunkPos chunkPos,
 		List<Integer> sectionYs,
+		int structureSectionMask,
+		int fluidSectionMask,
+		int surfaceSectionY,
 		double priorityScore,
 		long estimatedRamBytes,
 		int estimatedGpuSections
 	) {
+	}
+
+	public record ProxyRenderCell(
+		int chunkX,
+		int chunkZ,
+		float terrainSectionY,
+		int currentDistance,
+		double radialDistance,
+		int qualityTier,
+		boolean hasFluid,
+		boolean hasStructure,
+		boolean ahead,
+		long preparedAtMillis
+	) {
+	}
+
+	public static List<ProxyRenderCell> collectProxyRenderCells(ClientLevel level, int maxCells) {
+		if (level == null || maxCells <= 0) {
+			return List.of();
+		}
+		PauCLodRange range = PauCClientLodGovernor.currentRange();
+		if (range == null || !range.enabled()) {
+			range = PauCLodHorizonState.currentRange();
+		}
+		if (range == null || !range.enabled()) {
+			return List.of();
+		}
+
+		String dimensionId = level.dimension().location().toString();
+		int startDistance = range.lodStartChunk();
+		int endDistance = Math.max(range.lodEndChunk(), range.roundHorizonEndChunk());
+		List<WarmChunkRecord> candidates = new ArrayList<>(Math.min(maxCells, 256));
+		for (WarmChunkRecord record : TRACKED_CHUNKS.values()) {
+			if (!record.dimensionId.equals(dimensionId)
+				|| record.lodCacheState < LOD_CACHE_STATE_RENDER_READY
+				|| !Float.isFinite(record.cudaTerrainSectionY)
+				|| record.currentDistance < startDistance
+				|| record.currentDistance > endDistance) {
+				continue;
+			}
+			addBoundedCandidate(candidates, record, maxCells, PROXY_CELL_ORDER);
+		}
+		candidates.sort(PROXY_CELL_ORDER);
+
+		List<ProxyRenderCell> cells = new ArrayList<>(candidates.size());
+		for (WarmChunkRecord record : candidates) {
+			cells.add(new ProxyRenderCell(
+				record.chunkPos.x,
+				record.chunkPos.z,
+				record.cudaTerrainSectionY,
+				record.currentDistance,
+				record.currentRadialDistance,
+				record.lodQualityTier,
+				record.fluidSectionMask != 0,
+				record.structureSectionMask != 0,
+				record.ahead,
+				record.cudaPreparedAtMillis
+			));
+		}
+		return List.copyOf(cells);
+	}
+
+	private static int compareCudaCandidate(WarmChunkRecord left, WarmChunkRecord right, int priorityRadius) {
+		int bandCompare = Integer.compare(fillBandRank(left.currentDistance), fillBandRank(right.currentDistance));
+		if (bandCompare != 0) {
+			return bandCompare;
+		}
+		int priorityCompare = Integer.compare(left.currentDistance > priorityRadius ? 1 : 0, right.currentDistance > priorityRadius ? 1 : 0);
+		if (priorityCompare != 0) {
+			return priorityCompare;
+		}
+		int preparedCompare = Integer.compare(left.lodCacheState >= LOD_CACHE_STATE_CUDA_PREPARED ? 1 : 0, right.lodCacheState >= LOD_CACHE_STATE_CUDA_PREPARED ? 1 : 0);
+		if (preparedCompare != 0) {
+			return preparedCompare;
+		}
+		int scoreCompare = Double.compare(right.lastPriorityScore, left.lastPriorityScore);
+		if (scoreCompare != 0) {
+			return scoreCompare;
+		}
+		int distanceCompare = Integer.compare(left.currentDistance, right.currentDistance);
+		if (distanceCompare != 0) {
+			return distanceCompare;
+		}
+		return Double.compare(left.currentRadialDistance, right.currentRadialDistance);
+	}
+
+	private static <T> void addBoundedCandidate(List<T> candidates, T candidate, int limit, Comparator<? super T> order) {
+		if (limit <= 0) {
+			return;
+		}
+		if (candidates.size() < limit) {
+			candidates.add(candidate);
+			return;
+		}
+
+		int worstIndex = 0;
+		for (int index = 1; index < candidates.size(); index++) {
+			if (order.compare(candidates.get(index), candidates.get(worstIndex)) > 0) {
+				worstIndex = index;
+			}
+		}
+		if (order.compare(candidate, candidates.get(worstIndex)) < 0) {
+			candidates.set(worstIndex, candidate);
+		}
 	}
 
 	private record WarmChunkWorkItem(
@@ -762,6 +1956,9 @@ public final class PauCClientFrontierWarmupManager {
 		ChunkPos chunkPos,
 		int nonEmptySectionMask,
 		int nonEmptySectionCount,
+		int structureSectionMask,
+		int fluidSectionMask,
+		int surfaceSectionIndex,
 		double priorityScore,
 		int playerSectionY,
 		int minSectionY,
@@ -779,13 +1976,311 @@ public final class PauCClientFrontierWarmupManager {
 	) {
 	}
 
+	private record RegionCandidate(
+		String key,
+		int regionX,
+		int regionZ,
+		int distance
+	) {
+	}
+
+	private record CudaPrepWorkItem(
+		int sessionGeneration,
+		int minSectionY,
+		int samplesPerFeature,
+		boolean shaderRuntime,
+		boolean shaderFallback,
+		List<CudaPrepRecord> records
+	) {
+	}
+
+	private record CudaPrepRecord(
+		String dimensionId,
+		ChunkPos chunkPos,
+		long sourceFingerprint,
+		int surfaceSectionIndex,
+		int terrainMinSectionIndex,
+		int terrainMaxSectionIndex,
+		int currentDistance,
+		double radialDistance,
+		double priorityScore,
+		boolean ahead,
+		int requestRadius,
+		int fillRadius
+	) {
+	}
+
+	private record CudaPreparedBatch(
+		int sessionGeneration,
+		boolean shaderRuntime,
+		boolean shaderFallback,
+		boolean cudaAvailable,
+		String cudaProfile,
+		long preparedAtMillis,
+		List<CudaPreparedChunk> chunks
+	) {
+	}
+
+	private record CudaPreparedChunk(
+		String dimensionId,
+		ChunkPos chunkPos,
+		long sourceFingerprint,
+		float terrainSectionY,
+		boolean cudaAvailable,
+		String cudaProfile,
+		int lodQualityTier,
+		int lodCacheState,
+		int currentDistance,
+		double priorityScore,
+		boolean ahead,
+		boolean shaderRuntime,
+		boolean shaderFallback,
+		long preparedAtMillis
+	) {
+	}
+
+	private record CoverageSnapshot(
+		boolean available,
+		boolean rendererAvailable,
+		int expected,
+		int covered,
+		int live,
+		int retained,
+		double ratio,
+		int activeBandEnd,
+		int activeBandExpected,
+		int activeBandCovered,
+		double activeBandRatio,
+		boolean preferCoarseFill
+	) {
+		private static CoverageSnapshot unavailable() {
+			return new CoverageSnapshot(false, false, 0, 0, 0, 0, 1.0D, 0, 0, 0, 1.0D, false);
+		}
+
+		private static CoverageSnapshot capture(
+			ClientLevel level,
+			PauCClientChunkPriorityScorer.PriorityFrame frame,
+			boolean rendererAvailable,
+			Collection<WarmChunkRecord> records
+		) {
+			PauCLodRange range = PauCClientLodGovernor.currentRange();
+			if (range == null || !range.enabled()) {
+				return unavailable();
+			}
+
+			String dimensionId = level.dimension().location().toString();
+			int firstDistance = Math.max(range.lodStartChunk(), frame.renderDistanceChunks() + 1);
+			int lastDistance = Math.min(Math.min(range.lodEndChunk(), frame.warmRadiusChunks()), range.roundHorizonEndChunk());
+			if (firstDistance > lastDistance) {
+				return unavailable();
+			}
+
+			int expected = countSquareRingCells(firstDistance, lastDistance);
+			int covered = 0;
+			int live = 0;
+			int retained = 0;
+			for (WarmChunkRecord record : records) {
+				if (!record.dimensionId.equals(dimensionId)) {
+					continue;
+				}
+				if (record.currentDistance < firstDistance || record.currentDistance > lastDistance) {
+					continue;
+				}
+				if (record.live) {
+					live++;
+				}
+				if (record.retained) {
+					retained++;
+				}
+				if (record.live || record.retained || record.nonEmptySectionCount > 0) {
+					covered++;
+				}
+			}
+
+			double ratio = expected > 0 ? Math.min(1.0D, (double) covered / (double) expected) : 1.0D;
+			boolean catchup = frame.fastTravel() || frame.snapMode() || frame.movementCatchup();
+			double defaultCoverageThreshold = catchup || !rendererAvailable ? 0.78D : 0.68D;
+			double coverageThreshold = catchup
+				? readDouble(COARSE_FILL_CATCHUP_COVERAGE_RATIO_PROPERTY, defaultCoverageThreshold, 0.20D, 0.98D)
+				: readDouble(COARSE_FILL_COVERAGE_RATIO_PROPERTY, defaultCoverageThreshold, 0.20D, 0.98D);
+			CoverageBand activeBand = activeCoverageBand(firstDistance, lastDistance, dimensionId, records, coverageThreshold);
+			boolean preferCoarseFill = activeBand.expected() > 0 && activeBand.ratio() < coverageThreshold;
+			return new CoverageSnapshot(
+				true,
+				rendererAvailable,
+				expected,
+				covered,
+				live,
+				retained,
+				ratio,
+				activeBand.endDistance(),
+				activeBand.expected(),
+				activeBand.covered(),
+				activeBand.ratio(),
+				preferCoarseFill
+			);
+		}
+
+		private static CoverageBand activeCoverageBand(
+			int firstDistance,
+			int lastDistance,
+			String dimensionId,
+			Collection<WarmChunkRecord> records,
+			double coverageThreshold
+		) {
+			CoverageBand lastBand = CoverageBand.empty(Math.max(firstDistance, lastDistance));
+			for (int band : FILL_BANDS) {
+				int bandEnd = Math.min(lastDistance, band);
+				if (bandEnd < firstDistance) {
+					continue;
+				}
+				CoverageBand snapshot = captureBand(firstDistance, bandEnd, dimensionId, records);
+				lastBand = snapshot;
+				if (snapshot.expected() > 0 && snapshot.ratio() < coverageThreshold) {
+					return snapshot;
+				}
+				if (band >= lastDistance) {
+					break;
+				}
+			}
+			return lastBand;
+		}
+
+		private static CoverageBand captureBand(
+			int firstDistance,
+			int endDistance,
+			String dimensionId,
+			Collection<WarmChunkRecord> records
+		) {
+			int expected = countSquareRingCells(firstDistance, endDistance);
+			int covered = 0;
+			for (WarmChunkRecord record : records) {
+				if (!record.dimensionId.equals(dimensionId)) {
+					continue;
+				}
+				if (record.currentDistance < firstDistance || record.currentDistance > endDistance) {
+					continue;
+				}
+				if (record.live || record.retained || record.nonEmptySectionCount > 0) {
+					covered++;
+				}
+			}
+			double ratio = expected > 0 ? Math.min(1.0D, (double) covered / (double) expected) : 1.0D;
+			return new CoverageBand(endDistance, expected, covered, ratio);
+		}
+
+		private String describe() {
+			if (!available) {
+				return "coverage[unavailable]";
+			}
+			return "coverage[covered="
+				+ covered
+				+ "/"
+				+ expected
+				+ ", ratio="
+				+ String.format(java.util.Locale.ROOT, "%.2f", ratio)
+				+ ", activeBand="
+				+ activeBandEnd
+				+ ":"
+				+ activeBandCovered
+				+ "/"
+				+ activeBandExpected
+				+ "@"
+				+ String.format(java.util.Locale.ROOT, "%.2f", activeBandRatio)
+				+ ", live="
+				+ live
+				+ ", retained="
+				+ retained
+				+ ", coarseFill="
+				+ preferCoarseFill
+				+ ", renderer="
+				+ rendererAvailable
+				+ "]";
+		}
+	}
+
+	private record CoverageBand(
+		int endDistance,
+		int expected,
+		int covered,
+		double ratio
+	) {
+		private static CoverageBand empty(int endDistance) {
+			return new CoverageBand(endDistance, 0, 0, 1.0D);
+		}
+	}
+
+	private static int countSquareRingCells(int firstDistance, int lastDistance) {
+		if (firstDistance <= 0) {
+			return ((lastDistance * 2) + 1) * ((lastDistance * 2) + 1);
+		}
+		int outer = ((lastDistance * 2) + 1) * ((lastDistance * 2) + 1);
+		int innerRadius = firstDistance - 1;
+		int inner = ((innerRadius * 2) + 1) * ((innerRadius * 2) + 1);
+		return Math.max(0, outer - inner);
+	}
+
+	private static boolean readBoolean(String key, boolean fallback) {
+		String rawValue = System.getProperty(key);
+		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
+	}
+
+	private static int readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
+	private static long readLong(String key, long fallback, long min, long max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Long.parseLong(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
+	private static double readDouble(String key, double fallback, double min, double max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Double.parseDouble(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
 	private static final class WarmChunkRecord {
 		private final String dimensionId;
 		private final ChunkPos chunkPos;
 		private volatile boolean live;
 		private volatile boolean retained;
+		private volatile boolean diskSeeded;
 		private volatile int nonEmptySectionMask;
 		private volatile int nonEmptySectionCount;
+		private volatile int structureSectionMask;
+		private volatile int fluidSectionMask;
+		private volatile int surfaceSectionIndex = -1;
+		private volatile int terrainMinSectionIndex = -1;
+		private volatile int terrainMaxSectionIndex = -1;
+		private volatile int cacheVersion = WARM_CACHE_SCHEMA_VERSION;
+		private volatile long sourceFingerprint;
+		private volatile int lodCacheState = LOD_CACHE_STATE_DIRTY;
+		private volatile int lodQualityTier = LOD_QUALITY_UNKNOWN;
+		private volatile float cudaTerrainSectionY = Float.NaN;
+		private volatile long cudaPreparedAtMillis;
+		private volatile String cudaProfile = "";
 		private volatile int currentDistance = Integer.MAX_VALUE;
 		private volatile double currentRadialDistance = Double.MAX_VALUE;
 		private volatile int hotSectionCount;
@@ -796,6 +2291,8 @@ public final class PauCClientFrontierWarmupManager {
 		private volatile long lastSeenAtMillis = System.currentTimeMillis();
 		private volatile long lastPlannedAtMillis;
 		private volatile long lastPreparedAtMillis;
+		private volatile long lastCudaAttemptAtMillis;
+		private volatile long lastRenderReadyAtMillis;
 
 		private WarmChunkRecord(String dimensionId, ChunkPos chunkPos) {
 			this.dimensionId = dimensionId;
@@ -807,8 +2304,29 @@ public final class PauCClientFrontierWarmupManager {
 		}
 
 		private void applyMetadata(WarmChunkMetadata metadata) {
+			boolean sameSource = this.sourceFingerprint != 0L && this.sourceFingerprint == metadata.sourceFingerprint();
+			boolean keepPreparedData = sameSource
+				&& this.lodCacheState >= LOD_CACHE_STATE_CPU_PREPARED
+				&& metadata.lodCacheState() <= LOD_CACHE_STATE_METADATA_CLEAN;
 			this.nonEmptySectionMask = metadata.nonEmptySectionMask();
 			this.nonEmptySectionCount = metadata.nonEmptySectionCount();
+			this.structureSectionMask = metadata.structureSectionMask();
+			this.fluidSectionMask = metadata.fluidSectionMask();
+			this.surfaceSectionIndex = metadata.surfaceSectionIndex();
+			this.terrainMinSectionIndex = metadata.terrainMinSectionIndex();
+			this.terrainMaxSectionIndex = metadata.terrainMaxSectionIndex();
+			this.cacheVersion = Math.max(WARM_CACHE_SCHEMA_VERSION, metadata.cacheVersion());
+			this.sourceFingerprint = metadata.sourceFingerprint();
+			if (!keepPreparedData) {
+				this.lodCacheState = normalizeCacheState(metadata.lodCacheState(), metadata.cudaTerrainSectionY());
+				this.lodQualityTier = metadata.lodQualityTier();
+				this.cudaTerrainSectionY = metadata.cudaTerrainSectionY();
+				this.cudaPreparedAtMillis = metadata.cudaPreparedAtMillis();
+				this.cudaProfile = metadata.cudaProfile();
+				if (this.lodCacheState >= LOD_CACHE_STATE_RENDER_READY) {
+					this.lastRenderReadyAtMillis = Math.max(this.lastRenderReadyAtMillis, metadata.cudaPreparedAtMillis());
+				}
+			}
 			this.estimatedRamBytes = PauCClientMemoryBudgetController.estimateRamBytes(metadata.nonEmptySectionCount());
 		}
 
@@ -816,6 +2334,73 @@ public final class PauCClientFrontierWarmupManager {
 			this.retained = true;
 			this.lastPriorityScore = priorityScore;
 			this.lastSeenAtMillis = now;
+		}
+
+		private boolean needsCudaPreparation(long now, long retryMillis) {
+			if (sourceFingerprint == 0L || nonEmptySectionCount <= 0) {
+				return false;
+			}
+			if (lodCacheState >= LOD_CACHE_STATE_CUDA_PREPARED && cudaPreparedAtMillis > 0L && Float.isFinite(cudaTerrainSectionY)) {
+				return false;
+			}
+			return now - lastCudaAttemptAtMillis >= retryMillis;
+		}
+
+		private void applyCudaPreparation(CudaPreparedChunk prepared) {
+			this.lastCudaAttemptAtMillis = prepared.preparedAtMillis();
+			this.cudaTerrainSectionY = prepared.terrainSectionY();
+			this.cudaProfile = prepared.cudaProfile();
+			if (prepared.cudaAvailable()) {
+				this.lodCacheState = Math.max(LOD_CACHE_STATE_CUDA_PREPARED, prepared.lodCacheState());
+				this.lodQualityTier = Math.max(this.lodQualityTier, prepared.lodQualityTier());
+				this.cudaPreparedAtMillis = prepared.preparedAtMillis();
+				if (this.lodCacheState >= LOD_CACHE_STATE_RENDER_READY) {
+					this.lastRenderReadyAtMillis = prepared.preparedAtMillis();
+				}
+			} else {
+				this.lodCacheState = LOD_CACHE_STATE_CPU_PREPARED;
+				this.lodQualityTier = Math.max(this.lodQualityTier, LOD_QUALITY_COARSE);
+				this.cudaPreparedAtMillis = 0L;
+			}
+		}
+
+		private WarmChunkMetadata toMetadata(long savedAtMillis) {
+			return new WarmChunkMetadata(
+				dimensionId,
+				chunkPos,
+				nonEmptySectionMask,
+				nonEmptySectionCount,
+				structureSectionMask,
+				fluidSectionMask,
+				surfaceSectionIndex,
+				terrainMinSectionIndex,
+				terrainMaxSectionIndex,
+				cacheVersion,
+				sourceFingerprint,
+				lodCacheState,
+				lodQualityTier,
+				cudaTerrainSectionY,
+				cudaPreparedAtMillis,
+				cudaProfile != null ? cudaProfile : "",
+				savedAtMillis
+			);
+		}
+
+		private CudaPrepRecord toCudaPrepRecord(int requestRadius, int fillRadius) {
+			return new CudaPrepRecord(
+				dimensionId,
+				chunkPos,
+				sourceFingerprint,
+				surfaceSectionIndex,
+				terrainMinSectionIndex,
+				terrainMaxSectionIndex,
+				currentDistance,
+				currentRadialDistance,
+				lastPriorityScore,
+				ahead,
+				requestRadius,
+				fillRadius
+			);
 		}
 
 		private Collection<Integer> toSectionYs(int minSectionY, int maxSectionY) {

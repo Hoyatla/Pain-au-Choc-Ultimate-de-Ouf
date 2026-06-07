@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.lod.PauCLodDiagnostics;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientChunkRetentionManager;
+import fr.hoyatla.pauc.platform.forge.client.PauCCudaWorker;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientDistanceGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFrameMetrics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFpsGovernor;
@@ -26,9 +27,11 @@ import java.util.Locale;
 public final class PauCPerformanceTelemetry {
 	private static final Logger LOGGER = LogUtils.getLogger();
 	private static final DateTimeFormatter FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
+	private static final String DETAIL_CAPTURE_INTERVAL_MS_PROPERTY = "pauc.telemetry.detailCaptureIntervalMs";
 	private static final long LOG_INTERVAL_MS = 5_000L;
 	private static long sessionStartedAtMs;
 	private static long lastLogAtMs;
+	private static long lastDetailCaptureAtMs;
 	private static int samples;
 	private static int fpsSamples;
 	private static int minFps;
@@ -36,6 +39,12 @@ public final class PauCPerformanceTelemetry {
 	private static long fpsTotal;
 	private static int belowTargetSamples;
 	private static int severeBelowTargetSamples;
+	private static int criticalFpsSamples;
+	private static int worstFpsTargetGap;
+	private static int currentBelowTargetStreak;
+	private static int longestBelowTargetStreak;
+	private static int currentSevereBelowTargetStreak;
+	private static int longestSevereBelowTargetStreak;
 	private static long maxUsedMemoryBytes;
 	private static long lastUsedMemoryBytes;
 	private static long lastMaxMemoryBytes;
@@ -48,6 +57,7 @@ public final class PauCPerformanceTelemetry {
 	private static String lastFpsGovernorLine = "not-captured";
 	private static String lastDistanceGovernorLine = "not-captured";
 	private static String lastSurfaceLodLine = "not-captured";
+	private static String lastCudaLine = "not-captured";
 	private static String lastCompatLine = "not-captured";
 	private static String lastVillageLine = "not-captured";
 	private static boolean active;
@@ -77,30 +87,36 @@ public final class PauCPerformanceTelemetry {
 			maxFps = Math.max(maxFps, fps);
 			if (fps < targetFps) {
 				belowTargetSamples++;
+				currentBelowTargetStreak++;
+				longestBelowTargetStreak = Math.max(longestBelowTargetStreak, currentBelowTargetStreak);
+			} else {
+				currentBelowTargetStreak = 0;
 			}
 			if (fps < targetFps * 0.65D) {
 				severeBelowTargetSamples++;
+				currentSevereBelowTargetStreak++;
+				longestSevereBelowTargetStreak = Math.max(longestSevereBelowTargetStreak, currentSevereBelowTargetStreak);
+			} else {
+				currentSevereBelowTargetStreak = 0;
 			}
+			if (fps <= 10) {
+				criticalFpsSamples++;
+			}
+			worstFpsTargetGap = Math.max(worstFpsTargetGap, Math.max(0, targetFps - fps));
 		}
 
 		Runtime runtime = Runtime.getRuntime();
 		lastUsedMemoryBytes = runtime.totalMemory() - runtime.freeMemory();
 		lastMaxMemoryBytes = runtime.maxMemory();
 		maxUsedMemoryBytes = Math.max(maxUsedMemoryBytes, lastUsedMemoryBytes);
-		lastLodLine = PauCLodDiagnostics.overviewLine();
-		lastClientLine = PauCClientChunkRetentionManager.describeState();
-		lastPolicyLine = PauCLodDiagnostics.policyLine();
-		lastShaderLine = PauCLodDiagnostics.shaderLine();
-		lastValidationLine = PauCLodDiagnostics.validationLine();
-		lastCullingLine = PauCLodDiagnostics.cullingLine();
-		lastFpsGovernorLine = PauCClientFpsGovernor.describeState();
-		lastDistanceGovernorLine = PauCClientDistanceGovernor.describeState();
-		lastSurfaceLodLine = PauCClientSurfaceLodMode.describeState();
-		lastCompatLine = PauCCompatibilityGuards.describeState();
 		PauCVillagePerformanceDiagnostics.onClientTick(minecraft);
-		lastVillageLine = PauCVillagePerformanceDiagnostics.describeState();
 
 		long now = System.currentTimeMillis();
+		long detailIntervalMs = readLong(DETAIL_CAPTURE_INTERVAL_MS_PROPERTY, 1_000L, 250L, 30_000L);
+		if (now - lastDetailCaptureAtMs >= detailIntervalMs || now - lastLogAtMs >= LOG_INTERVAL_MS) {
+			captureDetailLines();
+			lastDetailCaptureAtMs = now;
+		}
 		if (now - lastLogAtMs >= LOG_INTERVAL_MS) {
 			lastLogAtMs = now;
 			LOGGER.info("PauC performance telemetry: {}", describe());
@@ -129,7 +145,15 @@ public final class PauCPerformanceTelemetry {
 			+ percent(belowTargetSamples, fpsSamples)
 			+ "%, severe="
 			+ percent(severeBelowTargetSamples, fpsSamples)
-			+ "%, heap="
+			+ "%, critical="
+			+ percent(criticalFpsSamples, fpsSamples)
+			+ "%, worstGap="
+			+ worstFpsTargetGap
+			+ ", streak="
+			+ longestBelowTargetStreak
+			+ "/"
+			+ longestSevereBelowTargetStreak
+			+ " samples, heap="
 			+ mib(lastUsedMemoryBytes)
 			+ "/"
 			+ mib(lastMaxMemoryBytes)
@@ -157,6 +181,10 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"maxFps\": " + maxFps + ",\n"
 			+ "  \"belowTargetPercent\": " + percent(belowTargetSamples, fpsSamples) + ",\n"
 			+ "  \"severeBelowTargetPercent\": " + percent(severeBelowTargetSamples, fpsSamples) + ",\n"
+			+ "  \"criticalFpsPercent\": " + percent(criticalFpsSamples, fpsSamples) + ",\n"
+			+ "  \"worstFpsTargetGap\": " + worstFpsTargetGap + ",\n"
+			+ "  \"longestBelowTargetStreakSamples\": " + longestBelowTargetStreak + ",\n"
+			+ "  \"longestSevereBelowTargetStreakSamples\": " + longestSevereBelowTargetStreak + ",\n"
 			+ "  \"heapUsedMiB\": " + mib(lastUsedMemoryBytes) + ",\n"
 			+ "  \"heapMaxMiB\": " + mib(lastMaxMemoryBytes) + ",\n"
 			+ "  \"heapPeakUsedMiB\": " + mib(maxUsedMemoryBytes) + ",\n"
@@ -171,6 +199,7 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"fpsGovernor\": \"" + json(lastFpsGovernorLine) + "\",\n"
 			+ "  \"distanceGovernor\": \"" + json(lastDistanceGovernorLine) + "\",\n"
 			+ "  \"surfaceLod\": \"" + json(lastSurfaceLodLine) + "\",\n"
+			+ "  \"cuda\": \"" + json(lastCudaLine) + "\",\n"
 			+ "  \"village\": \"" + json(lastVillageLine) + "\",\n"
 			+ "  \"compatGuards\": \"" + json(lastCompatLine) + "\"\n"
 			+ "}\n";
@@ -192,6 +221,12 @@ public final class PauCPerformanceTelemetry {
 		fpsTotal = 0L;
 		belowTargetSamples = 0;
 		severeBelowTargetSamples = 0;
+		criticalFpsSamples = 0;
+		worstFpsTargetGap = 0;
+		currentBelowTargetStreak = 0;
+		longestBelowTargetStreak = 0;
+		currentSevereBelowTargetStreak = 0;
+		longestSevereBelowTargetStreak = 0;
 		maxUsedMemoryBytes = 0L;
 		lastUsedMemoryBytes = 0L;
 		lastMaxMemoryBytes = 0L;
@@ -204,9 +239,27 @@ public final class PauCPerformanceTelemetry {
 		lastFpsGovernorLine = "not-captured";
 		lastDistanceGovernorLine = "not-captured";
 		lastSurfaceLodLine = "not-captured";
+		lastCudaLine = "not-captured";
 		lastCompatLine = "not-captured";
 		lastVillageLine = "not-captured";
+		lastDetailCaptureAtMs = 0L;
 		PauCVillagePerformanceDiagnostics.reset();
+		PauCCudaWorker.resetMetrics();
+	}
+
+	private static void captureDetailLines() {
+		lastLodLine = PauCLodDiagnostics.overviewLine();
+		lastClientLine = PauCClientChunkRetentionManager.describeState();
+		lastPolicyLine = PauCLodDiagnostics.policyLine();
+		lastShaderLine = PauCLodDiagnostics.shaderLine();
+		lastValidationLine = PauCLodDiagnostics.validationLine();
+		lastCullingLine = PauCLodDiagnostics.cullingLine();
+		lastFpsGovernorLine = PauCClientFpsGovernor.describeState();
+		lastDistanceGovernorLine = PauCClientDistanceGovernor.describeState();
+		lastSurfaceLodLine = PauCClientSurfaceLodMode.describeState();
+		lastCudaLine = PauCCudaWorker.describeMetrics();
+		lastCompatLine = PauCCompatibilityGuards.describeState();
+		lastVillageLine = PauCVillagePerformanceDiagnostics.describeState();
 	}
 
 	private static int queryFps(Minecraft minecraft) {
@@ -238,5 +291,17 @@ public final class PauCPerformanceTelemetry {
 			.replace("\r", "\\r")
 			.replace("\n", "\\n")
 			.replace("\t", "\\t");
+	}
+
+	private static long readLong(String key, long fallback, long min, long max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Long.parseLong(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
 	}
 }

@@ -15,20 +15,16 @@ public final class PauCLodScreenFogColor {
 	private static final ByteBuffer PIXEL = BufferUtils.createByteBuffer(4);
 	private static final float[] COLOR = new float[] {1.0F, 1.0F, 1.0F};
 	private static final float[] FALLBACK = new float[] {1.0F, 1.0F, 1.0F};
-	private static final float[][] SAMPLE_POINTS = new float[][] {
-		{0.10F, 0.86F},
-		{0.25F, 0.90F},
-		{0.50F, 0.93F},
-		{0.75F, 0.90F},
-		{0.90F, 0.86F},
-		{0.50F, 0.78F}
-	};
+	private static final float[] SAMPLE_POINT = new float[] {0.50F, 0.90F};
+	private static final int CAPTURE_INTERVAL_FRAMES = 2;
+	private static final float CAPTURE_SMOOTHING = 0.35F;
 	private static boolean captured;
 	private static boolean captureLogged;
 	private static boolean fallbackLogged;
 	private static boolean noSampleLogged;
 	private static boolean failureLogged;
 	private static float capturedLuminance = 1.0F;
+	private static int captureFrameIndex;
 
 	private PauCLodScreenFogColor() {
 	}
@@ -44,72 +40,41 @@ public final class PauCLodScreenFogColor {
 			captured = false;
 			return;
 		}
+		captureFrameIndex++;
+		if (captured && captureFrameIndex % CAPTURE_INTERVAL_FRAMES != 0) {
+			return;
+		}
 
 		int previousReadFramebuffer = GL11C.glGetInteger(GL30C.GL_READ_FRAMEBUFFER_BINDING);
 		int previousReadBuffer = GL11C.glGetInteger(GL11C.GL_READ_BUFFER);
 		try {
 			GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, mainTarget.frameBufferId);
 			GL11C.glReadBuffer(GL30C.GL_COLOR_ATTACHMENT0);
-			float red = 0.0F;
-			float green = 0.0F;
-			float blue = 0.0F;
-			float bestRed = 1.0F;
-			float bestGreen = 1.0F;
-			float bestBlue = 1.0F;
-			float bestLuminance = -1.0F;
-			int samples = 0;
-			for (float[] samplePoint : SAMPLE_POINTS) {
-				int x = clamp(Math.round((mainTarget.width - 1) * samplePoint[0]), 0, mainTarget.width - 1);
-				int y = clamp(Math.round((mainTarget.height - 1) * samplePoint[1]), 0, mainTarget.height - 1);
-				PIXEL.clear();
-				GL11C.glReadPixels(x, y, 1, 1, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, PIXEL);
-				float sampleRed = byteToFloat(PIXEL.get(0));
-				float sampleGreen = byteToFloat(PIXEL.get(1));
-				float sampleBlue = byteToFloat(PIXEL.get(2));
-				float sampleLuminance = luminance(sampleRed, sampleGreen, sampleBlue);
-				if (sampleLuminance > bestLuminance) {
-					bestRed = sampleRed;
-					bestGreen = sampleGreen;
-					bestBlue = sampleBlue;
-					bestLuminance = sampleLuminance;
-				}
-				if (sampleLuminance < 0.32F
-					|| saturation(sampleRed, sampleGreen, sampleBlue) > 0.42F) {
-					continue;
-				}
-				red += sampleRed;
-				green += sampleGreen;
-				blue += sampleBlue;
-				samples++;
+			int x = clamp(Math.round((mainTarget.width - 1) * SAMPLE_POINT[0]), 0, mainTarget.width - 1);
+			int y = clamp(Math.round((mainTarget.height - 1) * SAMPLE_POINT[1]), 0, mainTarget.height - 1);
+			PIXEL.clear();
+			GL11C.glReadPixels(x, y, 1, 1, GL11C.GL_RGBA, GL11C.GL_UNSIGNED_BYTE, PIXEL);
+			float sampleRed = byteToFloat(PIXEL.get(0));
+			float sampleGreen = byteToFloat(PIXEL.get(1));
+			float sampleBlue = byteToFloat(PIXEL.get(2));
+			float sampleLuminance = luminance(sampleRed, sampleGreen, sampleBlue);
+			if (sampleLuminance < 0.08F && captured) {
+				return;
 			}
-			if (samples > 0) {
-				COLOR[0] = red / samples;
-				COLOR[1] = green / samples;
-				COLOR[2] = blue / samples;
-				capturedLuminance = luminance(COLOR[0], COLOR[1], COLOR[2]);
-				captured = true;
-				logCapture(samples, "filtered");
+			if (sampleLuminance < 0.08F) {
+				captured = false;
+				if (!noSampleLogged) {
+					noSampleLogged = true;
+					LOGGER.info(
+						"PauC found no usable shader screen fog color for late LOD blend; single-sample luminance={}.",
+						round(sampleLuminance)
+					);
+				}
 				return;
 			}
 
-			if (bestLuminance >= 0.08F) {
-				COLOR[0] = bestRed;
-				COLOR[1] = bestGreen;
-				COLOR[2] = bestBlue;
-				capturedLuminance = luminance(COLOR[0], COLOR[1], COLOR[2]);
-				captured = true;
-				logCapture(1, "brightest");
-				return;
-			}
-
-			captured = false;
-			if (!noSampleLogged) {
-				noSampleLogged = true;
-				LOGGER.info(
-					"PauC found no usable shader screen fog color for late LOD blend; best luminance={}.",
-					round(bestLuminance)
-				);
-			}
+			applyCapturedColor(sampleRed, sampleGreen, sampleBlue);
+			logCapture(1, captured ? "single-smoothed" : "single");
 		} catch (Exception | Error error) {
 			captured = false;
 			if (!failureLogged) {
@@ -120,6 +85,20 @@ public final class PauCLodScreenFogColor {
 			GL30C.glBindFramebuffer(GL30C.GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 			GL11C.glReadBuffer(previousReadBuffer);
 		}
+	}
+
+	private static void applyCapturedColor(float sampleRed, float sampleGreen, float sampleBlue) {
+		if (captured) {
+			COLOR[0] = lerp(COLOR[0], sampleRed, CAPTURE_SMOOTHING);
+			COLOR[1] = lerp(COLOR[1], sampleGreen, CAPTURE_SMOOTHING);
+			COLOR[2] = lerp(COLOR[2], sampleBlue, CAPTURE_SMOOTHING);
+		} else {
+			COLOR[0] = sampleRed;
+			COLOR[1] = sampleGreen;
+			COLOR[2] = sampleBlue;
+		}
+		capturedLuminance = luminance(COLOR[0], COLOR[1], COLOR[2]);
+		captured = true;
 	}
 
 	public static float[] currentOrFallback(float[] fallback) {
@@ -202,6 +181,10 @@ public final class PauCLodScreenFogColor {
 	private static float smoothstep(float edge0, float edge1, float value) {
 		float factor = clamp((value - edge0) / Math.max(edge1 - edge0, 0.001F), 0.0F, 1.0F);
 		return factor * factor * (3.0F - 2.0F * factor);
+	}
+
+	private static float lerp(float start, float end, float factor) {
+		return start + (end - start) * clamp(factor, 0.0F, 1.0F);
 	}
 
 	private static int clamp(int value, int min, int max) {

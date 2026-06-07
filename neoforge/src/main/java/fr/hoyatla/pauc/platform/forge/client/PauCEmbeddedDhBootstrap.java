@@ -57,6 +57,7 @@ public final class PauCEmbeddedDhBootstrap {
 
 		@Override
 		protected void createInitialClientBindings() {
+			PauCEmbeddedDhBridge.applyStartupDirectGpuPolicy();
 		}
 
 		@Override

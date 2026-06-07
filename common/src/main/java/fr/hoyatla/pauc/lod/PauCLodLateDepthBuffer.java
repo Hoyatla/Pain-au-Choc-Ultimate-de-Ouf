@@ -22,6 +22,7 @@ public final class PauCLodLateDepthBuffer {
 	private static boolean captureLogged;
 	private static boolean restoreLogged;
 	private static boolean restoreMissLogged;
+	private static Boolean copyDepthTextureSupported;
 
 	private PauCLodLateDepthBuffer() {
 	}
@@ -143,7 +144,14 @@ public final class PauCLodLateDepthBuffer {
 	}
 
 	private static boolean canCopyDepthTexture() {
-		return GL.getCapabilities().glCopyImageSubData != MemoryUtil.NULL;
+		Boolean cached = copyDepthTextureSupported;
+		if (cached != null) {
+			return cached;
+		}
+
+		boolean supported = GL.getCapabilities().glCopyImageSubData != MemoryUtil.NULL;
+		copyDepthTextureSupported = supported;
+		return supported;
 	}
 
 	private static void logUnsupportedOnce() {
