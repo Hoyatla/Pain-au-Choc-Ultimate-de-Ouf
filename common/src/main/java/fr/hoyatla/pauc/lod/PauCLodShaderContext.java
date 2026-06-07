@@ -181,6 +181,10 @@ public final class PauCLodShaderContext {
 		return shaderPackInUse && dhScan.available() && dhScan.terrainProgram();
 	}
 
+	public static boolean hasScannedDhShadowProgram() {
+		return shaderPackInUse && dhScan.available() && dhScan.shadowProgram();
+	}
+
 	public static boolean shouldUseConservativeEmbeddedShaderFallback() {
 		return shaderPackInUse && readBoolean(CONSERVATIVE_EMBEDDED_FALLBACK_PROPERTY, false);
 	}

@@ -524,7 +524,7 @@ public final class PauCClientSurfaceLodMode {
 		}
 
 		int enterTicks = readInt(FEATURE_TRANSITION_ENTER_TICKS_PROPERTY, 1, 0, 40);
-		int exitTicks = readInt(FEATURE_TRANSITION_EXIT_TICKS_PROPERTY, 24, 0, 200);
+		int exitTicks = readInt(FEATURE_TRANSITION_EXIT_TICKS_PROPERTY, 80, 0, 200);
 		if (!featureTransitionActive && requestTransition && featureTransitionTicks >= enterTicks) {
 			featureTransitionActive = true;
 		}

@@ -177,6 +177,9 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 		if (state.seamMorphStrength() <= 0.0F && !PauCLodShaderPresentation.shouldLateRenderFallbackLods()) {
 			return;
 		}
+		if (PauCLodNearClipOverride.shouldUseLocalExclusionClip()) {
+			return;
+		}
 
 		pauc$uniform1i(this.uDitherDhRendering, 0);
 		if (!pauc$clipFadeDisabledLogged) {

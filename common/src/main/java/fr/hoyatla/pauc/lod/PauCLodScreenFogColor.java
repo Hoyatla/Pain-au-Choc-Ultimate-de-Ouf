@@ -16,7 +16,8 @@ public final class PauCLodScreenFogColor {
 	private static final float[] COLOR = new float[] {1.0F, 1.0F, 1.0F};
 	private static final float[] FALLBACK = new float[] {1.0F, 1.0F, 1.0F};
 	private static final float[] SAMPLE_POINT = new float[] {0.50F, 0.90F};
-	private static final int CAPTURE_INTERVAL_FRAMES = 2;
+	private static final String CAPTURE_INTERVAL_FRAMES_PROPERTY = "pauc.lod.screenFogCaptureIntervalFrames";
+	private static final int DEFAULT_CAPTURE_INTERVAL_FRAMES = 8;
 	private static final float CAPTURE_SMOOTHING = 0.35F;
 	private static boolean captured;
 	private static boolean captureLogged;
@@ -41,7 +42,8 @@ public final class PauCLodScreenFogColor {
 			return;
 		}
 		captureFrameIndex++;
-		if (captured && captureFrameIndex % CAPTURE_INTERVAL_FRAMES != 0) {
+		int captureIntervalFrames = readInt(CAPTURE_INTERVAL_FRAMES_PROPERTY, DEFAULT_CAPTURE_INTERVAL_FRAMES, 1, 60);
+		if (captured && captureFrameIndex % captureIntervalFrames != 0) {
 			return;
 		}
 
@@ -189,6 +191,18 @@ public final class PauCLodScreenFogColor {
 
 	private static int clamp(int value, int min, int max) {
 		return Math.max(min, Math.min(max, value));
+	}
+
+	private static int readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return clamp(fallback, min, max);
+		}
+		try {
+			return clamp(Integer.parseInt(rawValue.trim()), min, max);
+		} catch (NumberFormatException ignored) {
+			return clamp(fallback, min, max);
+		}
 	}
 
 	private static float clamp(float value, float min, float max) {

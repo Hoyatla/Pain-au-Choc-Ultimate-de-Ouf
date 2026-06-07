@@ -22,7 +22,9 @@ public final class PauCLodNearClipOverride {
 	private static final String SHADER_OFF_GROUNDED_OVERLAP_HEIGHT_PROPERTY = "pauc.lod.shaderOffGroundedOverlapHeightBlocks";
 	private static final String SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS_PROPERTY = "pauc.lod.shaderOffGroundedOverlapReleaseMs";
 	private static final String FEATURE_TRANSITION_MASK_HOLD_MS_PROPERTY = "pauc.lod.featureTransitionMaskHoldMs";
+	private static final String FEATURE_TRANSITION_LOCAL_CLIP_CHUNKS_PROPERTY = "pauc.lod.featureTransitionLocalClipChunks";
 	private static final String TERRAIN_CONTINUITY_HOLD_MS_PROPERTY = "pauc.lod.terrainContinuityHoldMs";
+	private static final String TERRAIN_CONTINUITY_LOCAL_CLIP_CHUNKS_PROPERTY = "pauc.lod.terrainContinuityLocalClipChunks";
 	private static final String INSET_CHUNKS_PROPERTY = "pauc.lod.nearClipInsetChunks";
 	private static final String SHADER_OFF_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffNearClipInsetChunks";
 	private static final String SHADER_OFF_MOVING_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffMovingNearClipInsetChunks";
@@ -33,8 +35,10 @@ public final class PauCLodNearClipOverride {
 	private static final int DEFAULT_SHADER_OFF_STARTUP_INSET_CHUNKS = 4;
 	private static final int DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_HEIGHT_BLOCKS = 24;
 	private static final int DEFAULT_SHADER_OFF_GROUNDED_OVERLAP_RELEASE_MS = 1_800;
-	private static final int DEFAULT_FEATURE_TRANSITION_MASK_HOLD_MS = 1_500;
+	private static final int DEFAULT_FEATURE_TRANSITION_MASK_HOLD_MS = 3_500;
+	private static final int DEFAULT_LOCAL_EXCLUSION_CLIP_CHUNKS = 6;
 	private static final int DEFAULT_TERRAIN_CONTINUITY_HOLD_MS = 1_500;
+	private static final int MAX_LOCAL_EXCLUSION_CLIP_CHUNKS = 6;
 	private static final long SHADER_OFF_STARTUP_WINDOW_MS = 8_000L;
 	private static final long SHADER_OFF_MOVING_HOLD_MS = 3_000L;
 	private static final double MOVING_SPEED_THRESHOLD = 0.08D;
@@ -146,6 +150,10 @@ public final class PauCLodNearClipOverride {
 		return System.currentTimeMillis() <= featureTransitionMaskHoldUntilMs;
 	}
 
+	public static boolean shouldUseLocalExclusionClip() {
+		return shouldKeepLodsUnderVanilla() && (shouldHoldTerrainContinuity() || shouldUseFeatureTransitionMask());
+	}
+
 	public static String featureTransitionMaskReason() {
 		return shouldUseFeatureTransitionMask() ? featureTransitionMaskReason : "";
 	}
@@ -204,17 +212,49 @@ public final class PauCLodNearClipOverride {
 
 	private static float underVanillaClipBlocks(PauCLodRange range, boolean groundedOverlapClip) {
 		float configuredClip = readFloat(UNDER_VANILLA_CLIP_BLOCKS_PROPERTY, 0.0F, 0.0F, 256.0F);
-		if (!groundedOverlapClip || range == null || !range.enabled()) {
+		if (range == null || !range.enabled()) {
 			return configuredClip;
 		}
 
-		int defaultClipChunks = Math.max(3, Math.min(range.vanillaRenderDistanceChunks(), range.vanillaRenderDistanceChunks() - 3));
-		int clipChunks = readInt(SHADER_OFF_GROUNDED_OVERLAP_CLIP_CHUNKS_PROPERTY, defaultClipChunks, -1, range.lodStartChunk());
+		if (shouldHoldTerrainContinuity()) {
+			return Math.max(
+				configuredClip,
+				localClipChunks(range, TERRAIN_CONTINUITY_LOCAL_CLIP_CHUNKS_PROPERTY) * 16.0F
+			);
+		}
+
+		if (shouldUseFeatureTransitionMask()) {
+			return Math.max(
+				configuredClip,
+				localClipChunks(range, FEATURE_TRANSITION_LOCAL_CLIP_CHUNKS_PROPERTY) * 16.0F
+			);
+		}
+
+		if (!groundedOverlapClip) {
+			return configuredClip;
+		}
+
+		int defaultClipChunks = localClipChunks(range, SHADER_OFF_GROUNDED_OVERLAP_CLIP_CHUNKS_PROPERTY);
+		int maxClipChunks = maxLocalClipChunks(range);
+		int clipChunks = readInt(SHADER_OFF_GROUNDED_OVERLAP_CLIP_CHUNKS_PROPERTY, defaultClipChunks, -1, maxClipChunks);
 		if (clipChunks < 0) {
 			clipChunks = defaultClipChunks;
 		}
-		clipChunks = clamp(clipChunks, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, range.lodStartChunk());
+		clipChunks = clamp(clipChunks, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, maxClipChunks);
 		return Math.max(configuredClip, clipChunks * 16.0F);
+	}
+
+	private static int localClipChunks(PauCLodRange range, String property) {
+		int maxClipChunks = maxLocalClipChunks(range);
+		int fallback = clamp(DEFAULT_LOCAL_EXCLUSION_CLIP_CHUNKS, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, maxClipChunks);
+		return readInt(property, fallback, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, maxClipChunks);
+	}
+
+	private static int maxLocalClipChunks(PauCLodRange range) {
+		return Math.max(
+			PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS,
+			Math.min(MAX_LOCAL_EXCLUSION_CLIP_CHUNKS, Math.min(range.vanillaRenderDistanceChunks(), range.lodStartChunk()))
+		);
 	}
 
 	private static boolean shouldUseGroundedOverlapClip() {

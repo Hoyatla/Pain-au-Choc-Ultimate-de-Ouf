@@ -7,6 +7,9 @@ public final class PauCLodShaderRuntime {
 	private static final String KEEP_LOD_CLOUDS_PROPERTY = "pauc.lod.shaderRuntime.keepLodClouds";
 	private static final String PROTECT_LOD_CLOUD_CENTER_PROPERTY = "pauc.lod.shaderRuntime.protectLodCloudCenter";
 	private static final String MANAGE_NATIVE_DH_SHADOW_PROPERTY = "pauc.lod.shaderRuntime.manageNativeDhShadow";
+	private static final String STABLE_SYNTHETIC_SHADOW_PROPERTY = "pauc.lod.shaderRuntime.stableSyntheticShadow";
+	private static final String FULL_SYNTHETIC_SHADOW_FALLBACK_PROPERTY = "pauc.lod.shaderRuntime.fullSyntheticShadowFallback";
+	private static final String SOLAS_SYNTHETIC_SHADOW_FALLBACK_PROPERTY = "pauc.lod.shaderRuntime.solasSyntheticShadowFallback";
 	private static final String SHADOW_FALLBACK_BUDGET_PROPERTY = "pauc.lod.shaderRuntime.shadowFallbackBudgetChunks";
 	private static final String MAX_GENERATION_RATE_PROPERTY = "pauc.lod.shaderRuntime.maxGenerationRateLimit";
 	private static volatile State state = State.off();
@@ -97,6 +100,12 @@ public final class PauCLodShaderRuntime {
 			return true;
 		}
 
+		if (usesSyntheticShaderShadowFallback()) {
+			return readBoolean(STABLE_SYNTHETIC_SHADOW_PROPERTY, true);
+		}
+		if (blocksSyntheticShaderShadowFallback()) {
+			return false;
+		}
 		return true;
 	}
 
@@ -106,6 +115,12 @@ public final class PauCLodShaderRuntime {
 		}
 
 		PauCLodShaderProfiles.Family family = currentFamily();
+		if (usesSyntheticShaderShadowFallback()) {
+			return readBoolean(STABLE_SYNTHETIC_SHADOW_PROPERTY, true);
+		}
+		if (blocksSyntheticShaderShadowFallback()) {
+			return false;
+		}
 		if (pressure() == Pressure.RELIEF) {
 			return false;
 		}
@@ -121,6 +136,18 @@ public final class PauCLodShaderRuntime {
 		}
 		if (!isActive()) {
 			return availableChunks;
+		}
+		if (blocksSyntheticShaderShadowFallback()) {
+			return 0;
+		}
+		if (usesSyntheticShaderShadowFallback() && readBoolean(FULL_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, true)) {
+			return Math.max(
+				0,
+				Math.min(
+					availableChunks,
+					readInt(SHADOW_FALLBACK_BUDGET_PROPERTY, availableChunks, 0, availableChunks)
+				)
+			);
 		}
 
 		int base = switch (currentFamily()) {
@@ -234,6 +261,27 @@ public final class PauCLodShaderRuntime {
 
 	private static PauCLodShaderProfiles.Family currentFamily() {
 		return state.active() ? state.family() : PauCLodShaderProfiles.currentFamily();
+	}
+
+	private static boolean usesSyntheticShaderShadowFallback() {
+		PauCLodShaderProfiles.Family family = currentFamily();
+		if (!PauCLodShaderContext.isShaderPackInUse() || PauCLodShaderContext.hasScannedDhShadowProgram()) {
+			return false;
+		}
+		if (family == PauCLodShaderProfiles.Family.PHOTON) {
+			return true;
+		}
+		if (family == PauCLodShaderProfiles.Family.SOLAS) {
+			return readBoolean(SOLAS_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, false);
+		}
+		return false;
+	}
+
+	private static boolean blocksSyntheticShaderShadowFallback() {
+		return currentFamily() == PauCLodShaderProfiles.Family.SOLAS
+			&& PauCLodShaderContext.isShaderPackInUse()
+			&& !PauCLodShaderContext.hasScannedDhShadowProgram()
+			&& !readBoolean(SOLAS_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, false);
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {

@@ -66,12 +66,15 @@ public class DHCompatInternal {
 
 		boolean hasExplicitDhTerrainShader = pipeline.hasExplicitDHTerrainShader();
 		boolean packBlocksSyntheticDhTerrainShader = PauCLodShaderContext.blocksSyntheticDhTerrainShader();
-		boolean detectedNativeDhShader = hasExplicitDhTerrainShader && !packBlocksSyntheticDhTerrainShader && pipeline.getDHTerrainShader().isPresent();
+		boolean detectedRuntimeDhShader = hasExplicitDhTerrainShader && !packBlocksSyntheticDhTerrainShader && pipeline.getDHTerrainShader().isPresent();
+		boolean detectedNativeDhShader = detectedRuntimeDhShader && PauCLodShaderContext.hasScannedDhTerrainProgram();
 		boolean syntheticDhShaderAllowed = !detectedNativeDhShader && PauCLodShaderContext.shouldUseSyntheticDhTerrainShader();
-		Optional<ProgramSource> terrainSource = detectedNativeDhShader ? pipeline.getDHTerrainShader() : Optional.empty();
+		Optional<ProgramSource> terrainSource = detectedRuntimeDhShader ? pipeline.getDHTerrainShader() : Optional.empty();
 		boolean syntheticDhTerrainShader = false;
-		if (terrainSource.isEmpty() && syntheticDhShaderAllowed) {
-			terrainSource = pipeline.getTerrainShader();
+		if (syntheticDhShaderAllowed) {
+			if (terrainSource.isEmpty()) {
+				terrainSource = pipeline.getTerrainShader();
+			}
 			syntheticDhTerrainShader = terrainSource.isPresent();
 		}
 		boolean cachedFallback = detectedNativeDhShader && PauCLodShaderContext.shouldForceFallbackForCurrentPack();

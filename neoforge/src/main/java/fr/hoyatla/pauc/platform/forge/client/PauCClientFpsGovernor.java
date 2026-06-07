@@ -55,6 +55,8 @@ public final class PauCClientFpsGovernor {
 	private static final String SHADER_FALLBACK_QUALITY_UPGRADE_MIN_RATIO_PROPERTY = "pauc.lod.shaderFallbackQualityUpgradeMinFpsRatio";
 	private static final String SYNTHETIC_DH_POLISH_STABLE_TICKS_PROPERTY = "pauc.lod.syntheticDhPolishStableTicks";
 	private static final String SYNTHETIC_DH_HEADROOM_STABLE_TICKS_PROPERTY = "pauc.lod.syntheticDhHeadroomStableTicks";
+	private static final String SOLAS_SYNTHETIC_BALANCED_MAX_QUALITY_PROPERTY = "pauc.lod.solasSyntheticBalancedMaxQualityTier";
+	private static final String SOLAS_SYNTHETIC_HEADROOM_MAX_QUALITY_PROPERTY = "pauc.lod.solasSyntheticHeadroomMaxQualityTier";
 	private static final String EMERGENCY_GENERATION_CAP_PROPERTY = "pauc.lod.emergencyGenerationRequestCap";
 	private static final String SHADER_EMERGENCY_GENERATION_CAP_PROPERTY = "pauc.lod.shaderEmergencyGenerationRequestCap";
 	private static final int LOG_THROTTLE_TICKS = 100;
@@ -175,7 +177,12 @@ public final class PauCClientFpsGovernor {
 			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
 		}
 		if (shaderActive && dhMode == PauCLodShaderContext.DhShaderMode.SYNTHETIC_NATIVE) {
-			int stableHeadroomTicks = readInt(SYNTHETIC_DH_HEADROOM_STABLE_TICKS_PROPERTY, 90, 10, 600);
+			int stableHeadroomTicks = readInt(
+				SYNTHETIC_DH_HEADROOM_STABLE_TICKS_PROPERTY,
+				shaderFamily == PauCLodShaderProfiles.Family.SOLAS ? 180 : 90,
+				10,
+				600
+			);
 			if (policy == Policy.SHADER_HEADROOM && (deliveryRatio < 1.08D || queuePressure > 0.04D || qualityHeadroomStreak < stableHeadroomTicks)) {
 				policy = Policy.SHADER_BALANCED;
 			}
@@ -542,6 +549,16 @@ public final class PauCClientFpsGovernor {
 	private static QualityTier syntheticNativePresentationTier(QualityTier qualityTier) {
 		if (PauCLodShaderContext.effectiveDhMode() != PauCLodShaderContext.DhShaderMode.SYNTHETIC_NATIVE) {
 			return qualityTier;
+		}
+
+		if (PauCLodShaderProfiles.currentFamily() == PauCLodShaderProfiles.Family.SOLAS) {
+			QualityTier maxTier = switch (PauCLodShaderRuntime.pressure()) {
+				case RELIEF -> QualityTier.NEAR;
+				case BALANCED -> readQualityTier(SOLAS_SYNTHETIC_BALANCED_MAX_QUALITY_PROPERTY, QualityTier.MID);
+				case HEADROOM -> readQualityTier(SOLAS_SYNTHETIC_HEADROOM_MAX_QUALITY_PROPERTY, QualityTier.MID);
+				default -> QualityTier.MID;
+			};
+			return qualityTier.atMost(maxTier);
 		}
 
 		int polishStableTicks = readInt(SYNTHETIC_DH_POLISH_STABLE_TICKS_PROPERTY, 180, 20, 1200);

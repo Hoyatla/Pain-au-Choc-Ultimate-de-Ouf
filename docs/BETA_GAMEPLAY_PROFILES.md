@@ -37,6 +37,9 @@ Use for shader-pack gameplay where frame pacing and visual stability matter more
 - Minimum LOD generation request rate: 80 requests/s.
 - If the shader pack has no native DH terrain shader, PauC uses the late fallback LOD renderer.
 - CUDA remains active for terrain preparation/cache, but the flat CUDA proxy terrain is not drawn by default.
+- Photon and Solas use the native-synthetic DH terrain path when the shader pack has no explicit DH terrain program.
+- Solas disables synthetic DH shadow fallback by default to avoid mismatched cloud-shadow artifacts and to reduce GPU pressure.
+- Solas native-synthetic presentation is capped to `mid` by default for beta stability and FPS consistency.
 
 Override:
 
@@ -59,6 +62,13 @@ Debug-only shader proxy terrain:
 ```properties
 pauc.lod.cuda.proxyTerrainShaderFallback=true
 pauc.lod.shaderFallbackProxyPrepass=true
+```
+
+Solas beta overrides, if an older visual path is needed for diagnosis:
+
+```properties
+pauc.lod.shaderRuntime.solasSyntheticShadowFallback=true
+pauc.lod.solasSyntheticHeadroomMaxQualityTier=far
 ```
 
 ## Beta Smoke Test
