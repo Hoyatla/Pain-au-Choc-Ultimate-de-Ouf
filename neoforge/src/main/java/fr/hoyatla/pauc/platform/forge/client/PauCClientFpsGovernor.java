@@ -138,6 +138,18 @@ public final class PauCClientFpsGovernor {
 			gpuSnapshot.multiDrawIndirect(),
 			gpuSnapshot.bindlessIndirect()
 		);
+		PauCClientFluidityState.Snapshot fluiditySnapshot = PauCClientFluidityState.update(
+			minecraft,
+			fps,
+			targetFps,
+			steadyFps,
+			deliveryRatio,
+			queuePressure,
+			heapPressure,
+			shaderActive,
+			shaderFamily,
+			dhMode
+		);
 
 		if (!currentRuntime.equals(lastQualityRuntime)) {
 			lowFpsStreak = 0;
@@ -174,6 +186,12 @@ public final class PauCClientFpsGovernor {
 		} else if (highFpsStreak >= 3) {
 			policy = shaderActive ? Policy.SHADER_HEADROOM : Policy.VANILLA_HEADROOM;
 		} else {
+			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
+		}
+		if (fluiditySnapshot.band() == PauCClientFluidityState.Band.RELIEF) {
+			policy = shaderActive ? Policy.SHADER_RELIEF : Policy.VANILLA_RELIEF;
+		} else if (fluiditySnapshot.band() == PauCClientFluidityState.Band.BALANCED
+			&& (policy == Policy.SHADER_HEADROOM || policy == Policy.VANILLA_HEADROOM)) {
 			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
 		}
 		if (shaderActive && dhMode == PauCLodShaderContext.DhShaderMode.SYNTHETIC_NATIVE) {
@@ -218,6 +236,7 @@ public final class PauCClientFpsGovernor {
 		villageSevereHoldTicks = 0;
 		System.clearProperty(RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY);
 		PauCLodShaderRuntime.updatePerformance(false, PauCLodShaderProfiles.Family.GENERIC, -1, 0, 0.0D, false, false, false);
+		PauCClientFluidityState.reset();
 		clearDynamicOverrides();
 	}
 
@@ -259,6 +278,8 @@ public final class PauCClientFpsGovernor {
 			+ PauCLodShaderRuntime.describe()
 			+ ", "
 			+ PauCClientSurfaceLodMode.describeState()
+			+ ", "
+			+ PauCClientFluidityState.describeState()
 			+ "]";
 	}
 
@@ -304,7 +325,7 @@ public final class PauCClientFpsGovernor {
 				scale = Math.max(scale, 0.92D);
 			}
 		}
-		return scale;
+		return PauCClientFluidityState.adjustWarmupScale(scale);
 	}
 
 	public static double meshBudgetScale() {
@@ -312,15 +333,14 @@ public final class PauCClientFpsGovernor {
 			return 1.0D;
 		}
 		boolean highTargetVanilla = highTargetVanillaMode();
+		double scale;
 		if (villageSeverePressure) {
-			return readDouble("pauc.lod.villageSevereMeshBudgetScale", 0.45D, 0.20D, 1.0D);
-		}
-		if (PauCClientChunkPriorityScorer.isMovementCatchupActive()) {
-			return highTargetVanilla
+			scale = readDouble("pauc.lod.villageSevereMeshBudgetScale", 0.45D, 0.20D, 1.0D);
+		} else if (PauCClientChunkPriorityScorer.isMovementCatchupActive()) {
+			scale = highTargetVanilla
 				? readDouble("pauc.lod.vanillaHighTargetCatchupMeshBudgetScale", 0.92D, 0.35D, 1.0D)
 				: 1.0D;
-		}
-		if (isUnderPressure()) {
+		} else if (isUnderPressure()) {
 			double pressureScale = readDouble("pauc.lod.pressureMeshBudgetScale", 0.75D, 0.35D, 1.0D);
 			if (highTargetVanilla) {
 				pressureScale = Math.min(
@@ -328,11 +348,13 @@ public final class PauCClientFpsGovernor {
 					readDouble("pauc.lod.vanillaHighTargetPressureMeshBudgetScale", 0.68D, 0.20D, 1.0D)
 				);
 			}
-			return pressureScale;
+			scale = pressureScale;
+		} else {
+			scale = highTargetVanilla
+				? readDouble("pauc.lod.vanillaHighTargetMeshBudgetScale", 0.78D, 0.35D, 1.0D)
+				: 1.0D;
 		}
-		return highTargetVanilla
-			? readDouble("pauc.lod.vanillaHighTargetMeshBudgetScale", 0.78D, 0.35D, 1.0D)
-			: 1.0D;
+		return PauCClientFluidityState.adjustMeshBudgetScale(scale);
 	}
 
 	private static void updateVillageSeverePressure(double ratio) {
@@ -377,9 +399,13 @@ public final class PauCClientFpsGovernor {
 	private static void applyPolicy(Policy policy, String reason) {
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		int configuredTarget = PauCLodClientSettings.configuredTargetDistanceChunks();
-		int targetDistance = readBoolean(ALLOW_DISTANCE_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicTargetDistanceReduction())
+		boolean dynamicDistanceAllowed = readBoolean(ALLOW_DISTANCE_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicTargetDistanceReduction());
+		int targetDistance = dynamicDistanceAllowed
 			? Math.min(configuredTarget, policy.targetDistanceChunks)
 			: configuredTarget;
+		if (dynamicDistanceAllowed) {
+			targetDistance = PauCClientFluidityState.adjustTargetDistance(configuredTarget, targetDistance);
+		}
 		PauCLodShaderProfiles.Family shaderFamily = PauCLodShaderProfiles.currentFamily();
 		boolean villagePressure = PauCVillagePerformanceDiagnostics.isVillagePressureActive();
 		boolean movementCatchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
@@ -397,6 +423,7 @@ public final class PauCClientFpsGovernor {
 		int visibleFillFloor = shaderActive
 			? readInt(SHADER_VISIBLE_FILL_GENERATION_FLOOR_PROPERTY, 256, 20, 512)
 			: readInt(VANILLA_VISIBLE_FILL_GENERATION_FLOOR_PROPERTY, highTargetVanillaMode() ? 160 : 192, 20, 512);
+		visibleFillFloor = PauCClientFluidityState.adjustVisibleFillFloor(visibleFillFloor);
 		if (!villageSeverePressure || stabilizeLodPresentation) {
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, visibleFillFloor);
 		}
@@ -415,6 +442,7 @@ public final class PauCClientFpsGovernor {
 					: readInt(MOVEMENT_CATCHUP_GENERATION_RATE_PROPERTY, shaderActive ? 256 : 224, 20, 384)
 			);
 		}
+		generationRequestRateLimit = PauCClientFluidityState.adjustGenerationRate(generationRequestRateLimit, movementCatchup);
 		if (!readBoolean(ALLOW_GENERATION_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicGenerationReduction())) {
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, PauCLodClientSettings.configuredGenerationRequestRateLimit());
 		}
@@ -429,6 +457,7 @@ public final class PauCClientFpsGovernor {
 		if (villageSeverePressure) {
 			retentionMarginChunks = Math.min(retentionMarginChunks, readInt(VILLAGE_SEVERE_RETENTION_MARGIN_PROPERTY, 12, 3, 12));
 		}
+		retentionMarginChunks = PauCClientFluidityState.adjustRetentionMargin(retentionMarginChunks);
 		setSystemPropertyIfChanged(DYNAMIC_TARGET_DISTANCE_PROPERTY, Integer.toString(targetDistance));
 		setSystemPropertyIfChanged(DYNAMIC_RETENTION_MARGIN_PROPERTY, Integer.toString(retentionMarginChunks));
 		setSystemPropertyIfChanged(DYNAMIC_GENERATION_RATE_PROPERTY, Integer.toString(generationRequestRateLimit));
@@ -447,7 +476,7 @@ public final class PauCClientFpsGovernor {
 			lastVillagePressure = villagePressure;
 			lastVillageSeverePressure = villageSeverePressure;
 			lastMovementCatchup = movementCatchup;
-			LOGGER.info("PauC FPS governor selected {} ({}, quality={}, targetDistance={}, generation={} /s, retention={}, resolution={}, horizontal={}, vertical={}, villagePressure={}, villageSevere={}, movementCatchup={}).",
+			LOGGER.info("PauC FPS governor selected {} ({}, quality={}, targetDistance={}, generation={} /s, retention={}, resolution={}, horizontal={}, vertical={}, villagePressure={}, villageSevere={}, movementCatchup={}, {}).",
 				policy.id,
 				reason + ", " + PauCLodGameplayProfile.describe(),
 				qualityLabel,
@@ -459,7 +488,8 @@ public final class PauCClientFpsGovernor {
 				verticalQuality,
 				villagePressure ? "on" : "off",
 				villageSeverePressure ? "on" : "off",
-				movementCatchup ? "on" : "off"
+				movementCatchup ? "on" : "off",
+				PauCClientFluidityState.describeState()
 			);
 		}
 	}
@@ -630,6 +660,7 @@ public final class PauCClientFpsGovernor {
 		lastMovementCatchup = false;
 		lastPolicy = Policy.STARTUP;
 		System.clearProperty(RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY);
+		PauCClientFluidityState.reset();
 		clearDynamicOverrides();
 	}
 

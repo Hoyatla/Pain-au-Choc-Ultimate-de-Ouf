@@ -1,7 +1,7 @@
 package fr.hoyatla.pauc.platform.forge.compat;
 
 import com.mojang.logging.LogUtils;
-import net.minecraftforge.fml.ModList;
+import fr.hoyatla.pauc.platform.PauCPlatformServices;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -65,20 +65,11 @@ public final class PauCCompatibilityGuards {
 	}
 
 	private static boolean isLoaded(String modId) {
-		try {
-			return ModList.get().isLoaded(modId);
-		} catch (RuntimeException | LinkageError ignored) {
-			return false;
-		}
+		return PauCPlatformServices.getInstance().isModLoaded(modId);
 	}
 
 	private static boolean classPresent(String className) {
-		try {
-			Class.forName(className, false, PauCCompatibilityGuards.class.getClassLoader());
-			return true;
-		} catch (ClassNotFoundException | LinkageError ignored) {
-			return false;
-		}
+		return PauCPlatformServices.getInstance().isClassPresent(className);
 	}
 
 	private static void setDefaultProperty(String key, String value) {

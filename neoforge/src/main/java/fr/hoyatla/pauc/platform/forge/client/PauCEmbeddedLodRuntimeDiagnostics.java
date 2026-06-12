@@ -7,7 +7,10 @@ import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 
 import javax.annotation.Nullable;
 import java.util.Locale;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 
@@ -17,6 +20,8 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 	private static final AtomicLong startedTasks = new AtomicLong();
 	private static final AtomicLong completedTasks = new AtomicLong();
 	private static final AtomicLong failedTasks = new AtomicLong();
+	private static final AtomicLong cancelledTasks = new AtomicLong();
+	private static final AtomicLong staleTaskCompletions = new AtomicLong();
 	private static final AtomicLong splitTasks = new AtomicLong();
 	private static final AtomicLong coarseFillReroutedTasks = new AtomicLong();
 	private static final AtomicLong coarseFillPreservedTasks = new AtomicLong();
@@ -33,17 +38,37 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 	private static final String COARSE_FILL_BALANCE_WINDOW_PROPERTY = "pauc.lod.coarseFillBalanceWindow";
 	private static final String FILL_PRESENTATION_MIN_COMPLETED_TASKS_PROPERTY = "pauc.lod.fillPresentationMinCompletedTasks";
 	private static final String FILL_PRESENTATION_BACKLOG_TASKS_PROPERTY = "pauc.lod.fillPresentationBacklogTasks";
+	private static volatile int activeQueueIdentity;
+	private static volatile int closingQueueIdentity;
 
 	private PauCEmbeddedLodRuntimeDiagnostics() {
 	}
 
+	public static void resetSession(WorldGenerationQueue queue) {
+		resetCounters();
+		activeQueueIdentity = queueIdentity(queue);
+		closingQueueIdentity = 0;
+		captureQueue(queue);
+	}
+
 	public static void onTaskSubmitted(WorldGenerationQueue queue, long pos, byte detailLevel, CompletableFuture<DataSourceRetrievalResult> future) {
+		int queueIdentity = ensureActiveQueue(queue);
 		submittedTasks.incrementAndGet();
 		increment(submittedByDetail, detailLevel);
 		captureQueue(queue);
 		future.whenComplete((result, throwable) -> {
+			if (!isActiveQueue(queueIdentity)) {
+				staleTaskCompletions.incrementAndGet();
+				return;
+			}
 			if (throwable != null) {
-				failedTasks.incrementAndGet();
+				if (isExpectedCancellation(throwable) || closingQueueIdentity == queueIdentity) {
+					cancelledTasks.incrementAndGet();
+				} else {
+					failedTasks.incrementAndGet();
+				}
+			} else if (closingQueueIdentity == queueIdentity) {
+				cancelledTasks.incrementAndGet();
 			} else if (result != null && result.state != null && "SUCCESS".equalsIgnoreCase(result.state.name())) {
 				completedTasks.incrementAndGet();
 				increment(completedByDetail, detailLevel);
@@ -58,6 +83,7 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 	}
 
 	public static void onTaskStarted(WorldGenerationQueue queue, DataSourceRetrievalTask task) {
+		ensureActiveQueue(queue);
 		if (task != null) {
 			startedTasks.incrementAndGet();
 			increment(startedByDetail, task.requestDetailLevel);
@@ -66,36 +92,29 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 	}
 
 	public static void captureQueue(@Nullable WorldGenerationQueue queue) {
-		if (queue == null) {
+		if (queue == null || !isActiveQueue(queueIdentity(queue))) {
 			return;
 		}
 		try {
-			int waitingTasks = Math.max(0, queue.getWaitingTaskCount());
-			int inProgressTasks = Math.max(0, queue.getInProgressTaskCount());
-			int queuedChunks = Math.max(0, queue.getQueuedChunkCount());
-			int rawRemainingTasks = Math.max(0, queue.getEstimatedRemainingTaskCount());
-			int rawRemainingChunks = Math.max(0, queue.getRetrievalEstimatedRemainingChunkCount());
-			int pendingTasks = Math.max(rawRemainingTasks, waitingTasks + inProgressTasks);
-			int pendingChunks = Math.max(rawRemainingChunks, queuedChunks);
-			double rollingAverageMs = queue.getRollingAverageChunkGenTimeInMs() != null
-				? queue.getRollingAverageChunkGenTimeInMs().getAverage()
-				: -1.0D;
+			QueueNumbers queueNumbers = captureQueueNumbers(queue);
 			lastQueueSnapshot = new QueueSnapshot(
 				true,
-				waitingTasks,
-				inProgressTasks,
-				queuedChunks,
-				rawRemainingTasks,
-				rawRemainingChunks,
-				pendingTasks,
-				pendingChunks,
+				queueNumbers.waitingTasks(),
+				queueNumbers.inProgressTasks(),
+				queueNumbers.queuedChunks(),
+				queueNumbers.rawRemainingTasks(),
+				queueNumbers.rawRemainingChunks(),
+				queueNumbers.pendingTasks(),
+				queueNumbers.pendingChunks(),
 				queue.lowestDataDetail(),
 				queue.highestDataDetail(),
-				rollingAverageMs,
+				queueNumbers.rollingAverageMs(),
 				submittedTasks.get(),
 				startedTasks.get(),
 				completedTasks.get(),
 				failedTasks.get(),
+				cancelledTasks.get(),
+				staleTaskCompletions.get(),
 				splitTasks.get(),
 				coarseFillReroutedTasks.get(),
 				coarseFillPreservedTasks.get()
@@ -103,6 +122,25 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		} catch (RuntimeException | LinkageError ignored) {
 			lastQueueSnapshot = QueueSnapshot.unavailable();
 		}
+	}
+
+	public static boolean markQueueClosing(WorldGenerationQueue queue) {
+		int queueIdentity = queueIdentity(queue);
+		if (!isActiveQueue(queueIdentity)) {
+			staleTaskCompletions.addAndGet(Math.max(0, pendingTaskCount(queue)));
+			return false;
+		}
+		closingQueueIdentity = queueIdentity;
+		captureQueue(queue);
+		return true;
+	}
+
+	public static String describeQueueClose(WorldGenerationQueue queue) {
+		if (!isActiveQueue(queueIdentity(queue))) {
+			return "plQueue[available=false, stale=true, pendingTasks=" + pendingTaskCount(queue) + "]";
+		}
+		captureQueue(queue);
+		return describeState();
 	}
 
 	public static byte adjustRequiredDetailForCoarseFill(@Nullable WorldGenerationQueue queue, byte requiredDataDetail) {
@@ -158,6 +196,10 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 			+ snapshot.splitTasks
 			+ ", failed="
 			+ snapshot.failedTasks
+			+ ", cancelled="
+			+ snapshot.cancelledTasks
+			+ ", stale="
+			+ snapshot.staleTaskCompletions
 			+ ", coarseReroutes="
 			+ snapshot.coarseFillReroutedTasks
 			+ ", coarsePreserves="
@@ -231,10 +273,76 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 	}
 
 	public static void resetSession() {
+		resetCounters();
+		activeQueueIdentity = 0;
+		closingQueueIdentity = 0;
+	}
+
+	private static int ensureActiveQueue(WorldGenerationQueue queue) {
+		int queueIdentity = queueIdentity(queue);
+		if (!isActiveQueue(queueIdentity)) {
+			resetSession(queue);
+		}
+		return queueIdentity;
+	}
+
+	private static int queueIdentity(@Nullable WorldGenerationQueue queue) {
+		return queue == null ? 0 : System.identityHashCode(queue);
+	}
+
+	private static boolean isActiveQueue(int queueIdentity) {
+		return queueIdentity != 0 && activeQueueIdentity == queueIdentity;
+	}
+
+	private static QueueNumbers captureQueueNumbers(WorldGenerationQueue queue) {
+		int waitingTasks = Math.max(0, queue.getWaitingTaskCount());
+		int inProgressTasks = Math.max(0, queue.getInProgressTaskCount());
+		int queuedChunks = Math.max(0, queue.getQueuedChunkCount());
+		int rawRemainingTasks = Math.max(0, queue.getEstimatedRemainingTaskCount());
+		int rawRemainingChunks = Math.max(0, queue.getRetrievalEstimatedRemainingChunkCount());
+		int pendingTasks = Math.max(rawRemainingTasks, waitingTasks + inProgressTasks);
+		int pendingChunks = Math.max(rawRemainingChunks, queuedChunks);
+		double rollingAverageMs = queue.getRollingAverageChunkGenTimeInMs() != null
+			? queue.getRollingAverageChunkGenTimeInMs().getAverage()
+			: -1.0D;
+		return new QueueNumbers(
+			waitingTasks,
+			inProgressTasks,
+			queuedChunks,
+			rawRemainingTasks,
+			rawRemainingChunks,
+			pendingTasks,
+			pendingChunks,
+			rollingAverageMs
+		);
+	}
+
+	private static int pendingTaskCount(WorldGenerationQueue queue) {
+		try {
+			return captureQueueNumbers(queue).pendingTasks();
+		} catch (RuntimeException | LinkageError ignored) {
+			return 0;
+		}
+	}
+
+	private static boolean isExpectedCancellation(Throwable throwable) {
+		Throwable current = throwable;
+		while (current != null) {
+			if (current instanceof CancellationException || current instanceof InterruptedException || current instanceof RejectedExecutionException) {
+				return true;
+			}
+			current = current instanceof CompletionException ? current.getCause() : current.getCause();
+		}
+		return false;
+	}
+
+	private static void resetCounters() {
 		submittedTasks.set(0L);
 		startedTasks.set(0L);
 		completedTasks.set(0L);
 		failedTasks.set(0L);
+		cancelledTasks.set(0L);
+		staleTaskCompletions.set(0L);
 		splitTasks.set(0L);
 		coarseFillReroutedTasks.set(0L);
 		coarseFillPreservedTasks.set(0L);
@@ -318,6 +426,18 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		return Math.max(0.0D, Math.min(1.0D, value));
 	}
 
+	private record QueueNumbers(
+		int waitingTasks,
+		int inProgressTasks,
+		int queuedChunks,
+		int rawRemainingTasks,
+		int rawRemainingChunks,
+		int pendingTasks,
+		int pendingChunks,
+		double rollingAverageMs
+	) {
+	}
+
 	private record QueueSnapshot(
 		boolean available,
 		int waitingTasks,
@@ -334,12 +454,14 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		long startedTasks,
 		long completedTasks,
 		long failedTasks,
+		long cancelledTasks,
+		long staleTaskCompletions,
 		long splitTasks,
 		long coarseFillReroutedTasks,
 		long coarseFillPreservedTasks
 	) {
 		private static QueueSnapshot unavailable() {
-			return new QueueSnapshot(false, 0, 0, 0, 0, 0, 0, 0, (byte) -1, (byte) -1, -1.0D, 0L, 0L, 0L, 0L, 0L, 0L, 0L);
+			return new QueueSnapshot(false, 0, 0, 0, 0, 0, 0, 0, (byte) -1, (byte) -1, -1.0D, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L);
 		}
 
 		private String describe() {

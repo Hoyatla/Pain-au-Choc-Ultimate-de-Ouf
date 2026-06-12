@@ -3,6 +3,7 @@ package fr.hoyatla.pauc.platform.forge.client;
 import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.platform.PauCPlatformServices;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientChunkCache;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -12,7 +13,6 @@ import fr.hoyatla.pauc.platform.forge.compat.PauCCompatModule;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.ChunkStatus;
-import net.minecraftforge.fml.ModList;
 import org.slf4j.Logger;
 
 import javax.annotation.Nullable;
@@ -359,12 +359,7 @@ public final class PauCClientChunkRetentionManager {
 	}
 
 	private static boolean isDistantHorizonsLoaded() {
-		try {
-			return ModList.get().isLoaded("distanthorizons");
-		} catch (RuntimeException exception) {
-			LOGGER.debug("PauC could not query the Distant Horizons mod state while gating hard chunk retention.", exception);
-			return false;
-		}
+		return PauCPlatformServices.getInstance().isModLoaded("distanthorizons");
 	}
 
 	private static boolean isShaderPipelineActive() {

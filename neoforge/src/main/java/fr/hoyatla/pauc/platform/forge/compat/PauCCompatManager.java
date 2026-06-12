@@ -1,9 +1,9 @@
 package fr.hoyatla.pauc.platform.forge.compat;
 
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.platform.PauCPlatformServices;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraftforge.fml.ModList;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -140,7 +140,7 @@ public final class PauCCompatManager {
 
 	private static boolean isModuleLoaded(PauCCompatModule module) {
 		String modId = module.getModId();
-		return modId == null || ModList.get().isLoaded(modId);
+		return modId == null || PauCPlatformServices.getInstance().isModLoaded(modId);
 	}
 
 	private static boolean readProperty(PauCCompatModule module) {

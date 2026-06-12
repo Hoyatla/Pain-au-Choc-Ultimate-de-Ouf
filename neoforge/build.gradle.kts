@@ -160,6 +160,11 @@ fun CopySpec.excludeEmbeddedDistantHorizonsLoader() {
     exclude("com/seibel/distanthorizons/cleanroom/**")
     exclude("com/seibel/distanthorizons/neoforge/**")
     exclude("com/seibel/distanthorizons/common/**/*_fabric.class")
+    exclude("com/seibel/distanthorizons/core/jar/installer/GitlabGetter.class")
+    exclude("com/seibel/distanthorizons/core/jar/installer/ModrinthGetter.class")
+    exclude("com/seibel/distanthorizons/core/jar/installer/WebDownloader.class")
+    exclude("com/seibel/distanthorizons/core/jar/updater/SelfUpdater.class")
+    exclude("dh_sqlite/util/ProcessRunner.class")
 }
 
 
@@ -250,6 +255,27 @@ val nativeSqliteJarReplacements = listOf(
     "dh_" to "pl_"
 )
 
+val releaseSafetyStrippedEntries = setOf(
+    "fr/hoyatla/pauc/lodruntime/core/jar/installer/GitlabGetter.class",
+    "fr/hoyatla/pauc/lodruntime/core/jar/installer/ModrinthGetter.class",
+    "fr/hoyatla/pauc/lodruntime/core/jar/installer/WebDownloader.class"
+)
+val releaseSafetyEntryChecks = mapOf(
+    "fr/hoyatla/pauc/lodruntime/core/jar/updater/SelfUpdater.class" to listOf(
+        "webdownloader",
+        "downloadasfile",
+        "execcommand",
+        "http://",
+        "https://"
+    ),
+    "pl_sqlite/util/ProcessRunner.class" to listOf(
+        "java/lang/processbuilder",
+        "java/lang/runtime",
+        "exec"
+    )
+)
+val releaseSafetyReplacementEntries = releaseSafetyEntryChecks.keys
+
 val privateAntlrJarReplacements = listOf(
     "org/antlr/v4/runtime" to "fr/pauc/antlr/v4/rtx",
     "org.antlr.v4.runtime" to "fr.pauc.antlr.v4.rtx"
@@ -323,6 +349,19 @@ fun shouldSanitizeNativeSqliteEntryContent(entryName: String): Boolean {
     val extension = lowerName.substringAfterLast('.', missingDelimiterValue = "")
     return extension in sanitizableNativeSqliteExtensions
         && (lowerName.startsWith("dh_sqlite/native/") || lowerName.startsWith("pl_sqlite/native/"))
+}
+
+fun loadReleaseSafetyReplacementBytes(entryName: String): ByteArray? {
+    if (entryName !in releaseSafetyReplacementEntries) {
+        return null
+    }
+
+    val replacementFile = layout.buildDirectory.dir("sourceSets/main").get().asFile.resolve(entryName)
+    return if (replacementFile.isFile) {
+        replacementFile.readBytes()
+    } else {
+        null
+    }
 }
 
 fun shouldPatchGlslTransformerJar(entryName: String): Boolean {
@@ -469,6 +508,10 @@ fun sanitizeJarBytes(inputBytes: ByteArray): ByteArray {
             val seenEntries = mutableSetOf<String>()
             generateSequence { jarInput.nextJarEntry }.forEach { inputEntry ->
                 val sanitizedName = replaceLegacyFragments(inputEntry.name)
+                if (sanitizedName in releaseSafetyStrippedEntries) {
+                    jarInput.closeEntry()
+                    return@forEach
+                }
                 if (!seenEntries.add(sanitizedName)) {
                     if (inputEntry.isDirectory) {
                         jarInput.closeEntry()
@@ -490,7 +533,7 @@ fun sanitizeJarBytes(inputBytes: ByteArray): ByteArray {
                 jarOutput.putNextEntry(outputEntry)
                 if (!inputEntry.isDirectory) {
                     val entryBytes = jarInput.readBytes()
-                    val sanitizedBytes = if (sanitizedName.endsWith(".jar")) {
+                    val sanitizedBytes = loadReleaseSafetyReplacementBytes(sanitizedName) ?: if (sanitizedName.endsWith(".jar")) {
                         val sanitizedNestedJarBytes = sanitizeJarBytes(entryBytes)
                         if (shouldPatchGlslTransformerJar(sanitizedName)) {
                             sanitizeGlslTransformerJarBytes(sanitizedNestedJarBytes)
@@ -570,6 +613,37 @@ fun collectForbiddenJarFragments(jarBytes: ByteArray, jarLabel: String): List<St
     return findings
 }
 
+fun collectReleaseSafetyFindings(jarBytes: ByteArray, jarLabel: String): List<String> {
+    val findings = mutableListOf<String>()
+    JarInputStream(ByteArrayInputStream(jarBytes)).use { jarInput ->
+        generateSequence { jarInput.nextJarEntry }.forEach { entry ->
+            if (entry.name in releaseSafetyStrippedEntries) {
+                findings += "$jarLabel!/${entry.name} should be absent"
+                jarInput.closeEntry()
+                return@forEach
+            }
+            if (!entry.isDirectory) {
+                val entryBytes = jarInput.readBytes()
+                if (entry.name.endsWith(".jar")) {
+                    findings += collectReleaseSafetyFindings(entryBytes, "$jarLabel!/${entry.name}")
+                } else {
+                    val patterns = releaseSafetyEntryChecks[entry.name]
+                    if (patterns != null) {
+                        val lowerText = entryBytes.toString(Charsets.ISO_8859_1).lowercase(Locale.ROOT)
+                        for (pattern in patterns) {
+                            if (lowerText.contains(pattern)) {
+                                findings += "$jarLabel!/${entry.name} contains $pattern"
+                            }
+                        }
+                    }
+                }
+            }
+            jarInput.closeEntry()
+        }
+    }
+    return findings
+}
+
 val sanitizeGeneratedJars by tasks.registering {
 	group = "build"
 	description = "Rewrites generated jars so they do not expose legacy Iris names."
@@ -589,12 +663,20 @@ val sanitizeGeneratedJars by tasks.registering {
         for (jar in jars) {
             val sanitizedBytes = sanitizeJarBytes(jar.readBytes())
             jar.writeBytes(sanitizedBytes)
-            val findings = collectForbiddenJarFragments(sanitizedBytes, jar.name)
-            if (findings.isNotEmpty()) {
+            val forbiddenFindings = collectForbiddenJarFragments(sanitizedBytes, jar.name)
+            if (forbiddenFindings.isNotEmpty()) {
                 throw GradleException(
                     "Generated jar still contains forbidden legacy names:\n"
-                        + findings.take(50).joinToString("\n")
-                        + if (findings.size > 50) "\n... and ${findings.size - 50} more" else ""
+                        + forbiddenFindings.take(50).joinToString("\n")
+                        + if (forbiddenFindings.size > 50) "\n... and ${forbiddenFindings.size - 50} more" else ""
+                )
+            }
+            val releaseSafetyFindings = collectReleaseSafetyFindings(sanitizedBytes, jar.name)
+            if (releaseSafetyFindings.isNotEmpty()) {
+                throw GradleException(
+                    "Generated jar still contains blocked updater/process execution behavior:\n"
+                        + releaseSafetyFindings.take(50).joinToString("\n")
+                        + if (releaseSafetyFindings.size > 50) "\n... and ${releaseSafetyFindings.size - 50} more" else ""
                 )
             }
             logger.lifecycle("Sanitized generated jar: ${jar.name}")
@@ -621,6 +703,7 @@ val paucJarScanReport by tasks.registering {
         lines += "jars=${jars.size}"
         for (jar in jars) {
             val findings = collectForbiddenJarFragments(jar.readBytes(), jar.name)
+            val releaseSafetyFindings = collectReleaseSafetyFindings(jar.readBytes(), jar.name)
             lines += ""
             lines += "jar=${jar.name}"
             lines += "size=${jar.length()}"
@@ -628,6 +711,11 @@ val paucJarScanReport by tasks.registering {
             findings.take(50).forEach { lines += "finding=$it" }
             if (findings.size > 50) {
                 lines += "finding=... and ${findings.size - 50} more"
+            }
+            lines += "releaseSafetyFindings=${releaseSafetyFindings.size}"
+            releaseSafetyFindings.take(50).forEach { lines += "releaseSafetyFinding=$it" }
+            if (releaseSafetyFindings.size > 50) {
+                lines += "releaseSafetyFinding=... and ${releaseSafetyFindings.size - 50} more"
             }
         }
         report.writeText(lines.joinToString(System.lineSeparator()), Charsets.UTF_8)
@@ -657,12 +745,18 @@ val paucMigrationAudit by tasks.registering {
         lines += "providedCapabilities=pauc_core,pauc_shader"
         for (jar in jars) {
             val findings = collectForbiddenJarFragments(jar.readBytes(), jar.name)
+            val releaseSafetyFindings = collectReleaseSafetyFindings(jar.readBytes(), jar.name)
             lines += ""
             lines += "jar=${jar.name}"
             lines += "legacyFindings=${findings.size}"
             if (findings.isNotEmpty()) {
                 blockers += findings
                 findings.take(50).forEach { lines += "legacyFinding=$it" }
+            }
+            lines += "releaseSafetyFindings=${releaseSafetyFindings.size}"
+            if (releaseSafetyFindings.isNotEmpty()) {
+                blockers += releaseSafetyFindings
+                releaseSafetyFindings.take(50).forEach { lines += "releaseSafetyFinding=$it" }
             }
         }
         report.writeText(lines.joinToString(System.lineSeparator()), Charsets.UTF_8)

@@ -20,6 +20,7 @@ This project is licensed under the GNU Lesser General Public License v3.0. See `
 - `common` is a shared source holder used by the Forge build.
 - `neoforge` produces the distributable jar.
 - Current beta release notes are in `docs/BETA_RELEASE_0.1.0.md`.
+- The NeoForge/latest Minecraft port track is in `docs/NEOFORGE_LATEST_PORT.md`.
 - `PROPRIETARY_FORGE_MIGRATION_PLAN.md` tracks the cleanup/replacement path for inherited renderer and LOD code.
 - `vendor` contains temporary reference dependencies used while PauC-owned replacements are being built.
 

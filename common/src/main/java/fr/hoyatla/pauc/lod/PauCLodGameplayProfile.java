@@ -78,7 +78,7 @@ public final class PauCLodGameplayProfile {
 	}
 
 	public enum Profile {
-		COMPETITIVE("competitive", 56, 10, false, false, true, 144),
+		COMPETITIVE("competitive", 56, 10, false, true, true, 144),
 		BALANCED("balanced", 60, 9, false, true, true, 112),
 		CINEMATIC("cinematic", 48, 7, false, true, true, 80);
 

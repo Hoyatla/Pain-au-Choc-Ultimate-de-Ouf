@@ -14,7 +14,7 @@ Use for fast first-person gameplay without shader packs.
 - Default LOD target: 56 chunks.
 - Recommended vanilla render distance: 10 chunks.
 - Does not change Minecraft video settings unless explicitly enabled.
-- Keeps LOD distance stable by default.
+- Lets the internal fluidity governor reduce PauC's own LOD target under pressure.
 - Allows generation throttling when FPS pressure is detected.
 - Uses a clipped vanilla-to-LOD boundary without shaders to keep moving terrain cleaner.
 - Minimum LOD generation request rate: 144 requests/s.
@@ -55,6 +55,26 @@ Opt-in only:
 
 ```properties
 pauc.lod.autoReduceVanillaDistance=true
+```
+
+## Fluidity Governor
+
+PauC now treats fluidity as an internal budget problem, not as a fixed FPS lock.
+The governor observes mod count, heap pressure, LOD queue pressure, shader
+runtime transitions, and measured FPS. It can then scale PauC's own work:
+
+- LOD target distance ceiling,
+- generation request rate,
+- warmup aggression,
+- mesh memory pressure,
+- retention margin,
+- visible-fill floor during coverage recovery.
+
+This does not edit Minecraft video settings or force a render-distance change.
+It only changes PauC runtime budgets and can be disabled with:
+
+```properties
+pauc.fluidity.enabled=false
 ```
 
 Debug-only shader proxy terrain:

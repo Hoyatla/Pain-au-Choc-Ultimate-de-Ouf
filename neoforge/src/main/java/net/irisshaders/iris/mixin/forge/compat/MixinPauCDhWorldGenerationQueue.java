@@ -32,8 +32,7 @@ public abstract class MixinPauCDhWorldGenerationQueue {
 
 	@Inject(method = "<init>", at = @At("RETURN"), remap = false, require = 0)
 	private void pauc$resetEmbeddedQueueDiagnostics(IDhApiWorldGenerator generator, IDhServerLevel level, CallbackInfo ci) {
-		PauCEmbeddedLodRuntimeDiagnostics.resetSession();
-		PauCEmbeddedLodRuntimeDiagnostics.captureQueue((WorldGenerationQueue) (Object) this);
+		PauCEmbeddedLodRuntimeDiagnostics.resetSession((WorldGenerationQueue) (Object) this);
 	}
 
 	@ModifyVariable(method = "submitRetrievalTask", at = @At("HEAD"), argsOnly = true, ordinal = 0, remap = false, require = 0)
@@ -62,11 +61,14 @@ public abstract class MixinPauCDhWorldGenerationQueue {
 
 	@Inject(method = "close", at = @At("HEAD"), remap = false)
 	private void pauc$interruptEmbeddedDhWorldGenOnLogout(CallbackInfo ci) {
-		PauCEmbeddedLodRuntimeDiagnostics.captureQueue((WorldGenerationQueue) (Object) this);
-		PAUC_LOGGER.info("PauC embedded PL queue diagnostics before close: {}.", PauCEmbeddedLodRuntimeDiagnostics.describeState());
-
+		WorldGenerationQueue queue = (WorldGenerationQueue) (Object) this;
+		boolean activeQueue = PauCEmbeddedLodRuntimeDiagnostics.markQueueClosing(queue);
+		PAUC_LOGGER.info("PauC embedded PL queue diagnostics before close: {}.", PauCEmbeddedLodRuntimeDiagnostics.describeQueueClose(queue));
 		if (!PauCRenderLifecycle.isClientLogoutInProgress() && !PauCClientRenderShutdownGuard.isShutdownInProgress()) {
 			return;
+		}
+		if (!activeQueue) {
+			PAUC_LOGGER.info("PauC ignored stale PL queue diagnostics during shutdown cleanup; executor cleanup still applies.");
 		}
 
 		try {
