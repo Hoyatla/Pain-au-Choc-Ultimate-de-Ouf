@@ -5,7 +5,9 @@ import com.seibel.distanthorizons.api.enums.config.EDhApiHorizontalQuality;
 import com.seibel.distanthorizons.api.enums.config.EDhApiMaxHorizontalResolution;
 import com.seibel.distanthorizons.api.enums.config.EDhApiVerticalQuality;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiDistantGeneratorMode;
+import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
+import fr.hoyatla.pauc.lod.PauCLodRange;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -42,6 +44,13 @@ public final class PauCClientSurfaceLodMode {
 	private static final String TALL_FEATURE_CAMERA_MARGIN_PROPERTY = "pauc.lod.surfaceOnlyTallFeatureCameraMargin";
 	private static final String FEATURE_TRANSITION_ENTER_TICKS_PROPERTY = "pauc.lod.featureTransitionEnterTicks";
 	private static final String FEATURE_TRANSITION_EXIT_TICKS_PROPERTY = "pauc.lod.featureTransitionExitTicks";
+	private static final String FEATURE_TRANSITION_REASON_SWITCH_TICKS_PROPERTY = "pauc.lod.featureTransitionReasonSwitchTicks";
+	private static final String FEATURE_TRANSITION_STICKY_TICKS_PROPERTY = "pauc.lod.featureTransitionStickyTicks";
+	private static final String FEATURE_TRANSITION_STICKY_CHUNK_RADIUS_PROPERTY = "pauc.lod.featureTransitionStickyChunkRadius";
+	private static final String FEATURE_TRANSITION_STICKY_SURFACE_DELTA_PROPERTY = "pauc.lod.featureTransitionStickySurfaceDelta";
+	private static final String TRANSIENT_SURFACE_RECOVERY_TICKS_PROPERTY = "pauc.lod.surfaceOnlyTransientRecoveryTicks";
+	private static final String TRANSIENT_SURFACE_RECOVERY_CHUNK_RADIUS_PROPERTY = "pauc.lod.surfaceOnlyTransientRecoveryChunkRadius";
+	private static final String TRANSIENT_SURFACE_RECOVERY_SURFACE_DELTA_PROPERTY = "pauc.lod.surfaceOnlyTransientRecoverySurfaceDelta";
 	private static final int LOG_THROTTLE_TICKS = 100;
 	private static final int[] SURFACE_SAMPLE_OFFSETS = {
 		0, 0,
@@ -69,14 +78,27 @@ public final class PauCClientSurfaceLodMode {
 	private static int featureTransitionTicks;
 	private static int nonFeatureTransitionTicks;
 	private static String featureTransitionReason = "";
+	private static String pendingFeatureTransitionReason = "";
 	private static FeaturePresentationMode featurePresentationMode = FeaturePresentationMode.NONE;
+	private static int featureReasonSwitchTicks;
+	private static int stickyFeatureTransitionTicks;
+	private static String stickyFeatureTransitionReason = "";
+	private static int stickyFeatureTransitionChunkX;
+	private static int stickyFeatureTransitionChunkZ;
+	private static int stickyFeatureTransitionSurfaceY = Integer.MIN_VALUE;
+	private static int transientSurfaceRecoveryTicks;
+	private static int transientSurfaceRecoveryChunkX;
+	private static int transientSurfaceRecoveryChunkZ;
+	private static int transientSurfaceRecoverySurfaceY = Integer.MIN_VALUE;
 
 	private PauCClientSurfaceLodMode() {
 	}
 
 	public static void onClientTick(Minecraft minecraft) {
-		SurfaceSample sample = sample(minecraft);
+		SurfaceSample sample = recoverTransientSurfaceSample(sample(minecraft));
+		sample = stabilizeFeatureBlockingSample(sample);
 		updateFeatureTransitionState(sample);
+		updateTransientSurfaceRecovery(sample);
 		PauCLodNearClipOverride.setFeatureTransitionMask(featureTransitionActive, featureTransitionReason);
 		SurfaceState previous = lastState;
 		boolean active = previous.active();
@@ -89,14 +111,14 @@ public final class PauCClientSurfaceLodMode {
 		} else {
 			nonSurfaceTicks++;
 			surfaceTicks = 0;
-			if (active && nonSurfaceTicks >= readInt(EXIT_TICKS_PROPERTY, 4, 0, 80)) {
+			if (active && nonSurfaceTicks >= readInt(EXIT_TICKS_PROPERTY, 12, 0, 80)) {
 				active = false;
 			}
 		}
 		if (sample.forceExit()) {
 			active = false;
 			surfaceTicks = 0;
-			nonSurfaceTicks = readInt(EXIT_TICKS_PROPERTY, 4, 0, 80);
+			nonSurfaceTicks = readInt(EXIT_TICKS_PROPERTY, 12, 0, 80);
 		}
 
 		SurfaceState state = new SurfaceState(
@@ -124,7 +146,18 @@ public final class PauCClientSurfaceLodMode {
 		featureTransitionTicks = 0;
 		nonFeatureTransitionTicks = 0;
 		featureTransitionReason = "";
+		pendingFeatureTransitionReason = "";
 		featurePresentationMode = FeaturePresentationMode.NONE;
+		featureReasonSwitchTicks = 0;
+		stickyFeatureTransitionTicks = 0;
+		stickyFeatureTransitionReason = "";
+		stickyFeatureTransitionChunkX = 0;
+		stickyFeatureTransitionChunkZ = 0;
+		stickyFeatureTransitionSurfaceY = Integer.MIN_VALUE;
+		transientSurfaceRecoveryTicks = 0;
+		transientSurfaceRecoveryChunkX = 0;
+		transientSurfaceRecoveryChunkZ = 0;
+		transientSurfaceRecoverySurfaceY = Integer.MIN_VALUE;
 		PauCLodNearClipOverride.setFeatureTransitionMask(false, "reset");
 	}
 
@@ -137,7 +170,7 @@ public final class PauCClientSurfaceLodMode {
 	}
 
 	public static boolean prefersAccurateFeatureLods() {
-		return featurePresentationMode.requiresAccuratePresentation();
+		return featurePresentationMode.requiresAccuratePresentation() && shouldHoldAccurateFeaturePresentation();
 	}
 
 	public static EDhApiMaxHorizontalResolution adjustMaxHorizontalResolution(EDhApiMaxHorizontalResolution requestedResolution) {
@@ -159,6 +192,9 @@ public final class PauCClientSurfaceLodMode {
 	}
 
 	public static String adjustVerticalQuality(String requestedQuality) {
+		if (prefersAccurateFeatureLods()) {
+			return EDhApiVerticalQuality.HIGH.name();
+		}
 		if (!isSurfaceOnlyActive() || !readBoolean(ALLOW_QUALITY_REDUCTION_PROPERTY, false)) {
 			return requestedQuality;
 		}
@@ -200,54 +236,56 @@ public final class PauCClientSurfaceLodMode {
 
 	private static SurfaceSample sample(Minecraft minecraft) {
 		if (!readBoolean(ENABLED_PROPERTY, true)) {
-			return SurfaceSample.inactive("disabled");
+			return SurfaceSample.inactive("disabled", 0, 0);
 		}
 		if (minecraft == null || minecraft.level == null || minecraft.player == null || minecraft.gameRenderer == null) {
-			return SurfaceSample.inactive("no-client-level");
+			return SurfaceSample.inactive("no-client-level", 0, 0);
 		}
 		if (minecraft.gameRenderer.getMainCamera().getFluidInCamera() != FogType.NONE) {
-			return SurfaceSample.inactive("camera-in-fluid");
+			return SurfaceSample.inactive("camera-in-fluid", 0, 0);
 		}
 
 		ClientLevel level = minecraft.level;
 		BlockPos cameraPos = BlockPos.containing(minecraft.gameRenderer.getMainCamera().getPosition());
+		int cameraChunkX = cameraPos.getX() >> 4;
+		int cameraChunkZ = cameraPos.getZ() >> 4;
 		int cameraY = cameraPos.getY();
-		if (!level.hasChunk(cameraPos.getX() >> 4, cameraPos.getZ() >> 4)) {
-			return SurfaceSample.inactive("local-chunk-unavailable");
+		if (!level.hasChunk(cameraChunkX, cameraChunkZ)) {
+			return SurfaceSample.inactive("local-chunk-unavailable", cameraChunkX, cameraChunkZ);
 		}
 
 		int minY = readInt(MIN_Y_PROPERTY, 48, -64, 320);
 		if (cameraY < minY) {
-			return SurfaceSample.of(false, "below-surface-y", cameraY, Integer.MIN_VALUE);
+			return SurfaceSample.of(false, "below-surface-y", cameraY, Integer.MIN_VALUE, cameraChunkX, cameraChunkZ);
 		}
 
 		int minSurfaceY = readInt(MIN_SURFACE_Y_PROPERTY, 0, -64, 320);
 		int surfaceY = sampleSurfaceY(level, cameraPos);
 		if (surfaceY <= level.getMinBuildHeight() + 1) {
 			if (readBoolean(ESTIMATE_FROM_CAMERA_PROPERTY, true) && cameraY >= minSurfaceY + 16) {
-				return SurfaceSample.of(true, "surface-height-estimated", cameraY, cameraY);
+				return SurfaceSample.of(true, "surface-height-estimated", cameraY, cameraY, cameraChunkX, cameraChunkZ);
 			}
-			return SurfaceSample.forceInactive("surface-height-unavailable", cameraY, surfaceY);
+			return SurfaceSample.of(false, "surface-height-unavailable", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 		if (surfaceY < minSurfaceY) {
-			return SurfaceSample.forceInactive("surface-height-too-low", cameraY, surfaceY);
+			return SurfaceSample.of(false, "surface-height-too-low", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 
 		int tolerance = readInt(SURFACE_TOLERANCE_PROPERTY, 6, 0, 32);
 		if (cameraY < surfaceY - tolerance) {
-			return SurfaceSample.of(false, "below-local-surface", cameraY, surfaceY);
+			return SurfaceSample.of(false, "below-local-surface", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 		if (readBoolean(DENSE_VEGETATION_DISABLE_PROPERTY, true) && isDenseVegetationAroundCamera(level, cameraPos, cameraY, surfaceY)) {
-			return SurfaceSample.forceInactive("dense-vegetation", cameraY, surfaceY);
+			return SurfaceSample.of(false, "dense-vegetation", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 		String tallFeatureReason = readBoolean(TALL_FEATURE_DISABLE_PROPERTY, true)
 			? tallFeatureReason(level, cameraPos, cameraY)
 			: null;
 		if (tallFeatureReason != null) {
-			return SurfaceSample.forceInactive(tallFeatureReason, cameraY, surfaceY);
+			return SurfaceSample.of(false, tallFeatureReason, cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 
-		return SurfaceSample.of(true, "surface-stable", cameraY, surfaceY);
+		return SurfaceSample.of(true, "surface-stable", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 	}
 
 	private static int sampleSurfaceY(ClientLevel level, BlockPos center) {
@@ -479,6 +517,18 @@ public final class PauCClientSurfaceLodMode {
 		}
 	}
 
+	private static double readDouble(String key, double fallback, double min, double max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Double.parseDouble(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
 	private static <T extends Enum<T>> T readEnum(String key, Class<T> enumType, T fallback) {
 		String rawValue = System.getProperty(key);
 		if (rawValue == null || rawValue.isBlank()) {
@@ -499,7 +549,7 @@ public final class PauCClientSurfaceLodMode {
 		return current.available() == previous.available()
 			&& current.active() == previous.active()
 			&& current.candidate() == previous.candidate()
-			&& current.reason().equals(previous.reason());
+			&& sameReasonFamily(current.reason(), previous.reason());
 	}
 
 	private static boolean shouldRequestFeatureTransitionMask(SurfaceSample sample) {
@@ -511,16 +561,157 @@ public final class PauCClientSurfaceLodMode {
 		return "dense-vegetation".equals(reason) || reason.startsWith("tall-local-features");
 	}
 
+	private static boolean shouldHoldAccurateFeaturePresentation() {
+		if (!featureTransitionActive || PauCClientChunkPriorityScorer.isMovementCatchupActive()) {
+			return false;
+		}
+		if (PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation()
+			|| PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()) {
+			return false;
+		}
+		if (PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() > readDouble("pauc.lod.featureAccuratePresentationMaxQueuePressure", 0.05D, 0.0D, 1.0D)) {
+			return false;
+		}
+		if (PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() > readInt("pauc.lod.featureAccuratePresentationMaxBacklogTasks", 2, 0, 128)) {
+			return false;
+		}
+		if (PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() > readInt("pauc.lod.featureAccuratePresentationMaxPendingChunks", 48, 0, 2048)) {
+			return false;
+		}
+		int configuredTarget = PauCLodClientSettings.configuredTargetDistanceChunks();
+		int maxAccurateTarget = readInt(
+			"pauc.lod.featureAccuratePresentationMaxTarget",
+			24,
+			PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS,
+			PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS
+		);
+		return configuredTarget <= maxAccurateTarget;
+	}
+
+	private static SurfaceSample stabilizeFeatureBlockingSample(SurfaceSample sample) {
+		if (sample == null) {
+			return SurfaceSample.inactive("sample-null", 0, 0);
+		}
+		if (!sample.available()) {
+			clearStickyFeatureTransition();
+			return sample;
+		}
+		if (shouldRequestFeatureTransitionMask(sample)) {
+			stickyFeatureTransitionTicks = readInt(FEATURE_TRANSITION_STICKY_TICKS_PROPERTY, 16, 0, 80);
+			stickyFeatureTransitionReason = sample.reason();
+			stickyFeatureTransitionChunkX = sample.cameraChunkX();
+			stickyFeatureTransitionChunkZ = sample.cameraChunkZ();
+			stickyFeatureTransitionSurfaceY = sample.surfaceY();
+			return sample;
+		}
+		if (stickyFeatureTransitionTicks <= 0 || stickyFeatureTransitionReason.isBlank()) {
+			clearStickyFeatureTransition();
+			return sample;
+		}
+		boolean sameRegion = Math.max(
+			Math.abs(sample.cameraChunkX() - stickyFeatureTransitionChunkX),
+			Math.abs(sample.cameraChunkZ() - stickyFeatureTransitionChunkZ)
+		) <= readInt(FEATURE_TRANSITION_STICKY_CHUNK_RADIUS_PROPERTY, 1, 0, 4);
+		int stickySurfaceDelta = readInt(FEATURE_TRANSITION_STICKY_SURFACE_DELTA_PROPERTY, 10, 0, 64);
+		boolean similarSurface = !isFiniteSurface(stickyFeatureTransitionSurfaceY)
+			|| !isFiniteSurface(sample.surfaceY())
+			|| Math.abs(sample.surfaceY() - stickyFeatureTransitionSurfaceY) <= stickySurfaceDelta;
+		if (!sameRegion || !similarSurface) {
+			clearStickyFeatureTransition();
+			return sample;
+		}
+		stickyFeatureTransitionTicks--;
+		return SurfaceSample.of(
+			false,
+			stickyFeatureTransitionReason,
+			sample.cameraY(),
+			sample.surfaceY(),
+			sample.cameraChunkX(),
+			sample.cameraChunkZ()
+		);
+	}
+
+	private static SurfaceSample recoverTransientSurfaceSample(SurfaceSample sample) {
+		if (sample == null || !sample.available() || sample.candidate()) {
+			return sample;
+		}
+		if (!isTransientSurfaceReason(sample.reason())) {
+			return sample;
+		}
+		if (transientSurfaceRecoveryTicks <= 0 || !isFiniteSurface(transientSurfaceRecoverySurfaceY)) {
+			return sample;
+		}
+
+		int chunkRadius = readInt(TRANSIENT_SURFACE_RECOVERY_CHUNK_RADIUS_PROPERTY, 1, 0, 4);
+		boolean sameRegion = Math.max(
+			Math.abs(sample.cameraChunkX() - transientSurfaceRecoveryChunkX),
+			Math.abs(sample.cameraChunkZ() - transientSurfaceRecoveryChunkZ)
+		) <= chunkRadius;
+		if (!sameRegion) {
+			return sample;
+		}
+
+		int surfaceDelta = readInt(TRANSIENT_SURFACE_RECOVERY_SURFACE_DELTA_PROPERTY, 24, 0, 128);
+		boolean compatibleSurface = !isFiniteSurface(sample.surfaceY())
+			|| Math.abs(sample.surfaceY() - transientSurfaceRecoverySurfaceY) <= surfaceDelta;
+		if (!compatibleSurface) {
+			return sample;
+		}
+
+		transientSurfaceRecoveryTicks--;
+		return SurfaceSample.of(
+			true,
+			"surface-stable-cache",
+			sample.cameraY(),
+			transientSurfaceRecoverySurfaceY,
+			sample.cameraChunkX(),
+			sample.cameraChunkZ()
+		);
+	}
+
+	private static void updateTransientSurfaceRecovery(SurfaceSample sample) {
+		if (sample != null && sample.available() && sample.candidate() && isFiniteSurface(sample.surfaceY())) {
+			transientSurfaceRecoveryTicks = readInt(TRANSIENT_SURFACE_RECOVERY_TICKS_PROPERTY, 12, 0, 80);
+			transientSurfaceRecoveryChunkX = sample.cameraChunkX();
+			transientSurfaceRecoveryChunkZ = sample.cameraChunkZ();
+			transientSurfaceRecoverySurfaceY = sample.surfaceY();
+			return;
+		}
+		if (transientSurfaceRecoveryTicks > 0) {
+			transientSurfaceRecoveryTicks--;
+			return;
+		}
+		transientSurfaceRecoverySurfaceY = Integer.MIN_VALUE;
+	}
+
 	private static void updateFeatureTransitionState(SurfaceSample sample) {
 		boolean requestTransition = shouldRequestFeatureTransitionMask(sample);
 		if (requestTransition) {
 			featureTransitionTicks++;
 			nonFeatureTransitionTicks = 0;
-			featureTransitionReason = sample.reason();
-			featurePresentationMode = FeaturePresentationMode.fromReason(sample.reason());
+			FeaturePresentationMode sampleMode = FeaturePresentationMode.fromReason(sample.reason());
+			if (featureTransitionReason.isBlank() || sampleMode != featurePresentationMode || sample.reason().equals(featureTransitionReason)) {
+				featureTransitionReason = sample.reason();
+				featurePresentationMode = sampleMode;
+				pendingFeatureTransitionReason = "";
+				featureReasonSwitchTicks = 0;
+			} else if (sample.reason().equals(pendingFeatureTransitionReason)) {
+				featureReasonSwitchTicks++;
+				if (featureReasonSwitchTicks >= readInt(FEATURE_TRANSITION_REASON_SWITCH_TICKS_PROPERTY, 4, 1, 40)) {
+					featureTransitionReason = sample.reason();
+					featurePresentationMode = sampleMode;
+					pendingFeatureTransitionReason = "";
+					featureReasonSwitchTicks = 0;
+				}
+			} else {
+				pendingFeatureTransitionReason = sample.reason();
+				featureReasonSwitchTicks = 1;
+			}
 		} else {
 			nonFeatureTransitionTicks++;
 			featureTransitionTicks = 0;
+			pendingFeatureTransitionReason = "";
+			featureReasonSwitchTicks = 0;
 		}
 
 		int enterTicks = readInt(FEATURE_TRANSITION_ENTER_TICKS_PROPERTY, 1, 0, 40);
@@ -531,25 +722,66 @@ public final class PauCClientSurfaceLodMode {
 		if (featureTransitionActive && !requestTransition && nonFeatureTransitionTicks >= exitTicks) {
 			featureTransitionActive = false;
 			featureTransitionReason = "";
+			pendingFeatureTransitionReason = "";
 			featurePresentationMode = FeaturePresentationMode.NONE;
+			featureReasonSwitchTicks = 0;
 		}
 		if (!featureTransitionActive && !requestTransition && nonFeatureTransitionTicks >= exitTicks) {
 			featureTransitionReason = "";
+			pendingFeatureTransitionReason = "";
 			featurePresentationMode = FeaturePresentationMode.NONE;
+			featureReasonSwitchTicks = 0;
 		}
 	}
 
-	private record SurfaceSample(boolean available, boolean candidate, boolean forceExit, String reason, int cameraY, int surfaceY) {
-		private static SurfaceSample inactive(String reason) {
-			return new SurfaceSample(false, false, false, reason, Integer.MIN_VALUE, Integer.MIN_VALUE);
+	private static boolean sameReasonFamily(String left, String right) {
+		if (left.equals(right)) {
+			return true;
+		}
+		return isFeatureReason(left) && isFeatureReason(right);
+	}
+
+	private static boolean isFeatureReason(String reason) {
+		return "dense-vegetation".equals(reason) || reason.startsWith("tall-local-features");
+	}
+
+	private static boolean isTransientSurfaceReason(String reason) {
+		return "surface-height-unavailable".equals(reason)
+			|| "surface-height-too-low".equals(reason);
+	}
+
+	private static boolean isFiniteSurface(int surfaceY) {
+		return surfaceY > Integer.MIN_VALUE / 2;
+	}
+
+	private static void clearStickyFeatureTransition() {
+		stickyFeatureTransitionTicks = 0;
+		stickyFeatureTransitionReason = "";
+		stickyFeatureTransitionChunkX = 0;
+		stickyFeatureTransitionChunkZ = 0;
+		stickyFeatureTransitionSurfaceY = Integer.MIN_VALUE;
+	}
+
+	private record SurfaceSample(
+		boolean available,
+		boolean candidate,
+		boolean forceExit,
+		String reason,
+		int cameraY,
+		int surfaceY,
+		int cameraChunkX,
+		int cameraChunkZ
+	) {
+		private static SurfaceSample inactive(String reason, int cameraChunkX, int cameraChunkZ) {
+			return new SurfaceSample(false, false, false, reason, Integer.MIN_VALUE, Integer.MIN_VALUE, cameraChunkX, cameraChunkZ);
 		}
 
-		private static SurfaceSample of(boolean candidate, String reason, int cameraY, int surfaceY) {
-			return new SurfaceSample(true, candidate, false, reason, cameraY, surfaceY);
+		private static SurfaceSample of(boolean candidate, String reason, int cameraY, int surfaceY, int cameraChunkX, int cameraChunkZ) {
+			return new SurfaceSample(true, candidate, false, reason, cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 
-		private static SurfaceSample forceInactive(String reason, int cameraY, int surfaceY) {
-			return new SurfaceSample(true, false, true, reason, cameraY, surfaceY);
+		private static SurfaceSample forceInactive(String reason, int cameraY, int surfaceY, int cameraChunkX, int cameraChunkZ) {
+			return new SurfaceSample(true, false, true, reason, cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 	}
 

@@ -30,7 +30,7 @@
     "options.pauc.lods.tooltip":  "Active ou désactive les LODs terrain PauC après la distance de vue vanilla.",
     "options.pauc.lodDistance":  "Distance LOD",
     "options.pauc.lodDistance.disabled":  "Distance LOD : OFF",
-    "options.pauc.lodDistance.tooltip":  "Définit la distance cible des LODs PauC. Les chunks vanilla restent prioritaires, puis PauC continue jusqu'à cette valeur.",
+    "options.pauc.lodDistance.tooltip":  "Définit le nombre d'anneaux LOD PauC ajoutés au-delà de la distance vanilla. Les chunks vanilla restent prioritaires, puis PauC prolonge l'horizon de cette valeur supplémentaire.",
     "options.pauc.lodClouds":  "Nuages LOD",
     "options.pauc.lodClouds.enabled":  "Nuages LOD : ON",
     "options.pauc.lodClouds.disabled":  "Nuages LOD : OFF",

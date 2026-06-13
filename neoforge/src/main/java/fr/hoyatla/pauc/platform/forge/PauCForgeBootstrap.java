@@ -45,6 +45,13 @@ public final class PauCForgeBootstrap {
 		}
 
 		initialized = true;
+		PauCIdentity.setRuntimeVersion(modVersion);
+		LOGGER.info(
+			"PauC bootstrap: modVersion={}, buildId={}, gitHash={}.",
+			PauCIdentity.runtimeVersion(),
+			PauCIdentity.buildId(),
+			PauCIdentity.buildGitHash()
+		);
 		PauCCompatibilityGuards.applyEarlyRuntimeGuards();
 		PauCCompatManager.bootstrap();
 		PauCScheduler.bootstrap();

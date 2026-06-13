@@ -15,7 +15,7 @@ public final class PauCLodShaderContext {
 	private static final String CONSERVATIVE_EMBEDDED_FALLBACK_PROPERTY = "pauc.lod.conservativeEmbeddedShaderFallback";
 	private static final String STICKY_COMPATIBILITY_PROPERTY = "pauc.lod.stickyShaderCompatibility";
 	private static final String HOLD_FRAMES_PROPERTY = "pauc.lod.transitionHoldFrames";
-	private static final int DEFAULT_HOLD_FRAMES = 6;
+	private static final int DEFAULT_HOLD_FRAMES = 4;
 	private static final int MAX_SCAN_FILES = 4096;
 	private static final long MAX_SCAN_FILE_BYTES = 262_144L;
 	private static final Map<String, Boolean> INCOMPATIBLE_SHADER_PACKS = new ConcurrentHashMap<>();
@@ -172,7 +172,7 @@ public final class PauCLodShaderContext {
 			return false;
 		}
 		return switch (PauCLodShaderProfiles.currentFamily()) {
-			case PHOTON, SOLAS -> true;
+			case BLISS, BSL, COMPLEMENTARY, PHOTON, RETHINKING, SOLAS -> true;
 			default -> false;
 		};
 	}

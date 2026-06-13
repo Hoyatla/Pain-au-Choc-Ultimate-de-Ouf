@@ -21,6 +21,13 @@ public final class PauCClientFluidityState {
 	private static final String MIN_GENERATION_SCALE_PROPERTY = "pauc.fluidity.minGenerationScale";
 	private static final String MIN_WARMUP_SCALE_PROPERTY = "pauc.fluidity.minWarmupScale";
 	private static final String MIN_MESH_SCALE_PROPERTY = "pauc.fluidity.minMeshScale";
+	private static final String RECOVERY_BACKLOG_CHUNKS_PROPERTY = "pauc.fluidity.recoveryBacklogChunks";
+	private static final String RECOVERY_AVG_CHUNK_MS_PROPERTY = "pauc.fluidity.recoveryAvgChunkMs";
+	private static final String RECOVERY_MAX_HEAP_RATIO_PROPERTY = "pauc.fluidity.recoveryMaxHeapRatio";
+	private static final String RECOVERY_MIN_FPS_RATIO_PROPERTY = "pauc.fluidity.recoveryMinFpsRatio";
+	private static final String RECOVERY_GENERATION_SCALE_PROPERTY = "pauc.fluidity.recoveryGenerationScale";
+	private static final String RECOVERY_WARMUP_SCALE_PROPERTY = "pauc.fluidity.recoveryWarmupScale";
+	private static final String RECOVERY_MESH_SCALE_PROPERTY = "pauc.fluidity.recoveryMeshScale";
 	private static final int CONFIG_RELOAD_TICKS = 100;
 	private static final int LOG_THROTTLE_TICKS = 200;
 	private static volatile Config config = Config.read();
@@ -77,13 +84,44 @@ public final class PauCClientFluidityState {
 		double packLoad = hugePack ? 0.38D : heavyPack ? 0.24D : mediumPack ? 0.10D : 0.0D;
 		double heapClassLoad = tightHeap ? 0.22D : constrainedHeap ? 0.12D : 0.0D;
 		double transitionLoad = shaderTransitionTicks > 0 ? 0.18D : 0.0D;
+		boolean queueAvailable = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable();
+		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
+		int backlogTasks = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks();
+		double avgChunkMs = PauCEmbeddedLodRuntimeDiagnostics.rollingAverageChunkMs();
+		boolean frameWatchdogSpike = readBoolean("pauc.runtime.frameWatchdogSpike", false);
+		boolean queueDrained = queueAvailable
+			&& pendingChunks <= readInt("pauc.lod.drainedQueuePendingChunks", 0, 0, 256)
+			&& backlogTasks <= readInt("pauc.lod.drainedQueueBacklogTasks", 0, 0, 64)
+			&& queuePressure <= readDouble("pauc.lod.drainedQueuePressure", 0.03D, 0.0D, 0.20D);
+		boolean queueNearlyDrained = queueAvailable
+			&& pendingChunks <= readInt("pauc.lod.nearlyDrainedQueuePendingChunks", 96, 0, 512)
+			&& backlogTasks <= readInt("pauc.lod.nearlyDrainedQueueBacklogTasks", 8, 0, 96)
+			&& queuePressure <= readDouble("pauc.lod.nearlyDrainedQueuePressure", 0.08D, 0.0D, 0.30D);
+		double fpsPressureScale = queueDrained ? 0.38D : queueNearlyDrained ? 0.72D : 1.0D;
+		fpsPressure *= fpsPressureScale;
+		rawFpsPressure *= queueDrained ? 0.34D : queueNearlyDrained ? 0.74D : 1.0D;
 		double pressure = clamp01(Math.max(Math.max(fpsPressure, rawFpsPressure * 0.8D), Math.max(queueLoad, heapLoad)) + packLoad + heapClassLoad + transitionLoad);
+		boolean externalFpsDip = queueDrained
+			&& !frameWatchdogSpike
+			&& heapPressure <= readDouble("pauc.lod.externalReliefMaxHeapRatio", 0.84D, 0.20D, 0.95D)
+			&& deliveryRatio >= readDouble("pauc.lod.externalReliefMinDeliveryRatio", 0.74D, 0.40D, 1.10D);
+		boolean recoveryCandidate = targetFps > 0
+			&& steadyFps >= targetFps * readDouble(RECOVERY_MIN_FPS_RATIO_PROPERTY, 0.76D, 0.40D, 1.50D)
+			&& heapPressure <= readDouble(RECOVERY_MAX_HEAP_RATIO_PROPERTY, 0.72D, 0.20D, 0.95D)
+			&& pendingChunks >= readInt(RECOVERY_BACKLOG_CHUNKS_PROPERTY, 768, 128, 32768)
+			&& avgChunkMs >= readDouble(RECOVERY_AVG_CHUNK_MS_PROPERTY, 120.0D, 20.0D, 2000.0D);
 		Band band = pressure >= 0.68D ? Band.RELIEF : pressure >= 0.32D ? Band.BALANCED : Band.HEADROOM;
+		if (recoveryCandidate) {
+			band = Band.RECOVERY;
+		}
 		if (rawFps > 0 && targetFps > 0 && rawFps < Math.max(24, targetFps / 2)) {
 			band = Band.RELIEF;
 		}
 		if (heapPressure > 0.92D || queuePressure > 0.32D) {
 			band = Band.RELIEF;
+		}
+		if (externalFpsDip && band == Band.RELIEF) {
+			band = Band.BALANCED;
 		}
 
 		double packScale = hugePack ? 0.82D : heavyPack ? 0.90D : 1.0D;
@@ -92,12 +130,30 @@ public final class PauCClientFluidityState {
 		double generationScale = clamp(1.08D - pressure * 0.58D, currentConfig.minGenerationScale, 1.18D) * packScale * heapScale * transitionScale;
 		double warmupScale = clamp(1.05D - pressure * 0.50D, currentConfig.minWarmupScale, 1.15D) * packScale * heapScale;
 		double meshScale = clamp(1.03D - pressure * 0.42D, currentConfig.minMeshScale, 1.08D) * heapScale;
+		if (band == Band.RECOVERY) {
+			generationScale = Math.max(generationScale, readDouble(RECOVERY_GENERATION_SCALE_PROPERTY, 1.24D, 1.0D, 2.0D));
+			warmupScale = Math.max(warmupScale, readDouble(RECOVERY_WARMUP_SCALE_PROPERTY, 1.18D, 1.0D, 2.0D));
+			meshScale = Math.max(meshScale, readDouble(RECOVERY_MESH_SCALE_PROPERTY, 1.16D, 1.0D, 2.0D));
+		}
 
 		int targetCeiling = targetDistanceCeiling(band, shaderActive, hugePack, heavyPack, constrainedHeap, heapPressure);
 		int retentionCeiling = retentionCeiling(band, shaderActive, hugePack, heavyPack, heapPressure);
 		int visibleFillFloorCeiling = visibleFillFloorCeiling(band, shaderActive, hugePack, heavyPack, heapPressure);
 		int emergencyGenerationCap = emergencyGenerationCap(band, shaderActive, hugePack, heavyPack, heapPressure);
-		String reason = reason(band, modCount, maxHeapMiB, heapPressure, queuePressure, deliveryRatio, shaderTransitionTicks);
+		String reason = reason(
+			band,
+			modCount,
+			maxHeapMiB,
+			heapPressure,
+			queuePressure,
+			deliveryRatio,
+			shaderTransitionTicks,
+			pendingChunks,
+			backlogTasks,
+			queueDrained,
+			externalFpsDip,
+			avgChunkMs
+		);
 
 		Snapshot snapshot = new Snapshot(
 			true,
@@ -142,6 +198,9 @@ public final class PauCClientFluidityState {
 		if (!snapshot.active || snapshot.targetDistanceCeiling <= 0) {
 			return policyTargetDistance;
 		}
+		if (!shouldClampTargetDistance(snapshot)) {
+			return configuredTargetDistance;
+		}
 		int ceiling = Math.min(configuredTargetDistance, snapshot.targetDistanceCeiling);
 		return Math.max(PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, Math.min(policyTargetDistance, ceiling));
 	}
@@ -164,7 +223,12 @@ public final class PauCClientFluidityState {
 			scaled = Math.min(scaled, snapshot.emergencyGenerationCap);
 		}
 		if (movementCatchup) {
-			scaled = Math.max(scaled, Math.min(generationRequestRateLimit, snapshot.band == Band.RELIEF ? 96 : 128));
+			int recoveryFloor = switch (snapshot.band) {
+				case RELIEF -> 72;
+				case RECOVERY -> 160;
+				case BALANCED, HEADROOM -> 96;
+			};
+			scaled = Math.max(scaled, Math.min(generationRequestRateLimit, recoveryFloor));
 		}
 		return Math.max(20, Math.min(384, scaled));
 	}
@@ -184,10 +248,13 @@ public final class PauCClientFluidityState {
 
 	public static double adjustMeshBudgetScale(double scale) {
 		Snapshot snapshot = lastSnapshot;
-		return snapshot.active ? Math.max(0.15D, Math.min(1.25D, scale * snapshot.meshScale)) : scale;
+		return snapshot.active ? Math.max(0.15D, Math.min(1.60D, scale * snapshot.meshScale)) : scale;
 	}
 
 	private static int targetDistanceCeiling(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, boolean constrainedHeap, double heapPressure) {
+		if (band == Band.RECOVERY) {
+			return 0;
+		}
 		if (band == Band.HEADROOM && !hugePack && heapPressure < 0.82D) {
 			return 0;
 		}
@@ -203,7 +270,34 @@ public final class PauCClientFluidityState {
 		return 0;
 	}
 
+	private static boolean shouldClampTargetDistance(Snapshot snapshot) {
+		if (snapshot.band == Band.RECOVERY || snapshot.pressure >= 0.92D) {
+			return true;
+		}
+		if (!PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return snapshot.band == Band.RELIEF && snapshot.pressure >= 0.82D;
+		}
+
+		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
+		int backlogTasks = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks();
+		double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
+		if (pendingChunks >= readInt("pauc.lod.distanceClampPendingChunks", 256, 0, 32768)) {
+			return true;
+		}
+		if (backlogTasks >= readInt("pauc.lod.distanceClampBacklogTasks", 24, 0, 4096)) {
+			return true;
+		}
+		if (backlogPressure >= readDouble("pauc.lod.distanceClampBacklogPressure", 0.12D, 0.0D, 1.0D)) {
+			return true;
+		}
+		return snapshot.band == Band.RELIEF
+			&& backlogPressure >= readDouble("pauc.lod.distanceClampReliefBacklogPressure", 0.05D, 0.0D, 1.0D);
+	}
+
 	private static int retentionCeiling(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, double heapPressure) {
+		if (band == Band.RECOVERY) {
+			return 0;
+		}
 		if (band == Band.RELIEF || heapPressure > 0.90D) {
 			return shaderActive ? 8 : 10;
 		}
@@ -214,6 +308,9 @@ public final class PauCClientFluidityState {
 	}
 
 	private static int visibleFillFloorCeiling(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, double heapPressure) {
+		if (band == Band.RECOVERY) {
+			return 0;
+		}
 		if (band == Band.RELIEF || heapPressure > 0.90D) {
 			return shaderActive ? 96 : 112;
 		}
@@ -227,6 +324,9 @@ public final class PauCClientFluidityState {
 	}
 
 	private static int emergencyGenerationCap(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, double heapPressure) {
+		if (band == Band.RECOVERY) {
+			return 0;
+		}
 		if (band == Band.RELIEF || heapPressure > 0.90D) {
 			return shaderActive ? 128 : hugePack ? 112 : 144;
 		}
@@ -243,7 +343,12 @@ public final class PauCClientFluidityState {
 		double heapPressure,
 		double queuePressure,
 		double deliveryRatio,
-		int shaderTransitionTicks
+		int shaderTransitionTicks,
+		int pendingChunks,
+		int backlogTasks,
+		boolean queueDrained,
+		boolean externalFpsDip,
+		double avgChunkMs
 	) {
 		return "fluidity[band="
 			+ band.id
@@ -257,6 +362,16 @@ public final class PauCClientFluidityState {
 			+ round(queuePressure * 100.0D)
 			+ "%, ratio="
 			+ round(deliveryRatio)
+			+ ", backlog="
+			+ pendingChunks
+			+ ", liveBacklog="
+			+ backlogTasks
+			+ ", queueDrained="
+			+ queueDrained
+			+ ", externalDip="
+			+ externalFpsDip
+			+ ", avgChunkMs="
+			+ (avgChunkMs >= 0.0D ? round(avgChunkMs) : "-")
 			+ ", shaderRecovery="
 			+ shaderTransitionTicks
 			+ "t]";
@@ -339,6 +454,7 @@ public final class PauCClientFluidityState {
 
 	public enum Band {
 		RELIEF("relief"),
+		RECOVERY("recovery"),
 		BALANCED("balanced"),
 		HEADROOM("headroom");
 
@@ -408,7 +524,7 @@ public final class PauCClientFluidityState {
 				readInt(HUGE_MOD_COUNT_PROPERTY, 200, heavyModCount, 800),
 				readInt(CONSTRAINED_HEAP_MIB_PROPERTY, 6144, 2048, 32768),
 				readInt(TIGHT_HEAP_MIB_PROPERTY, 4608, 2048, 32768),
-				readInt(SHADER_TRANSITION_HOLD_TICKS_PROPERTY, 220, 0, 1200),
+				readInt(SHADER_TRANSITION_HOLD_TICKS_PROPERTY, 120, 0, 1200),
 				readDouble(MIN_GENERATION_SCALE_PROPERTY, 0.42D, 0.20D, 1.0D),
 				readDouble(MIN_WARMUP_SCALE_PROPERTY, 0.45D, 0.20D, 1.0D),
 				readDouble(MIN_MESH_SCALE_PROPERTY, 0.55D, 0.20D, 1.0D)

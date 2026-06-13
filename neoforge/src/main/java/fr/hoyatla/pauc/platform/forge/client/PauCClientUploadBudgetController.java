@@ -28,7 +28,7 @@ public final class PauCClientUploadBudgetController {
 		int targetFps = PauCClientTargetFps.effectiveTargetFps(minecraft);
 		double frameTimeMs = fps > 0 ? (1000.0D / fps) : -1.0D;
 		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(targetFps);
-		int baseRefill = Math.max(4, budgetSnapshot.maxQueuedMeshSections() / 8);
+		int baseRefill = Math.max(5, budgetSnapshot.maxQueuedMeshSections() / 6);
 		int backlogPenalty = Math.max(0, rendererStats.scheduledJobs() - Math.max(2, rendererStats.totalThreads() * 2));
 		double fpsPenalty = fps > 0 ? clamp01((targetFps - fps) / (double) targetFps) : 0.35D;
 		refreshCachedScales(fpsFirstVanilla, aggressiveUpload);
@@ -37,15 +37,15 @@ public final class PauCClientUploadBudgetController {
 			* PauCLodShaderRuntime.uploadBudgetScale()
 			* directGpuScale
 			* cachedHighTargetUploadScale;
-		double refill = Math.max(1.0D, (baseRefill - (backlogPenalty * 1.25D)) * (1.0D - (fpsPenalty * 0.70D)) * refillScale);
+		double refill = Math.max(1.0D, (baseRefill - backlogPenalty) * (1.0D - (fpsPenalty * 0.58D)) * refillScale);
 		if (fps > 0 && fps < targetFps * 0.65D) {
-			refill = Math.min(refill, aggressiveUpload ? 3.0D : 2.0D);
+			refill = Math.min(refill, aggressiveUpload ? 4.0D : 3.0D);
 		}
 		double maxTokens = Math.max(
-			12.0D,
+			16.0D,
 			budgetSnapshot.maxQueuedMeshSections()
-				* (aggressiveUpload ? 1.0D : 0.75D)
-				* (fpsFirstVanilla ? 0.62D : 1.0D)
+				* (aggressiveUpload ? 1.05D : 0.85D)
+				* (fpsFirstVanilla ? 0.72D : 1.0D)
 		);
 		tokens = Math.min(maxTokens, tokens + refill);
 		lastFps = fps;
@@ -65,11 +65,11 @@ public final class PauCClientUploadBudgetController {
 			* (snapUploadMode ? cachedDirectGpuAggressiveScale : cachedDirectGpuNormalScale)
 			* (snapUploadMode ? cachedHighTargetBurstSnapScale : cachedHighTargetBurstNormalScale);
 		if (lastFps > 0 && lastFps < targetFps * 0.8D) {
-			multiplier *= lastFps < targetFps * 0.65D ? 0.55D : 0.8D;
+			multiplier *= lastFps < targetFps * 0.65D ? 0.65D : 0.85D;
 		}
 		int granted = Math.min(requestedSections, Math.max(0, (int) Math.floor(tokens * multiplier)));
 		if (granted <= 0 && (snapUploadMode || lastFps <= 0)) {
-			granted = Math.min(requestedSections, snapUploadMode ? 2 : 1);
+			granted = Math.min(requestedSections, snapUploadMode ? 3 : 2);
 		}
 		tokens = Math.max(0.0D, tokens - granted);
 		lastGrantedBudget = granted;
@@ -114,10 +114,10 @@ public final class PauCClientUploadBudgetController {
 	private static void refreshCachedScales(boolean fpsFirstVanilla, boolean aggressiveUpload) {
 		boolean directGpuUpload = PauCEmbeddedDhBridge.isDirectGpuUploadActive();
 		cachedDirectGpuNormalScale = directGpuUpload
-			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.16D, 1.0D, 1.75D)
+			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.22D, 1.0D, 1.75D)
 			: 1.0D;
 		cachedDirectGpuAggressiveScale = directGpuUpload
-			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.28D, 1.0D, 1.75D)
+			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.36D, 1.0D, 1.75D)
 			: 1.0D;
 		cachedHighTargetUploadScale = highTargetUploadScale(fpsFirstVanilla, aggressiveUpload);
 		cachedHighTargetBurstNormalScale = highTargetBurstScale(fpsFirstVanilla, false);
@@ -130,7 +130,7 @@ public final class PauCClientUploadBudgetController {
 		}
 		return readDouble(
 			"pauc.lod.vanillaHighTargetUploadBudgetScale",
-			aggressiveUpload ? 0.78D : 0.66D,
+			aggressiveUpload ? 0.86D : 0.74D,
 			0.25D,
 			1.0D
 		);
@@ -142,7 +142,7 @@ public final class PauCClientUploadBudgetController {
 		}
 		return readDouble(
 			"pauc.lod.vanillaHighTargetUploadBurstScale",
-			snapUploadMode ? 0.86D : 0.72D,
+			snapUploadMode ? 0.92D : 0.78D,
 			0.25D,
 			1.0D
 		);

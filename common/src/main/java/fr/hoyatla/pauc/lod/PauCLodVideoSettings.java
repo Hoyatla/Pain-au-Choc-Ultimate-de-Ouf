@@ -96,10 +96,13 @@ public final class PauCLodVideoSettings {
 			return Component.translatable("options.pauc.lodDistance.disabled");
 		}
 
+		Component extraDistance = Component.literal("+").append(
+			Component.translatable("options.chunks", PauCLodClientSettings.sanitizeTargetDistanceChunks(chunks))
+		);
 		return Component.translatable(
 			"options.generic_value",
 			option,
-			Component.translatable("options.chunks", PauCLodClientSettings.sanitizeTargetDistanceChunks(chunks))
+			extraDistance
 		);
 	}
 

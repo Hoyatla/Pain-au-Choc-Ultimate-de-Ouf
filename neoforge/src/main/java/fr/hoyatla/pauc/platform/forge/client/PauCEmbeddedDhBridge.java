@@ -23,6 +23,7 @@ import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
+import fr.hoyatla.pauc.platform.forge.diagnostics.PauCLodReloadDiagnostics;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.client.Minecraft;
@@ -195,8 +196,9 @@ public final class PauCEmbeddedDhBridge {
 			disabledRenderingApplied = false;
 			if (lastConfiguredTarget != targetDistance) {
 				LOGGER.info(
-					"PauC embedded DH bridge configured round LOD horizon to {} chunks from player target {} with quality horizontal={}, vertical={}, resolution={}.",
+					"PauC embedded DH bridge configured round LOD horizon to {} chunks from player extra target {} (absolute {}) with quality horizontal={}, vertical={}, resolution={}.",
 					targetDistance,
+					range.configuredExtraDistanceChunks(),
 					range.lodEndChunk(),
 					runtimeSettings.horizontalQuality(),
 					runtimeSettings.verticalQuality(),
@@ -269,16 +271,16 @@ public final class PauCEmbeddedDhBridge {
 		if (PauCClientFrontierWarmupManager.isActiveTravelFill() && !readBoolean(COARSE_FILL_REFRESH_DURING_TRAVEL_PROPERTY, false)) {
 			return;
 		}
-		if (expectedCells < 256) {
+		if (expectedCells < 384) {
 			return;
 		}
-		double minimumCoverageRatio = readDouble(COARSE_FILL_REFRESH_MIN_COVERAGE_PROPERTY, 0.58D, 0.05D, 0.95D);
+		double minimumCoverageRatio = readDouble(COARSE_FILL_REFRESH_MIN_COVERAGE_PROPERTY, 0.46D, 0.05D, 0.95D);
 		if (coverageRatio >= minimumCoverageRatio) {
 			return;
 		}
 
 		long now = System.currentTimeMillis();
-		long cooldownMs = readInt(COARSE_FILL_REFRESH_COOLDOWN_PROPERTY, 18_000, 5_000, 120_000);
+		long cooldownMs = readInt(COARSE_FILL_REFRESH_COOLDOWN_PROPERTY, 30_000, 5_000, 120_000);
 		if (now - lastCoarseFillRenderRefreshAtMillis < cooldownMs) {
 			return;
 		}
@@ -287,6 +289,7 @@ public final class PauCEmbeddedDhBridge {
 		}
 		if (!readBoolean(COARSE_FILL_ALLOW_GLOBAL_CACHE_CLEAR_PROPERTY, false)) {
 			lastCoarseFillRenderRefreshAtMillis = now;
+			PauCLodReloadDiagnostics.onCoarseRefreshRequested(false);
 			LOGGER.info(
 				"PauC skipped global PL render cache clear during coarse LOD fill: coverage={}/{}, ratio={}, {}.",
 				coveredCells,
@@ -301,6 +304,7 @@ public final class PauCEmbeddedDhBridge {
 			DhApi.Delayed.renderProxy.clearRenderDataCache();
 			lastCoarseFillRenderRefreshAtMillis = now;
 			coarseFillRenderRefreshes++;
+			PauCLodReloadDiagnostics.onCoarseRefreshRequested(true);
 			LOGGER.info(
 				"PauC requested PL render cache refresh for coarse LOD fill: coverage={}/{}, ratio={}, refreshes={}, {}.",
 				coveredCells,
@@ -384,17 +388,22 @@ public final class PauCEmbeddedDhBridge {
 		if (previousSignature.equals(signature)) {
 			return;
 		}
+		boolean shaderRuntimeChange = previousSignature.isShaderRuntimeChange(signature);
+		boolean qualityOnlyChange = previousSignature.isQualityOnlyChange(signature);
+		boolean presentationOnlyChange = !previousSignature.requiresMeshCacheClear(signature) && previousSignature.isShaderPresentationChange(signature);
+		PauCLodReloadDiagnostics.onSignatureChange(shaderRuntimeChange, qualityOnlyChange, presentationOnlyChange);
 		if (DhApi.Delayed.renderProxy == null) {
 			lastRenderGeometrySignature = signature;
 			return;
 		}
-		if (previousSignature.isShaderRuntimeChange(signature)
-			&& readBoolean(CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY, true)) {
+		if (shaderRuntimeChange
+			&& readBoolean(CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY, false)) {
 			clearRenderDataCacheForSignatureChange(previousSignature, signature, "shader runtime changed");
 			return;
 		}
 		if (!previousSignature.requiresMeshCacheClear(signature)) {
 			lastRenderGeometrySignature = signature;
+			PauCLodReloadDiagnostics.onCacheClearAvoided();
 			LOGGER.info(
 				"PauC kept the existing LOD render cache across a presentation-only change: {} -> {}.",
 				previousSignature.describe(),
@@ -402,8 +411,9 @@ public final class PauCEmbeddedDhBridge {
 			);
 			return;
 		}
-		if (previousSignature.isQualityOnlyChange(signature) && readBoolean(KEEP_RENDER_CACHE_ON_QUALITY_CHANGE_PROPERTY, true)) {
+		if (qualityOnlyChange && readBoolean(KEEP_RENDER_CACHE_ON_QUALITY_CHANGE_PROPERTY, true)) {
 			lastRenderGeometrySignature = signature;
+			PauCLodReloadDiagnostics.onCacheClearAvoided();
 			LOGGER.info(
 				"PauC kept existing LOD meshes visible while quality changes from coarse fill to refinement: {} -> {}.",
 				previousSignature.describe(),
@@ -413,6 +423,7 @@ public final class PauCEmbeddedDhBridge {
 		}
 		if (previousSignature.isShaderPresentationChange(signature) && readBoolean(KEEP_RENDER_CACHE_ON_SHADER_PRESENTATION_CHANGE_PROPERTY, true)) {
 			lastRenderGeometrySignature = signature;
+			PauCLodReloadDiagnostics.onCacheClearAvoided();
 			LOGGER.info(
 				"PauC kept existing LOD meshes visible across shader/fallback presentation change: {} -> {}.",
 				previousSignature.describe(),
@@ -421,11 +432,13 @@ public final class PauCEmbeddedDhBridge {
 			return;
 		}
 		if (shouldDeferRenderCacheClear(previousSignature, signature)) {
+			PauCLodReloadDiagnostics.onCacheClearDeferred();
 			logDeferredRenderCacheClear(previousSignature, signature);
 			return;
 		}
 		if (!readBoolean(CLEAR_RENDER_CACHE_ON_GEOMETRY_CHANGE_PROPERTY, true)) {
 			lastRenderGeometrySignature = signature;
+			PauCLodReloadDiagnostics.onCacheClearDisabled();
 			LOGGER.debug(
 				"PauC detected a LOD geometry mode change without clearing DH render cache: {} -> {}.",
 				previousSignature.describe(),
@@ -445,6 +458,7 @@ public final class PauCEmbeddedDhBridge {
 		try {
 			DhApi.Delayed.renderProxy.clearRenderDataCache();
 			lastRenderGeometrySignature = signature;
+			PauCLodReloadDiagnostics.onCacheClearExecuted();
 			LOGGER.info(
 				"PauC embedded DH bridge cleared DH render cache after {}: {} -> {}.",
 				reason,
@@ -457,9 +471,15 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	private static boolean shouldDeferRenderCacheClear(LodRenderGeometrySignature previousSignature, LodRenderGeometrySignature signature) {
+		boolean presentationSensitive = previousSignature.isQualityOnlyChange(signature)
+			|| previousSignature.isShaderPresentationChange(signature)
+			|| PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage();
+		boolean recoveredCoverage = PauCClientFrontierWarmupManager.hasRecoveredPresentationCoverage();
 		return readBoolean(DEFER_RENDER_CACHE_CLEAR_DURING_FILL_PROPERTY, true)
-			&& previousSignature.isQualityOnlyChange(signature)
-			&& PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation();
+			&& !previousSignature.isShaderRuntimeChange(signature)
+			&& presentationSensitive
+			&& !recoveredCoverage
+			&& (PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation() || PauCClientFrontierWarmupManager.isHotRestoreActive());
 	}
 
 	private static void logDeferredRenderCacheClear(LodRenderGeometrySignature previousSignature, LodRenderGeometrySignature signature) {

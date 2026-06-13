@@ -287,7 +287,8 @@ public final class PauCCudaWorker {
 		}
 		if (shouldRouteSmallBatchToCpu(sums.length, profile)) {
 			recordTerrainCpuRoute(profile);
-			lastTerrainStatus = "terrain-cpu:small-batch:" + profile.id() + "/" + sums.length + "<" + profile.minUsefulBatch();
+			int threshold = smallBatchCpuThreshold(profile);
+			lastTerrainStatus = "terrain-cpu:small-batch:" + profile.id() + "/" + sums.length + "<" + threshold + ":min=" + profile.minUsefulBatch();
 			return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
 		}
 		if (isTerrainAutoDisabledForBatch(sums.length, profile)) {
@@ -691,7 +692,7 @@ public final class PauCCudaWorker {
 	}
 
 	private static boolean shouldRouteSmallBatchToCpu(int count, TerrainProfile profile) {
-		return profile.routeSmallBatchToCpu() && count < profile.minUsefulBatch();
+		return profile.routeSmallBatchToCpu() && count < smallBatchCpuThreshold(profile);
 	}
 
 	private static void recordTerrainCost(int count, long cudaMicros, long cpuMicros, TerrainProfile profile) {
@@ -703,15 +704,15 @@ public final class PauCCudaWorker {
 		}
 
 		long samples = TERRAIN_COST_SAMPLES.get();
-		int requiredSamples = readInt(TERRAIN_PROFIT_SAMPLES_PROPERTY, 8, 2, 256);
+		int requiredSamples = readInt(TERRAIN_PROFIT_SAMPLES_PROPERTY, 12, 2, 256);
 		if (samples < requiredSamples) {
 			return;
 		}
 
 		long averageCuda = average(TERRAIN_CUDA_COST_MICROS.get(), samples);
 		long averageCpu = Math.max(1L, average(TERRAIN_CPU_COST_MICROS.get(), samples));
-		double maxRatio = readFloat(TERRAIN_PROFIT_MAX_RATIO_PROPERTY, 2.5F, 1.0F, 32.0F);
-		long minUsefulGpuMicros = readLong(TERRAIN_PROFIT_MIN_GPU_MICROS_PROPERTY, 250L, 10L, 20_000L);
+		double maxRatio = readFloat(TERRAIN_PROFIT_MAX_RATIO_PROPERTY, 3.25F, 1.0F, 32.0F);
+		long minUsefulGpuMicros = readLong(TERRAIN_PROFIT_MIN_GPU_MICROS_PROPERTY, 320L, 10L, 20_000L);
 		if (averageCuda > Math.max(minUsefulGpuMicros, Math.round(averageCpu * maxRatio))) {
 			TERRAIN_AUTO_DISABLED_PROFILES.add(profile.id());
 			lastTerrainStatus = terrainAutoDisabledStatus(profile);
@@ -733,24 +734,30 @@ public final class PauCCudaWorker {
 
 	private static TerrainProfile currentTerrainProfile() {
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
+		boolean hotRestore = PauCClientFrontierWarmupManager.isHotRestoreActive();
+		boolean recoveryBias = hotRestore || PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
 		if (!shaderActive) {
-			int defaultMinBatch = readInt(TERRAIN_MIN_USEFUL_BATCH_PROPERTY, 192, 8, 4096);
+			int defaultMinBatch = readInt(TERRAIN_MIN_USEFUL_BATCH_PROPERTY, 160, 8, 4096);
 			long defaultInterval = readLong(TERRAIN_INTERVAL_MS_PROPERTY, 160L, 0L, 5_000L);
+			if (recoveryBias) {
+				defaultMinBatch = Math.max(64, defaultMinBatch / 2);
+				defaultInterval = Math.max(20L, defaultInterval / 2L);
+			}
 			return new TerrainProfile(
-				"shader-off",
+				recoveryBias ? "shader-off-recovery" : "shader-off",
 				false,
 				readInt(VANILLA_TERRAIN_MIN_USEFUL_BATCH_PROPERTY, defaultMinBatch, 8, 4096),
 				readLong(VANILLA_TERRAIN_INTERVAL_MS_PROPERTY, defaultInterval, 0L, 5_000L),
-				readBoolean(VANILLA_TERRAIN_CPU_SMALL_BATCH_PROPERTY, readBoolean(TERRAIN_CPU_SMALL_BATCH_PROPERTY, true))
+				readBoolean(VANILLA_TERRAIN_CPU_SMALL_BATCH_PROPERTY, readBoolean(TERRAIN_CPU_SMALL_BATCH_PROPERTY, !recoveryBias))
 			);
 		}
 
 		PauCLodShaderRuntime.Pressure pressure = PauCLodShaderRuntime.pressure();
 		int baseMinBatch = switch (pressure) {
-			case RELIEF -> 72;
-			case BALANCED -> 48;
-			case HEADROOM -> 36;
-			default -> 48;
+			case RELIEF -> 60;
+			case BALANCED -> 40;
+			case HEADROOM -> 28;
+			default -> 40;
 		};
 		long baseIntervalMillis = switch (pressure) {
 			case RELIEF -> 110L;
@@ -758,9 +765,16 @@ public final class PauCCudaWorker {
 			case HEADROOM -> 45L;
 			default -> 75L;
 		};
+		if (recoveryBias) {
+			baseMinBatch = Math.max(24, baseMinBatch - 16);
+			baseIntervalMillis = Math.max(15L, baseIntervalMillis / 2L);
+		}
 		String pressureId = pressure == PauCLodShaderRuntime.Pressure.OFF
 			? "startup"
 			: pressure.name().toLowerCase(Locale.ROOT);
+		if (recoveryBias) {
+			pressureId += "-recovery";
+		}
 		String shaderMode = switch (PauCLodShaderContext.effectiveDhMode()) {
 			case EXPLICIT_NATIVE -> "native-explicit";
 			case SYNTHETIC_NATIVE -> "native-synthetic";
@@ -772,12 +786,53 @@ public final class PauCCudaWorker {
 			true,
 			readInt(SHADER_TERRAIN_MIN_USEFUL_BATCH_PROPERTY, baseMinBatch, 8, 4096),
 			readLong(SHADER_TERRAIN_INTERVAL_MS_PROPERTY, baseIntervalMillis, 0L, 5_000L),
-			readBoolean(SHADER_TERRAIN_CPU_SMALL_BATCH_PROPERTY, true)
+			readBoolean(SHADER_TERRAIN_CPU_SMALL_BATCH_PROPERTY, !recoveryBias)
 		);
 	}
 
 	private static long average(long total, long count) {
 		return count <= 0L ? 0L : Math.max(0L, Math.round(total / (double) count));
+	}
+
+	private static int smallBatchCpuThreshold(TerrainProfile profile) {
+		int minUsefulBatch = profile.minUsefulBatch();
+		int floor = profile.shaderActive()
+			? readInt("pauc.cuda.shaderTerrainSmallBatchFloor", 16, 8, 512)
+			: readInt("pauc.cuda.vanillaTerrainSmallBatchFloor", 24, 8, 512);
+		double scale = profile.shaderActive() ? 0.72D : 0.80D;
+		boolean fillCritical = PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
+			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| PauCClientFrontierWarmupManager.isHotRestoreActive()
+			|| PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
+		if (fillCritical) {
+			scale = Math.min(scale, profile.shaderActive()
+				? readFloat("pauc.cuda.shaderTerrainFillCriticalThresholdScale", 0.60F, 0.20F, 1.0F)
+				: readFloat("pauc.cuda.vanillaTerrainFillCriticalThresholdScale", 0.55F, 0.20F, 1.0F));
+		}
+		long cpuRoutes = terrainCpuRoutes(profile);
+		long cudaRoutes = terrainCudaRoutes(profile);
+		long routeSamples = cpuRoutes + cudaRoutes;
+		if (routeSamples >= readInt("pauc.cuda.terrainAdaptiveRouteSamples", 96, 8, 8192) && cpuRoutes > cudaRoutes * 2L) {
+			scale = Math.min(scale, profile.shaderActive()
+				? readFloat("pauc.cuda.shaderTerrainCpuDominanceThresholdScale", 0.74F, 0.20F, 1.0F)
+				: readFloat("pauc.cuda.vanillaTerrainCpuDominanceThresholdScale", 0.66F, 0.20F, 1.0F));
+		}
+		if (cudaRoutes >= readInt("pauc.cuda.terrainAdaptiveHealthySamples", 48, 4, 4096)
+			&& CUDA_THROTTLES.get() <= Math.max(4L, cudaRoutes / 4L)) {
+			scale = Math.min(scale, profile.shaderActive()
+				? readFloat("pauc.cuda.shaderTerrainHealthyThresholdScale", 0.84F, 0.20F, 1.0F)
+				: readFloat("pauc.cuda.vanillaTerrainHealthyThresholdScale", 0.78F, 0.20F, 1.0F));
+		}
+		int threshold = (int) Math.floor(minUsefulBatch * scale);
+		return Math.max(floor, Math.min(Math.max(floor, minUsefulBatch - 1), threshold));
+	}
+
+	private static long terrainCpuRoutes(TerrainProfile profile) {
+		return profile.shaderActive() ? TERRAIN_SHADER_CPU_ROUTES.get() : TERRAIN_VANILLA_CPU_ROUTES.get();
+	}
+
+	private static long terrainCudaRoutes(TerrainProfile profile) {
+		return profile.shaderActive() ? TERRAIN_SHADER_CUDA_ROUTES.get() : TERRAIN_VANILLA_CUDA_ROUTES.get();
 	}
 
 	private static Memory nulTerminated(String text) {

@@ -3,6 +3,7 @@ package fr.hoyatla.pauc.platform.forge.compat;
 import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientChunkRetentionManager;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientDistanceGovernor;
+import fr.hoyatla.pauc.platform.forge.client.PauCClientFrameMetrics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFpsGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientLodGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientRenderPrep;
@@ -126,6 +127,7 @@ public final class PauCCompatEventBridge {
 
 	@SubscribeEvent
 	public void onRenderLevelStage(RenderLevelStageEvent event) {
+		PauCClientFrameMetrics.onRenderStage(event.getStage());
 		PauCClientRenderPrep.onRenderStage(event.getStage());
 	}
 

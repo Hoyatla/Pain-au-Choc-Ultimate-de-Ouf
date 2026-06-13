@@ -1,6 +1,7 @@
 package fr.hoyatla.pauc.platform.forge.diagnostics;
 
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.PauCIdentity;
 import fr.hoyatla.pauc.lod.PauCLodDiagnostics;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientChunkRetentionManager;
@@ -60,6 +61,7 @@ public final class PauCPerformanceTelemetry {
 	private static String lastCudaLine = "not-captured";
 	private static String lastCompatLine = "not-captured";
 	private static String lastVillageLine = "not-captured";
+	private static String lastReloadLine = "not-captured";
 	private static boolean active;
 
 	private PauCPerformanceTelemetry() {
@@ -139,7 +141,11 @@ public final class PauCPerformanceTelemetry {
 			+ minFps
 			+ " min/"
 			+ maxFps
-			+ " max, target="
+			+ " max, frame="
+			+ PauCClientFrameMetrics.describeFrameTimes()
+			+ ", build="
+			+ PauCIdentity.buildId()
+			+ ", target="
 			+ PauCClientTargetFps.effectiveTargetFps()
 			+ ", below="
 			+ percent(belowTargetSamples, fpsSamples)
@@ -159,7 +165,9 @@ public final class PauCPerformanceTelemetry {
 			+ mib(lastMaxMemoryBytes)
 			+ "MiB, maxHeapUsed="
 			+ mib(maxUsedMemoryBytes)
-			+ "MiB]";
+			+ "MiB, antiReload="
+			+ lastReloadLine
+			+ "]";
 	}
 
 	private static void writeReport(String reason) {
@@ -171,14 +179,26 @@ public final class PauCPerformanceTelemetry {
 		Path reportDir = minecraft.gameDirectory.toPath().resolve("pauc_diagnostics");
 		Path reportPath = reportDir.resolve("performance-" + FILE_TIMESTAMP.format(Instant.now()) + ".json");
 		String json = "{\n"
+			+ "  \"buildId\": \"" + json(PauCIdentity.buildId()) + "\",\n"
+			+ "  \"buildVersion\": \"" + json(PauCIdentity.runtimeVersion()) + "\",\n"
+			+ "  \"buildGitHash\": \"" + json(PauCIdentity.buildGitHash()) + "\",\n"
 			+ "  \"reason\": \"" + json(reason) + "\",\n"
 			+ "  \"durationMs\": " + Math.max(0L, System.currentTimeMillis() - sessionStartedAtMs) + ",\n"
 			+ "  \"samples\": " + samples + ",\n"
 			+ "  \"fpsSamples\": " + fpsSamples + ",\n"
+			+ "  \"frameSamples\": " + PauCClientFrameMetrics.frameSampleCount() + ",\n"
 			+ "  \"targetFps\": " + PauCClientTargetFps.effectiveTargetFps() + ",\n"
 			+ "  \"averageFps\": " + averageFps() + ",\n"
 			+ "  \"minFps\": " + minFps + ",\n"
 			+ "  \"maxFps\": " + maxFps + ",\n"
+			+ "  \"averageFrameMs\": " + decimal(PauCClientFrameMetrics.averageFrameTimeMs()) + ",\n"
+			+ "  \"p99FrameMs\": " + decimal(PauCClientFrameMetrics.percentileFrameTimeMs(99.0D)) + ",\n"
+			+ "  \"p999FrameMs\": " + decimal(PauCClientFrameMetrics.percentileFrameTimeMs(99.9D)) + ",\n"
+			+ "  \"frameTimeHistogram\": \"" + json(PauCClientFrameMetrics.histogramSummary()) + "\",\n"
+			+ "  \"framePacingSleeps\": " + PauCClientFrameMetrics.pacingSleepCount() + ",\n"
+			+ "  \"framePacingSleepMs\": " + decimal(PauCClientFrameMetrics.pacingSleepMs()) + ",\n"
+			+ "  \"frameWatchdogSpikes\": " + PauCClientFrameMetrics.watchdogSpikeCount() + ",\n"
+			+ "  \"lastFrameWatchdogMs\": " + decimal(PauCClientFrameMetrics.lastWatchdogFrameMs()) + ",\n"
 			+ "  \"belowTargetPercent\": " + percent(belowTargetSamples, fpsSamples) + ",\n"
 			+ "  \"severeBelowTargetPercent\": " + percent(severeBelowTargetSamples, fpsSamples) + ",\n"
 			+ "  \"criticalFpsPercent\": " + percent(criticalFpsSamples, fpsSamples) + ",\n"
@@ -188,6 +208,22 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"heapUsedMiB\": " + mib(lastUsedMemoryBytes) + ",\n"
 			+ "  \"heapMaxMiB\": " + mib(lastMaxMemoryBytes) + ",\n"
 			+ "  \"heapPeakUsedMiB\": " + mib(maxUsedMemoryBytes) + ",\n"
+			+ "  \"antiReload\": {\n"
+			+ "    \"signatureChanges\": " + PauCLodReloadDiagnostics.signatureChanges() + ",\n"
+			+ "    \"shaderRuntimeChanges\": " + PauCLodReloadDiagnostics.shaderRuntimeChanges() + ",\n"
+			+ "    \"qualityOnlyChanges\": " + PauCLodReloadDiagnostics.qualityOnlyChanges() + ",\n"
+			+ "    \"presentationOnlyChanges\": " + PauCLodReloadDiagnostics.presentationOnlyChanges() + ",\n"
+			+ "    \"restoresQueued\": " + PauCLodReloadDiagnostics.restoresQueued() + ",\n"
+			+ "    \"restoresApplied\": " + PauCLodReloadDiagnostics.restoresApplied() + ",\n"
+			+ "    \"restores\": " + PauCLodReloadDiagnostics.restores() + ",\n"
+			+ "    \"swaps\": " + PauCLodReloadDiagnostics.swaps() + ",\n"
+			+ "    \"cacheClears\": " + PauCLodReloadDiagnostics.cacheClears() + ",\n"
+			+ "    \"cacheClearsAvoided\": " + PauCLodReloadDiagnostics.cacheClearAvoided() + ",\n"
+			+ "    \"cacheClearsDeferred\": " + PauCLodReloadDiagnostics.cacheClearDeferred() + ",\n"
+			+ "    \"cacheClearsDisabled\": " + PauCLodReloadDiagnostics.cacheClearDisabled() + ",\n"
+			+ "    \"coarseRefreshes\": " + PauCLodReloadDiagnostics.coarseRefreshes() + ",\n"
+			+ "    \"coarseRefreshSkips\": " + PauCLodReloadDiagnostics.coarseRefreshSkips() + "\n"
+			+ "  },\n"
 			+ "  \"summary\": \"" + json(describe()) + "\",\n"
 			+ "  \"lod\": \"" + json(lastLodLine) + "\",\n"
 			+ "  \"policy\": \"" + json(lastPolicyLine) + "\",\n"
@@ -201,6 +237,7 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"surfaceLod\": \"" + json(lastSurfaceLodLine) + "\",\n"
 			+ "  \"cuda\": \"" + json(lastCudaLine) + "\",\n"
 			+ "  \"village\": \"" + json(lastVillageLine) + "\",\n"
+			+ "  \"antiReloadSummary\": \"" + json(lastReloadLine) + "\",\n"
 			+ "  \"compatGuards\": \"" + json(lastCompatLine) + "\"\n"
 			+ "}\n";
 
@@ -242,7 +279,10 @@ public final class PauCPerformanceTelemetry {
 		lastCudaLine = "not-captured";
 		lastCompatLine = "not-captured";
 		lastVillageLine = "not-captured";
+		lastReloadLine = "not-captured";
 		lastDetailCaptureAtMs = 0L;
+		PauCClientFrameMetrics.reset();
+		PauCLodReloadDiagnostics.reset();
 		PauCVillagePerformanceDiagnostics.reset();
 		PauCCudaWorker.resetMetrics();
 	}
@@ -260,6 +300,7 @@ public final class PauCPerformanceTelemetry {
 		lastCudaLine = PauCCudaWorker.describeMetrics();
 		lastCompatLine = PauCCompatibilityGuards.describeState();
 		lastVillageLine = PauCVillagePerformanceDiagnostics.describeState();
+		lastReloadLine = PauCLodReloadDiagnostics.describeState();
 	}
 
 	private static int queryFps(Minecraft minecraft) {
@@ -291,6 +332,10 @@ public final class PauCPerformanceTelemetry {
 			.replace("\r", "\\r")
 			.replace("\n", "\\n")
 			.replace("\t", "\\t");
+	}
+
+	private static String decimal(double value) {
+		return value < 0.0D ? "-1" : String.format(Locale.ROOT, "%.3f", value);
 	}
 
 	private static long readLong(String key, long fallback, long min, long max) {

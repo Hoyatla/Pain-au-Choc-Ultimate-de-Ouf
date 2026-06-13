@@ -449,7 +449,7 @@ public final class PauCLodClientSettings {
 	}
 
 	private static int sanitizeMemoryBudgetMb(int value) {
-		return Math.max(256, Math.min(768, value));
+		return Math.max(256, Math.min(4096, value));
 	}
 
 	private static int sanitizeRetentionMarginChunks(int value) {
@@ -475,7 +475,8 @@ public final class PauCLodClientSettings {
 
 	private static int defaultMemoryBudgetMb() {
 		long maxMemoryMb = Runtime.getRuntime().maxMemory() / (1024L * 1024L);
-		return sanitizeMemoryBudgetMb((int) Math.max(256L, maxMemoryMb / 8L));
+		long heapShareBudgetMb = Math.round(maxMemoryMb * 0.15D);
+		return sanitizeMemoryBudgetMb((int) Math.max(256L, heapShareBudgetMb));
 	}
 
 	private static int defaultGenerationRequestRateLimit() {

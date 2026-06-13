@@ -68,7 +68,7 @@
     "options.pauc.lods.tooltip":  "Toggles PauC terrain LOD rendering after the vanilla view distance.",
     "options.pauc.lodDistance":  "LOD Distance",
     "options.pauc.lodDistance.disabled":  "LOD Distance: OFF",
-    "options.pauc.lodDistance.tooltip":  "Sets the PauC LOD target distance. Vanilla chunks render first, then PauC LODs continue up to this value.",
+    "options.pauc.lodDistance.tooltip":  "Sets how many PauC LOD rings are added beyond the vanilla view distance. Vanilla chunks render first, then PauC extends the horizon by this extra amount.",
     "options.pauc.lodClouds":  "LOD Clouds",
     "options.pauc.lodClouds.enabled":  "LOD Clouds: ON",
     "options.pauc.lodClouds.disabled":  "LOD Clouds: OFF",

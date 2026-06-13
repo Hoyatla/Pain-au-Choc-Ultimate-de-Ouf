@@ -1,3 +1,5 @@
+import java.io.ByteArrayOutputStream
+
 plugins {
     id("java-library")
     id("idea")
@@ -5,6 +7,24 @@ plugins {
 }
 
 sourceSets.create("desktop")
+
+fun readPaucGitHash(): String {
+    val output = ByteArrayOutputStream()
+    return try {
+        exec {
+            commandLine("git", "rev-parse", "--short=12", "HEAD")
+            standardOutput = output
+            isIgnoreExitValue = true
+        }
+        output.toString().trim().ifBlank { "unknown" }
+    } catch (ignored: Exception) {
+        "unknown"
+    }
+}
+
+val paucBuildVersion = rootProject.extra["MOD_VERSION"].toString()
+val paucGitHash = readPaucGitHash()
+val paucBuildId = "$paucBuildVersion+$paucGitHash"
 
 buildConfig {
     className("BuildConfig")
@@ -15,9 +35,15 @@ buildConfig {
     buildConfigField("ACTIVATE_RENDERDOC", false)
     buildConfigField("BETA_TAG", "")
     buildConfigField("BETA_VERSION", 0)
+    buildConfigField("PAUC_BUILD_VERSION", paucBuildVersion)
+    buildConfigField("PAUC_BUILD_GIT_HASH", paucGitHash)
+    buildConfigField("PAUC_BUILD_ID", paucBuildId)
 
     sourceSets.getByName("desktop") {
         buildConfigField("IS_SHARED_BETA", false)
+        buildConfigField("PAUC_BUILD_VERSION", paucBuildVersion)
+        buildConfigField("PAUC_BUILD_GIT_HASH", paucGitHash)
+        buildConfigField("PAUC_BUILD_ID", paucBuildId)
     }
 }
 

@@ -7,7 +7,7 @@ val MINECRAFT_VERSION by extra { "1.20.1" }
 val NEOFORGE_VERSION by extra { "47.4.20" }
 
 // https://semver.org/
-val MOD_VERSION by extra { "0.1.1" }
+val MOD_VERSION by extra { "0.2.0" }
 
 allprojects {
     apply(plugin = "java")

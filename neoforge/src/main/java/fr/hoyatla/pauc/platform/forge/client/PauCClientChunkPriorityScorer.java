@@ -256,11 +256,12 @@ public final class PauCClientChunkPriorityScorer {
 			int lead = readInt(HIGH_TARGET_WARM_RADIUS_LEAD_PROPERTY, 12, 4, 24);
 			targetRadius = Math.min(targetRadius, Math.min(roundHorizonRadius, range.lodEndChunk() + lead));
 		}
+		int maxConfiguredRadius = Math.max(renderDistance, roundHorizonRadius);
 		int configuredRadius = readInt(
 			FOG_PRELOAD_RADIUS_PROPERTY,
 			fpsFirstVanilla && !travelFill ? targetRadius : Math.min(roundHorizonRadius, targetRadius),
 			renderDistance,
-			PauCLodRange.filledSquareCornerDistanceChunks(PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS)
+			maxConfiguredRadius
 		);
 		int radiusCap = fpsFirstVanilla && !travelFill ? Math.min(roundHorizonRadius, targetRadius) : roundHorizonRadius;
 		return Math.max(baseWarmRadius, Math.min(configuredRadius, radiusCap));

@@ -8,24 +8,27 @@ public record PauCLodRange(
 ) {
 	public static final int DEFAULT_TARGET_DISTANCE_CHUNKS = 32;
 	public static final int MIN_RENDER_DISTANCE_CHUNKS = 2;
-	public static final int MAX_TARGET_DISTANCE_CHUNKS = 256;
+	public static final int MAX_TARGET_DISTANCE_CHUNKS = 96;
 
 	public static PauCLodRange disabled(int vanillaRenderDistanceChunks, int targetDistanceChunks) {
 		int vanilla = sanitizeVanillaDistance(vanillaRenderDistanceChunks);
-		int target = sanitizeTargetDistance(targetDistanceChunks);
-		return new PauCLodRange(false, vanilla, Math.min(vanilla + 1, target), target);
+		int targetExtra = sanitizeTargetDistance(targetDistanceChunks);
+		return new PauCLodRange(false, vanilla, vanilla + 1, vanilla + targetExtra);
 	}
 
 	public static PauCLodRange fromVanillaDistance(int vanillaRenderDistanceChunks, int targetDistanceChunks, boolean enabled) {
 		int vanilla = sanitizeVanillaDistance(vanillaRenderDistanceChunks);
-		int target = sanitizeTargetDistance(targetDistanceChunks);
+		int target = vanilla + sanitizeTargetDistance(targetDistanceChunks);
 		int start = vanilla + 1;
-		boolean active = enabled && start <= target;
-		return new PauCLodRange(active, vanilla, Math.min(start, target), target);
+		return new PauCLodRange(enabled, vanilla, start, target);
 	}
 
 	public int lodRadiusChunks() {
 		return enabled ? Math.max(0, lodEndChunk - lodStartChunk + 1) : 0;
+	}
+
+	public int configuredExtraDistanceChunks() {
+		return Math.max(0, lodEndChunk - vanillaRenderDistanceChunks);
 	}
 
 	public int filledSquareCornerDistanceChunks() {
@@ -104,9 +107,11 @@ public record PauCLodRange(
 			+ ", lod="
 			+ (enabled ? lodStartChunk + "-" + lodEndChunk : "inactive")
 			+ ", target="
-			+ lodEndChunk
+			+ configuredExtraDistanceChunks()
 			+ ", radius="
 			+ lodRadiusChunks()
+			+ ", absoluteTarget="
+			+ lodEndChunk
 			+ ", radialTarget="
 			+ lodEndChunk
 			+ ", roundHorizon="

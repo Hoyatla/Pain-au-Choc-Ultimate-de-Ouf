@@ -236,6 +236,30 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		return backlog > backlogLimit;
 	}
 
+	public static int pendingTasks() {
+		QueueSnapshot snapshot = lastQueueSnapshot;
+		return snapshot.available ? snapshot.pendingTasks : 0;
+	}
+
+	public static int pendingChunks() {
+		QueueSnapshot snapshot = lastQueueSnapshot;
+		return snapshot.available ? snapshot.pendingChunks : 0;
+	}
+
+	public static int backlogTasks() {
+		QueueSnapshot snapshot = lastQueueSnapshot;
+		return snapshot.available ? snapshot.waitingTasks + snapshot.inProgressTasks : 0;
+	}
+
+	public static boolean queueAvailable() {
+		return lastQueueSnapshot.available;
+	}
+
+	public static double rollingAverageChunkMs() {
+		QueueSnapshot snapshot = lastQueueSnapshot;
+		return snapshot.available ? snapshot.rollingAverageMs : -1.0D;
+	}
+
 	public static String describeFillPresentationState() {
 		QueueSnapshot snapshot = lastQueueSnapshot;
 		if (!snapshot.available) {
@@ -263,13 +287,17 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 			return 0.0D;
 		}
 
+		int liveBacklogTasks = snapshot.waitingTasks + snapshot.inProgressTasks;
 		double taskPressure = clamp01((snapshot.pendingTasks - 48) / 384.0D);
 		double chunkPressure = clamp01((snapshot.pendingChunks - 192) / 2048.0D);
 		double latencyPressure = snapshot.rollingAverageMs > 0.0D
 			? clamp01((snapshot.rollingAverageMs - 220.0D) / 480.0D)
 			: 0.0D;
-		double backlogPressure = clamp01((snapshot.waitingTasks + snapshot.inProgressTasks - 24) / 192.0D);
-		return clamp01((taskPressure * 0.34D) + (chunkPressure * 0.28D) + (latencyPressure * 0.20D) + (backlogPressure * 0.18D));
+		if (snapshot.pendingChunks < 256 && liveBacklogTasks < 32) {
+			latencyPressure *= 0.40D;
+		}
+		double backlogPressure = clamp01((liveBacklogTasks - 24) / 192.0D);
+		return clamp01((taskPressure * 0.34D) + (chunkPressure * 0.30D) + (latencyPressure * 0.12D) + (backlogPressure * 0.24D));
 	}
 
 	public static void resetSession() {
