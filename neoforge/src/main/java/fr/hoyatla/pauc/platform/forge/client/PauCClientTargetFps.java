@@ -1,17 +1,18 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
+import fr.hoyatla.pauc.lod.PauCLodGameplayProfile;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.minecraft.client.Minecraft;
 
 public final class PauCClientTargetFps {
 	private static final String TARGET_FPS_PROPERTY = "pauc.client.targetFps";
 	private static final int UNLIMITED_VANILLA_FRAMERATE_VALUE = 260;
-	private static final int DEFAULT_SHADER_ADAPTIVE_TARGET_FPS = 72;
-	private static final int DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS = 120;
-	private static final int MIN_SHADER_ADAPTIVE_TARGET_FPS = 45;
-	private static final int MAX_SHADER_ADAPTIVE_TARGET_FPS = 120;
-	private static final int MIN_VANILLA_ADAPTIVE_TARGET_FPS = 60;
-	private static final int MAX_VANILLA_ADAPTIVE_TARGET_FPS = 180;
+	private static final int DEFAULT_SHADER_ADAPTIVE_TARGET_FPS = 90;
+	private static final int DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS = 144;
+	private static final int MIN_SHADER_ADAPTIVE_TARGET_FPS = 72;
+	private static final int MAX_SHADER_ADAPTIVE_TARGET_FPS = 144;
+	private static final int MIN_VANILLA_ADAPTIVE_TARGET_FPS = 120;
+	private static final int MAX_VANILLA_ADAPTIVE_TARGET_FPS = 240;
 	private static volatile double shaderObservedFps = -1.0D;
 	private static volatile double vanillaObservedFps = -1.0D;
 
@@ -44,6 +45,7 @@ public final class PauCClientTargetFps {
 	}
 
 	private static int adaptiveUnlimitedTarget(Minecraft minecraft, boolean shaderActive) {
+		PauCLodGameplayProfile.Profile profile = PauCLodGameplayProfile.current();
 		int fps = PauCClientFrameMetrics.queryFps(minecraft);
 		double observed = shaderActive ? shaderObservedFps : vanillaObservedFps;
 		if (fps >= 15) {
@@ -58,13 +60,17 @@ public final class PauCClientTargetFps {
 		int fallback = shaderActive ? DEFAULT_SHADER_ADAPTIVE_TARGET_FPS : DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS;
 		int min = shaderActive ? MIN_SHADER_ADAPTIVE_TARGET_FPS : MIN_VANILLA_ADAPTIVE_TARGET_FPS;
 		int max = shaderActive ? MAX_SHADER_ADAPTIVE_TARGET_FPS : MAX_VANILLA_ADAPTIVE_TARGET_FPS;
-		double sourceFps = observed > 0.0D ? observed : fallback;
+		if (profile == PauCLodGameplayProfile.Profile.SHOOTER && !shaderActive) {
+			fallback = Math.max(fallback, PauCLodGameplayProfile.defaultTargetFps());
+			min = Math.max(min, Math.min(max, PauCLodGameplayProfile.defaultTargetFps() - 12));
+		}
+		double sourceFps = observed > 0.0D ? Math.max(observed, fallback) : fallback;
 		int target = (int) Math.round(sourceFps * (shaderActive ? 0.92D : 0.90D));
 		return sanitize(Math.max(min, Math.min(max, target)));
 	}
 
 	private static double smoothObservedFps(double previous, int fps) {
-		double blend = fps >= previous ? 0.08D : 0.035D;
+		double blend = fps >= previous ? 0.20D : 0.05D;
 		return previous * (1.0D - blend) + fps * blend;
 	}
 

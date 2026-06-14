@@ -46,4 +46,10 @@ public interface LevelRendererAccessor {
 
 	@Accessor("generateClouds")
 	void setShouldRegenerateClouds(boolean shouldRegenerate);
+
+	@Accessor("ticks")
+	int getTicks();
+
+	@Accessor("ticks")
+	void setTicks(int ticks);
 }

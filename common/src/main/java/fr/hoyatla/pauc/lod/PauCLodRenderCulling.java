@@ -1,6 +1,7 @@
 package fr.hoyatla.pauc.lod;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -38,6 +39,9 @@ public final class PauCLodRenderCulling {
 	private static final String VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.villageBlockEntityPressureDistanceBlocks";
 	private static final String PRESSURE_BLOCK_ENTITY_CULLING_PROPERTY = "pauc.lod.cull.pressureBlockEntities";
 	private static final String PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.pressureBlockEntityDistanceBlocks";
+	private static final String HORDE_PRESSURE_CULLING_PROPERTY = "pauc.lod.cull.hordePressure";
+	private static final String HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.hordeEntityPressureDistanceBlocks";
+	private static final String HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.hordeBlockEntityPressureDistanceBlocks";
 	private static final String RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY = "pauc.runtime.villageSeverePressure";
 	private static final String PARTICLE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.particleDistanceBlocks";
 	private static final String LOD_CLOUD_CELL_WIDTH_BLOCKS_PROPERTY = "pauc.lod.cloudCellWidthBlocks";
@@ -63,6 +67,8 @@ public final class PauCLodRenderCulling {
 	private static final int DEFAULT_VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS = 96;
 	private static final int DEFAULT_VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS = 48;
 	private static final int DEFAULT_PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS = 96;
+	private static final int DEFAULT_HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS = 128;
+	private static final int DEFAULT_HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS = 96;
 	private static final int DEFAULT_PARTICLE_DISTANCE_BLOCKS = 80;
 	private static final int DEFAULT_LOD_CLOUD_CELL_WIDTH_BLOCKS = 16;
 	private static final int DEFAULT_LOD_CLOUD_THICKNESS_BLOCKS = 4;
@@ -109,6 +115,9 @@ public final class PauCLodRenderCulling {
 		if (!active() || entity == null) {
 			return false;
 		}
+		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			return false;
+		}
 
 		Minecraft minecraft = Minecraft.getInstance();
 		if (minecraft == null || minecraft.level == null || minecraft.player == null) {
@@ -124,6 +133,8 @@ public final class PauCLodRenderCulling {
 		double maxDistance = distanceFromVanillaChunks(DEFAULT_ENTITY_EXTRA_CHUNKS, ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
 		if (shouldApplyVillagePressureCulling() && PauCVillagePerformanceDiagnostics.isVillageEntity(entity)) {
 			maxDistance = Math.min(maxDistance, readInt(VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256));
+		} else if (shouldApplyHordePressureCulling()) {
+			maxDistance = Math.min(maxDistance, readInt(HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 96, 384));
 		}
 		Vec3 camera = cameraPosition(minecraft);
 		return horizontalDistanceSqr(entity.getX(), entity.getZ(), camera.x, camera.z) > maxDistance * maxDistance;
@@ -131,6 +142,9 @@ public final class PauCLodRenderCulling {
 
 	public static boolean shouldCullBlockEntity(BlockEntity blockEntity) {
 		if (!active() || blockEntity == null) {
+			return false;
+		}
+		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
 			return false;
 		}
 
@@ -146,6 +160,8 @@ public final class PauCLodRenderCulling {
 			} else if (readBoolean(PRESSURE_BLOCK_ENTITY_CULLING_PROPERTY, true)) {
 				maxDistance = Math.min(maxDistance, readInt(PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS, 64, 256));
 			}
+		} else if (shouldApplyHordePressureCulling()) {
+			maxDistance = Math.min(maxDistance, readInt(HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256));
 		}
 		Vec3 camera = cameraPosition(minecraft);
 		BlockPos pos = blockEntity.getBlockPos();
@@ -243,9 +259,9 @@ public final class PauCLodRenderCulling {
 			return horizontalDistanceSqr(pos.getX() + 0.5D, pos.getZ() + 0.5D, camera.x, camera.z) > maxDistance * maxDistance;
 		}
 
-		PauCLodRange range = PauCLodHorizonState.currentRange();
+		PauCLodRange range = currentActiveRange();
 		int defaultDistance = DEFAULT_VANILLA_FOLIAGE_DISTANCE_CHUNKS;
-		if (range != null && range.enabled()) {
+		if (range != null) {
 			defaultDistance = Math.max(3, Math.min(range.vanillaRenderDistanceChunks(), range.vanillaRenderDistanceChunks() - 3));
 		}
 
@@ -271,8 +287,8 @@ public final class PauCLodRenderCulling {
 			return false;
 		}
 
-		PauCLodRange range = PauCLodHorizonState.currentRange();
-		if (range == null || !range.enabled()) {
+		PauCLodRange range = currentActiveRange();
+		if (range == null) {
 			return false;
 		}
 
@@ -380,6 +396,13 @@ public final class PauCLodRenderCulling {
 			+ "@"
 			+ readInt(PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PRESSURE_BLOCK_ENTITY_DISTANCE_BLOCKS, 64, 256)
 			+ "b"
+			+ ", hordePressureCull="
+			+ shouldApplyHordePressureCulling()
+			+ "@"
+			+ readInt(HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 96, 384)
+			+ "/"
+			+ readInt(HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256)
+			+ "b"
 			+ ", particles="
 			+ readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PARTICLE_DISTANCE_BLOCKS, 32, 384)
 			+ "b, cloudCell="
@@ -415,8 +438,8 @@ public final class PauCLodRenderCulling {
 			return false;
 		}
 
-		PauCLodRange range = PauCLodHorizonState.currentRange();
-		if (range == null || !range.enabled()) {
+		PauCLodRange range = currentActiveRange();
+		if (range == null) {
 			return false;
 		}
 
@@ -434,8 +457,7 @@ public final class PauCLodRenderCulling {
 			return false;
 		}
 
-		PauCLodRange range = PauCLodHorizonState.currentRange();
-		return range != null && range.enabled();
+		return currentActiveRange() != null;
 	}
 
 	private static boolean shouldApplyVillagePressureCulling() {
@@ -443,11 +465,16 @@ public final class PauCLodRenderCulling {
 			&& readBoolean(RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY, false);
 	}
 
+	private static boolean shouldApplyHordePressureCulling() {
+		return readBoolean(HORDE_PRESSURE_CULLING_PROPERTY, true)
+			&& PauCVillagePerformanceDiagnostics.isHordePressureActive();
+	}
+
 	private static double distanceFromVanillaChunks(int defaultExtraChunks, String property, double minBlocks) {
 		Minecraft minecraft = Minecraft.getInstance();
 		int vanillaDistance = minecraft != null && minecraft.options != null ? minecraft.options.getEffectiveRenderDistance() : 8;
-		PauCLodRange range = PauCLodHorizonState.currentRange();
-		if (range != null && range.enabled()) {
+		PauCLodRange range = currentActiveRange();
+		if (range != null) {
 			vanillaDistance = range.vanillaRenderDistanceChunks();
 		}
 
@@ -539,6 +566,19 @@ public final class PauCLodRenderCulling {
 			return;
 		}
 		GENERIC_LOD_CULL_HOLDS.put(objectId, now + holdMs);
+	}
+
+	private static PauCLodRange currentActiveRange() {
+		PauCLodRange range = PauCLodHorizonState.currentRange();
+		if (range != null && range.enabled()) {
+			return range;
+		}
+		if (!PauCLodClientSettings.isLodsEnabled()) {
+			return null;
+		}
+		Minecraft minecraft = Minecraft.getInstance();
+		int vanillaDistance = minecraft != null && minecraft.options != null ? minecraft.options.getEffectiveRenderDistance() : 8;
+		return PauCLodRange.fromVanillaDistance(vanillaDistance, PauCLodClientSettings.targetDistanceChunks(), true);
 	}
 
 	private static void clearGenericHold(long objectId) {

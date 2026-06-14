@@ -2,6 +2,7 @@ package net.irisshaders.iris.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
@@ -81,7 +82,9 @@ public class MixinEntityRenderDispatcher {
 	private static boolean iris$maybeSuppressShadow(CallbackInfo ci) {
 		WorldRenderingPipeline pipeline = Iris.getPipelineManager().getPipelineNullable();
 
-		if (pipeline != null && pipeline.shouldDisableVanillaEntityShadows()) {
+		if (pipeline != null
+			&& PauCLodShaderContext.isShaderPackInUse()
+			&& pipeline.shouldDisableVanillaEntityShadows()) {
 			ci.cancel();
 			return true;
 		}

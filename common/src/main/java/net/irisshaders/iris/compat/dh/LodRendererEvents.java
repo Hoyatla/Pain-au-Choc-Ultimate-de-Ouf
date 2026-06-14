@@ -52,6 +52,7 @@ public class LodRendererEvents {
 	private static boolean dhFarClipFadeOverrideApplied;
 	private static boolean dhFarClipFadeOverrideLogged;
 	private static boolean dhFarClipFadeOverrideMissingLogged;
+	private static boolean shaderCombinedPassLogged;
 	private static boolean shaderTransparentSuppressionLogged;
 	private static boolean shaderTransparentUnavailableLogged;
 	private static final String DH_QUALITY_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$Quality";
@@ -252,7 +253,7 @@ public class LodRendererEvents {
 		DhApiBeforeTextureClearEvent beforeCleanupEvent = new DhApiBeforeTextureClearEvent() {
 			@Override
 			public void beforeClear(DhApiCancelableEventParam<DhApiRenderParam> event) {
-				if (event.value.renderPass == EDhApiRenderPass.OPAQUE) {
+				if (isOpaqueDhPass(event.value.renderPass)) {
 					if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
 						event.cancelEvent();
 					} else if (getInstance().shouldOverride) {
@@ -330,21 +331,24 @@ public class LodRendererEvents {
 			@Override
 			public void beforeRender(DhApiEventParam<DhApiRenderParam> event) {
 				DHCompatInternal instance = getInstance();
+				EDhApiRenderPass renderPass = event.value.renderPass;
+				boolean opaquePass = isOpaqueDhPass(renderPass);
 
 				// config overrides
 				if (instance.shouldOverride) {
 					applyPauCDhRuntimeOverrides();
 
-					if (event.value.renderPass == EDhApiRenderPass.OPAQUE_AND_TRANSPARENT) {
-						Iris.logger.error("Unexpected; somehow the Opaque + Translucent pass ran with shaders on.");
+					if (renderPass == EDhApiRenderPass.OPAQUE_AND_TRANSPARENT) {
+						logShaderCombinedPassOnce();
 					}
 				} else {
 					clearPauCDhRuntimeOverrides();
 				}
 
 
-				// cleanup
-				if (event.value.renderPass == EDhApiRenderPass.OPAQUE) {
+				// Treat the combined OPAQUE_AND_TRANSPARENT pass as the first/opaque stage so we keep
+				// vanilla depth continuity and avoid clearing the shadow framebuffer after vanilla terrain.
+				if (opaquePass) {
 					if (instance.shouldOverride) {
 						if (ShadowRenderingState.areShadowsCurrentlyBeingRendered() && !shouldRenderNativeDhShadow(instance)) {
 							return;
@@ -359,8 +363,7 @@ public class LodRendererEvents {
 				}
 
 
-				// opaque
-				if (event.value.renderPass == EDhApiRenderPass.OPAQUE) {
+				if (opaquePass) {
 					float partialTicks = event.value.partialTicks;
 
 					if (instance.shouldOverride) {
@@ -390,8 +393,7 @@ public class LodRendererEvents {
 				}
 
 
-				// transparent
-				if (event.value.renderPass == EDhApiRenderPass.TRANSPARENT) {
+				if (renderPass == EDhApiRenderPass.TRANSPARENT) {
 					float partialTicks = event.value.partialTicks;
 					int depthTextureId = DhApi.Delayed.renderProxy.getDhDepthTextureId().payload;
 
@@ -540,6 +542,10 @@ public class LodRendererEvents {
 		return helpers.isModLoaded("distanthorizons") && !helpers.isModLoaded("embeddium");
 	}
 
+	private static boolean isOpaqueDhPass(EDhApiRenderPass renderPass) {
+		return renderPass == EDhApiRenderPass.OPAQUE || renderPass == EDhApiRenderPass.OPAQUE_AND_TRANSPARENT;
+	}
+
 	private static boolean shouldRenderNativeDhShadow(DHCompatInternal instance) {
 		return instance != null
 			&& instance.shouldOverrideShadow
@@ -567,6 +573,13 @@ public class LodRendererEvents {
 		if (!shaderTransparentUnavailableLogged) {
 			shaderTransparentUnavailableLogged = true;
 			Iris.logger.info("PauC skipped native DH transparent LOD pass because this shaderpack did not provide a usable DH water shader; solid terrain LODs remain active.");
+		}
+	}
+
+	private static void logShaderCombinedPassOnce() {
+		if (!shaderCombinedPassLogged) {
+			shaderCombinedPassLogged = true;
+			Iris.logger.warn("PauC received a combined DH opaque+transparent pass while shaders are active; routing it through the opaque DH path to preserve vanilla depth and shader shadow continuity.");
 		}
 	}
 

@@ -20,6 +20,7 @@ public final class PauCLodShaderPresentation {
 	private static final String LATE_FALLBACK_RENDER_PROPERTY = "pauc.lod.shaderFallbackLateRender";
 	private static final String EXTEND_SHADER_CAMERA_FAR_PROPERTY = "pauc.lod.extendShaderCameraFar";
 	private static final String EXTEND_LATE_FALLBACK_SHADER_CAMERA_FAR_PROPERTY = "pauc.lod.extendLateFallbackShaderCameraFar";
+	private static final String ALLOW_PRESENTATION_BEYOND_RANGE_PROPERTY = "pauc.lod.shaderPresentationBeyondRange";
 	private static long lastFogNeutralizationLogMs;
 	private static long lastLateFallbackRenderLogMs;
 
@@ -51,7 +52,7 @@ public final class PauCLodShaderPresentation {
 			DISTANCE_PROPERTY,
 			fallbackDistanceChunks,
 			Math.max(MIN_PRESENTATION_DISTANCE_CHUNKS, minimumDistanceChunks),
-			MAX_PRESENTATION_DISTANCE_CHUNKS
+			maxPresentationDistanceChunks(minimumDistanceChunks)
 		);
 
 		return chunksToBlocks(presentationDistanceChunks);
@@ -133,7 +134,7 @@ public final class PauCLodShaderPresentation {
 	}
 
 	private static boolean shouldNeutralizeNativeShaderFog() {
-		return readBoolean(NATIVE_SHADER_FOG_NEUTRALIZATION_PROPERTY, false)
+		return readBoolean(NATIVE_SHADER_FOG_NEUTRALIZATION_PROPERTY, true)
 			&& PauCLodShaderContext.isDhNativeShaderActive();
 	}
 
@@ -207,10 +208,17 @@ public final class PauCLodShaderPresentation {
 			DISTANCE_PROPERTY,
 			fallbackDistanceChunks,
 			Math.max(MIN_PRESENTATION_DISTANCE_CHUNKS, minimumDistanceChunks),
-			MAX_PRESENTATION_DISTANCE_CHUNKS
+			maxPresentationDistanceChunks(minimumDistanceChunks)
 		);
 
 		return chunksToBlocks(presentationDistanceChunks);
+	}
+
+	private static int maxPresentationDistanceChunks(int minimumDistanceChunks) {
+		if (readBoolean(ALLOW_PRESENTATION_BEYOND_RANGE_PROPERTY, false)) {
+			return Math.max(minimumDistanceChunks, MAX_PRESENTATION_DISTANCE_CHUNKS);
+		}
+		return Math.max(MIN_PRESENTATION_DISTANCE_CHUNKS, minimumDistanceChunks);
 	}
 
 	private static int chunksToBlocks(int chunks) {

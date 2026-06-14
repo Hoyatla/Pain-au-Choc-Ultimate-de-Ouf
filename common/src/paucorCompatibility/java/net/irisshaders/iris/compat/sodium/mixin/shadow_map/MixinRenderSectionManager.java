@@ -7,6 +7,7 @@ import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
 import net.caffeinemc.mods.sodium.client.render.chunk.lists.SortedRenderLists;
 import net.caffeinemc.mods.sodium.client.render.viewport.Viewport;
+import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Camera;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -24,21 +25,34 @@ import java.util.EnumMap;
 import java.util.Map;
 
 @Mixin(RenderSectionManager.class)
-public class MixinRenderSectionManager {
+public abstract class MixinRenderSectionManager {
 	@Shadow
 	private @NotNull SortedRenderLists renderLists;
 	@Shadow
 	private @NotNull Map<ChunkUpdateType, ArrayDeque<RenderSection>> taskLists;
+	@Shadow(remap = false)
+	public abstract int getVisibleChunkCount();
 	@Unique
 	private @NotNull SortedRenderLists shadowRenderLists = SortedRenderLists.empty();
 	@Unique
 	private @NotNull Map<ChunkUpdateType, ArrayDeque<RenderSection>> shadowTaskLists = new EnumMap<>(ChunkUpdateType.class);
+	@Unique
+	private @NotNull SortedRenderLists pauc$lastStableShadowRenderLists = SortedRenderLists.empty();
+	@Unique
+	private @NotNull Map<ChunkUpdateType, ArrayDeque<RenderSection>> pauc$lastStableShadowTaskLists = new EnumMap<>(ChunkUpdateType.class);
+	@Unique
+	private boolean pauc$hasStableShadowRenderLists;
+	@Unique
+	private static boolean pauc$reportedSodiumShadowListFallback;
+	@Unique
+	private static boolean pauc$reportedSodiumStableShadowListFallback;
 
 	@Inject(method = "<init>", at = @At("TAIL"))
 	private void create(ClientLevel level, int renderDistance, CommandList commandList, CallbackInfo ci) {
 		for(int var6 = 0; var6 < ChunkUpdateType.values().length; ++var6) {
 			ChunkUpdateType type = ChunkUpdateType.values()[var6];
 			shadowTaskLists.put(type, new ArrayDeque<>());
+			pauc$lastStableShadowTaskLists.put(type, new ArrayDeque<>());
 		}
 	}
 
@@ -62,7 +76,33 @@ public class MixinRenderSectionManager {
 	@Inject(remap = false, method = "update", at = @At(remap = true, value = "INVOKE", target = "Lnet/caffeinemc/mods/sodium/client/render/chunk/RenderSectionManager;createTerrainRenderList(Lnet/minecraft/client/Camera;Lnet/caffeinemc/mods/sodium/client/render/viewport/Viewport;IZ)V", shift = At.Shift.AFTER), cancellable = true)
 	private void cancelIfShadow(Camera camera, Viewport viewport, boolean spectator, CallbackInfo ci) {
 		if (PauCCompatibility.shouldUseSodiumShadowPass()) {
-			ShadowRenderingState.onShadowTerrainGraphRebuilt();
+			boolean emptyShadowGraph = getVisibleChunkCount() <= 0;
+			if (!emptyShadowGraph) {
+				pauc$lastStableShadowRenderLists = shadowRenderLists;
+				pauc$lastStableShadowTaskLists = shadowTaskLists;
+				pauc$hasStableShadowRenderLists = true;
+			} else if (pauc$hasStableShadowRenderLists) {
+				shadowRenderLists = pauc$lastStableShadowRenderLists;
+				shadowTaskLists = pauc$lastStableShadowTaskLists;
+				ShadowRenderingState.markShadowTerrainGraphDirty();
+				if (!pauc$reportedSodiumStableShadowListFallback) {
+					pauc$reportedSodiumStableShadowListFallback = true;
+					Iris.logger.warn("PauC reused the last stable Sodium shadow visibility list because the current shadow graph came back empty; this avoids player-camera pitch dependent shadow loss while the graph is rebuilt.");
+				}
+			} else if (renderLists != null) {
+				shadowRenderLists = renderLists;
+				shadowTaskLists = taskLists;
+				ShadowRenderingState.markShadowTerrainGraphDirty();
+				if (!pauc$reportedSodiumShadowListFallback) {
+					pauc$reportedSodiumShadowListFallback = true;
+					Iris.logger.warn("PauC used the main terrain visibility list as a first-frame Sodium shadow fallback because no stable shadow list exists yet; the shadow graph stays dirty and will be rebuilt again on the next pass.");
+				}
+			}
+			if (getVisibleChunkCount() > 0) {
+				ShadowRenderingState.onShadowTerrainGraphRebuilt();
+			} else {
+				ShadowRenderingState.markShadowTerrainGraphDirty();
+			}
 			ci.cancel();
 		}
 	}

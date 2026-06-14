@@ -8,6 +8,7 @@ import fr.hoyatla.pauc.platform.forge.client.PauCClientFpsGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientLodGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientRenderPrep;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientSurfaceLodMode;
+import fr.hoyatla.pauc.platform.forge.client.PauCDynamicResolution;
 import fr.hoyatla.pauc.platform.forge.diagnostics.PauCPerformanceTelemetry;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCServerPhaseBudgetController;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCPathfindingCircuitBreaker;
@@ -89,6 +90,7 @@ public final class PauCCompatEventBridge {
 		PauCClientSurfaceLodMode.reset();
 		PauCClientFpsGovernor.reset();
 		PauCClientLodGovernor.reset();
+		PauCDynamicResolution.reset();
 		PauCShutdownBarrier.onClientSessionResumed();
 		PauCPerformanceTelemetry.onClientSessionResumed();
 	}
@@ -108,6 +110,7 @@ public final class PauCCompatEventBridge {
 		PauCClientSurfaceLodMode.reset();
 		PauCClientFpsGovernor.reset();
 		PauCClientLodGovernor.reset();
+		PauCDynamicResolution.reset();
 		PauCShutdownBarrier.onClientLogoutStarted();
 		PauCPerformanceTelemetry.onClientSessionFinished("client-logout");
 	}
@@ -119,6 +122,7 @@ public final class PauCCompatEventBridge {
 			PauCClientDistanceGovernor.onClientTick(minecraft);
 			PauCClientSurfaceLodMode.onClientTick(minecraft);
 			PauCClientFpsGovernor.onClientTick(minecraft);
+			PauCDynamicResolution.onClientTick(minecraft);
 			PauCClientLodGovernor.onClientTick();
 			PauCClientChunkRetentionManager.onClientTick();
 			PauCPerformanceTelemetry.onClientTick(minecraft);
@@ -138,6 +142,7 @@ public final class PauCCompatEventBridge {
 			PauCClientDistanceGovernor.reset();
 			PauCClientFpsGovernor.reset();
 			PauCClientLodGovernor.reset();
+			PauCDynamicResolution.reset();
 			PauCPerformanceTelemetry.onClientSessionFinished("level-unload");
 		}
 	}

@@ -1,6 +1,7 @@
 package fr.hoyatla.pauc.platform.forge.compat;
 
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.platform.PauCPortabilityDiagnostics;
 import fr.hoyatla.pauc.platform.PauCPlatformServices;
 import org.slf4j.Logger;
 
@@ -56,7 +57,7 @@ public final class PauCCompatibilityGuards {
 			LOGGER.info("PauC did not detect a PauCor renderer; client frontier warmup will remain passive.");
 		}
 
-		lastSummary = "compatGuards[" + String.join(", ", signals) + "]";
+		lastSummary = "compatGuards[" + String.join(", ", signals) + ", " + PauCPortabilityDiagnostics.describeState() + "]";
 		LOGGER.info("PauC compatibility guard summary: {}", lastSummary);
 	}
 

@@ -10,6 +10,7 @@ import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Camera;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -72,7 +73,11 @@ public class MixinLevelRenderer_SkipRendering {
 
 	@WrapOperation(method = "renderChunkLayer", at = @At(value = "FIELD", target = "Lnet/minecraft/client/renderer/LevelRenderer;renderChunksInFrustum:Lit/unimi/dsi/fastutil/objects/ObjectArrayList;"))
 	private ObjectArrayList<LevelRenderer.RenderChunkInfo> cullVanillaTerrainChunks(LevelRenderer instance, Operation<ObjectArrayList<LevelRenderer.RenderChunkInfo>> original) {
-		return PauCLodRenderCulling.filterVanillaRenderChunks(original.call(instance));
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> chunks = original.call(instance);
+		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			return chunks;
+		}
+		return PauCLodRenderCulling.filterVanillaRenderChunks(chunks);
 	}
 
 	@WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/multiplayer/ClientLevel;entitiesForRendering()Ljava/lang/Iterable;"))

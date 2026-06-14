@@ -23,6 +23,8 @@ import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
+import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
+import fr.hoyatla.pauc.lodstore.PauCLodSwapGuard;
 import fr.hoyatla.pauc.platform.forge.diagnostics.PauCLodReloadDiagnostics;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -154,10 +156,16 @@ public final class PauCEmbeddedDhBridge {
 	private static final String KEEP_RENDER_CACHE_ON_QUALITY_CHANGE_PROPERTY = "pauc.lod.keepRenderCacheOnQualityChange";
 	private static final String KEEP_RENDER_CACHE_ON_SHADER_PRESENTATION_CHANGE_PROPERTY = "pauc.lod.keepRenderCacheOnShaderPresentationChange";
 	private static final String CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY = "pauc.lod.clearRenderCacheOnShaderRuntimeChange";
+	private static final String PRESENTATION_SIGNATURE_STABLE_TICKS_PROPERTY = "pauc.lod.presentationSignatureStableTicks";
+	private static final String PRESENTATION_SIGNATURE_HOLD_MS_PROPERTY = "pauc.lod.presentationSignatureHoldMs";
 	private static final Map<String, SavedCoreConfigValue> SAVED_CORE_CONFIG_VALUES = new ConcurrentHashMap<>();
 	private static volatile long lastCoarseFillRenderRefreshAtMillis;
 	private static volatile long lastDeferredRenderCacheClearLogAtMillis;
 	private static volatile int coarseFillRenderRefreshes;
+	private static volatile RuntimeLodSettings lastStableRuntimeSettings;
+	private static volatile RuntimeLodSettings pendingRuntimeSettings;
+	private static volatile int pendingRuntimeSettingsTicks;
+	private static volatile long pendingRuntimeSettingsSinceMillis;
 
 	private PauCEmbeddedDhBridge() {
 	}
@@ -180,7 +188,7 @@ public final class PauCEmbeddedDhBridge {
 
 		try {
 			int targetDistance = range.roundHorizonEndChunk();
-			RuntimeLodSettings runtimeSettings = RuntimeLodSettings.fastDefaults();
+			RuntimeLodSettings runtimeSettings = stabilizePresentationRuntimeSettings(RuntimeLodSettings.fastDefaults());
 			boolean shaderPackInUse = isShaderPackRuntimeInUse();
 			boolean nativeShaderFog = shaderPackInUse && !PauCLodShaderContext.isFallbackActive();
 			boolean dhDistanceFog = shouldUseDhDistanceFog(nativeShaderFog);
@@ -205,10 +213,11 @@ public final class PauCEmbeddedDhBridge {
 					runtimeSettings.maxHorizontalResolution()
 				);
 				LOGGER.info(
-					"PauC embedded DH bridge configured fast LOD generation: threads={}, runtimeRatio={}, generator={}, biomeBlend={}, transparency={}.",
+					"PauC embedded DH bridge configured fast LOD generation: threads={}, runtimeRatio={}, generator={}, terrain={}, biomeBlend={}, transparency={}.",
 					runtimeSettings.threadCount(),
 					roundTwoDecimals(runtimeSettings.threadRuntimeRatio()),
 					runtimeSettings.generatorMode(),
+					PauCTerrainGeneratorDetector.currentClientKind().id(),
 					runtimeSettings.biomeBlending(),
 					runtimeSettings.transparency()
 				);
@@ -227,10 +236,22 @@ public final class PauCEmbeddedDhBridge {
 		state = BridgeState.unavailable("reset");
 		lastConfiguredTarget = -1;
 		lastRenderGeometrySignature = null;
+		lastStableRuntimeSettings = null;
+		pendingRuntimeSettings = null;
+		pendingRuntimeSettingsTicks = 0;
+		pendingRuntimeSettingsSinceMillis = 0L;
 		lastLoggedDistantCloudPolicy = null;
 		lastLoggedDistantCloudShaderFallback = null;
 		lastLoggedGenerationPolicy = "";
 		disabledRenderingApplied = false;
+	}
+
+	public static void resetPresentationStability(String reason) {
+		lastStableRuntimeSettings = null;
+		pendingRuntimeSettings = null;
+		pendingRuntimeSettingsTicks = 0;
+		pendingRuntimeSettingsSinceMillis = 0L;
+		LOGGER.debug("PauC embedded DH bridge reset presentation stability ({}).", reason);
 	}
 
 	public static void applyStartupDirectGpuPolicy() {
@@ -250,6 +271,8 @@ public final class PauCEmbeddedDhBridge {
 			+ coarseFillRenderRefreshes
 			+ ", "
 			+ describeGpuUploadState()
+			+ ", "
+			+ PauCLodSwapGuard.describeState()
 			+ "]";
 	}
 
@@ -447,6 +470,24 @@ public final class PauCEmbeddedDhBridge {
 			return;
 		}
 
+		PauCLodSwapGuard.Decision swapDecision = PauCLodSwapGuard.evaluateRenderCacheClear(
+			"geometry-change",
+			previousSignature.requiresMeshCacheClear(signature),
+			previousSignature.isShaderRuntimeChange(signature),
+			PauCClientFrontierWarmupManager.hasRecoveredPresentationCoverage(),
+			PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage(),
+			PauCClientFrontierWarmupManager.isHotRestoreActive()
+		);
+		if (!swapDecision.allowed()) {
+			PauCLodReloadDiagnostics.onCacheClearDeferred();
+			LOGGER.info(
+				"PauC SwapGuard deferred DH render cache clear ({}): {} -> {}.",
+				swapDecision.reason(),
+				previousSignature.describe(),
+				signature.describe()
+			);
+			return;
+		}
 		clearRenderDataCacheForSignatureChange(previousSignature, signature, "LOD geometry mode changed");
 	}
 
@@ -775,6 +816,64 @@ public final class PauCEmbeddedDhBridge {
 		loggedDhFogConfigOverride = false;
 		loggedSeamlessTransitionOverride = false;
 		lastLoggedSeamlessTransitionPolicy = "";
+		lastStableRuntimeSettings = null;
+		pendingRuntimeSettings = null;
+		pendingRuntimeSettingsTicks = 0;
+		pendingRuntimeSettingsSinceMillis = 0L;
+	}
+
+	private static RuntimeLodSettings stabilizePresentationRuntimeSettings(RuntimeLodSettings candidate) {
+		RuntimeLodSettings stable = lastStableRuntimeSettings;
+		if (stable == null) {
+			lastStableRuntimeSettings = candidate;
+			pendingRuntimeSettings = null;
+			pendingRuntimeSettingsTicks = 0;
+			pendingRuntimeSettingsSinceMillis = 0L;
+			return candidate;
+		}
+
+		LodRenderGeometrySignature stableSignature = LodRenderGeometrySignature.from(stable);
+		LodRenderGeometrySignature candidateSignature = LodRenderGeometrySignature.from(candidate);
+		if (stableSignature.equals(candidateSignature)) {
+			lastStableRuntimeSettings = candidate;
+			pendingRuntimeSettings = null;
+			pendingRuntimeSettingsTicks = 0;
+			pendingRuntimeSettingsSinceMillis = 0L;
+			return candidate;
+		}
+		if (stableSignature.isShaderRuntimeChange(candidateSignature)) {
+			lastStableRuntimeSettings = candidate;
+			pendingRuntimeSettings = null;
+			pendingRuntimeSettingsTicks = 0;
+			pendingRuntimeSettingsSinceMillis = 0L;
+			return candidate;
+		}
+
+		long now = System.currentTimeMillis();
+		boolean sensitivePhase = PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
+			|| PauCClientFrontierWarmupManager.isHotRestoreActive()
+			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| PauCClientSurfaceLodMode.prefersAccurateFeatureLods();
+		int highTargetBonus = PauCLodClientSettings.configuredTargetDistanceChunks() >= 48 ? 1 : 0;
+		int requiredTicks = readInt(PRESENTATION_SIGNATURE_STABLE_TICKS_PROPERTY, 3, 1, 20)
+			+ (sensitivePhase ? 2 : 0)
+			+ highTargetBonus;
+		long requiredHoldMs = readInt(PRESENTATION_SIGNATURE_HOLD_MS_PROPERTY, sensitivePhase ? 180 : 120, 0, 2_000);
+		if (candidate.equals(pendingRuntimeSettings)) {
+			pendingRuntimeSettingsTicks++;
+		} else {
+			pendingRuntimeSettings = candidate;
+			pendingRuntimeSettingsTicks = 1;
+			pendingRuntimeSettingsSinceMillis = now;
+		}
+		if (pendingRuntimeSettingsTicks >= requiredTicks || now - pendingRuntimeSettingsSinceMillis >= requiredHoldMs) {
+			lastStableRuntimeSettings = candidate;
+			pendingRuntimeSettings = null;
+			pendingRuntimeSettingsTicks = 0;
+			pendingRuntimeSettingsSinceMillis = 0L;
+			return candidate;
+		}
+		return candidate.withPresentationFrom(stable);
 	}
 
 	private static Object dhCoreConfigEntry(String configClassName, String fieldName) throws ReflectiveOperationException {
@@ -986,28 +1085,56 @@ public final class PauCEmbeddedDhBridge {
 		int biomeBlending
 	) {
 		private static RuntimeLodSettings fastDefaults() {
+			PauCTerrainGeneratorDetector.GeneratorKind terrainGenerator = PauCTerrainGeneratorDetector.currentClientKind();
+			PauCTerrainGeneratorDetector.ModpackClass modpackClass = PauCTerrainGeneratorDetector.currentModpackClass();
 			int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
 			boolean coarseFill = PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive();
 			boolean shaderRuntime = isShaderPackRuntimeInUse();
 			boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
-			int threadCeiling = Math.max(2, Math.min(shaderRuntime ? 18 : fpsFirstVanilla ? 20 : 28, processors));
-			double defaultThreadShare = coarseFill
+			int modpackThreadBoost = switch (modpackClass) {
+				case EXTREME -> 4;
+				case HEAVY -> 3;
+				case MEDIUM -> 1;
+				case LIGHT -> 0;
+			};
+			int threadCeiling = Math.max(2, Math.min((shaderRuntime ? 18 : fpsFirstVanilla ? 20 : 28) + modpackThreadBoost, processors));
+			double modpackShareBoost = switch (modpackClass) {
+				case EXTREME -> 0.08D;
+				case HEAVY -> 0.06D;
+				case MEDIUM -> 0.03D;
+				case LIGHT -> 0.0D;
+			};
+			double defaultThreadShare = clampDouble((coarseFill
 				? (shaderRuntime ? 0.76D : fpsFirstVanilla ? 0.58D : 0.92D)
-				: (shaderRuntime ? 0.54D : fpsFirstVanilla ? 0.46D : 0.68D);
+				: (shaderRuntime ? 0.54D : fpsFirstVanilla ? 0.46D : 0.68D)) + modpackShareBoost, 0.25D, 0.92D);
 			int defaultThreads = clampInt((int) Math.ceil(processors * defaultThreadShare), 2, threadCeiling);
-			double defaultRuntimeRatio = coarseFill
+			double defaultRuntimeRatio = clampDouble((coarseFill
 				? (shaderRuntime ? 0.72D : fpsFirstVanilla ? 0.56D : 0.90D)
-				: (shaderRuntime ? 0.52D : fpsFirstVanilla ? 0.42D : 0.68D);
+				: (shaderRuntime ? 0.52D : fpsFirstVanilla ? 0.42D : 0.68D)) + modpackShareBoost * 0.50D, 0.05D, 0.92D);
 			return new RuntimeLodSettings(
 				defaultMaxHorizontalResolution(),
 				defaultHorizontalQuality(),
-				defaultVerticalQuality(),
+				defaultVerticalQuality(terrainGenerator, modpackClass),
 				EDhApiLodShading.ENABLED,
 				readEnum(FAST_TRANSPARENCY_PROPERTY, EDhApiTransparency.class, defaultTransparency()),
 				defaultRuntimeGeneratorMode(),
 				readInt(FAST_THREADS_PROPERTY, defaultThreads, 1, threadCeiling),
 				readDouble(FAST_RUNTIME_RATIO_PROPERTY, PauCLodShaderRuntime.generationThreadRuntimeRatio(defaultRuntimeRatio), 0.05D, 1.0D),
-				readInt(FAST_BIOME_BLEND_PROPERTY, 2, 0, 3)
+				readInt(FAST_BIOME_BLEND_PROPERTY, defaultBiomeBlending(terrainGenerator, modpackClass, shaderRuntime, fpsFirstVanilla), 0, 3)
+			);
+		}
+
+		private RuntimeLodSettings withPresentationFrom(RuntimeLodSettings other) {
+			return new RuntimeLodSettings(
+				other.maxHorizontalResolution(),
+				other.horizontalQuality(),
+				other.verticalQuality(),
+				other.lodShading(),
+				other.transparency(),
+				generatorMode,
+				threadCount,
+				threadRuntimeRatio,
+				other.biomeBlending()
 			);
 		}
 
@@ -1021,14 +1148,54 @@ public final class PauCEmbeddedDhBridge {
 			return PauCClientSurfaceLodMode.adjustMaxHorizontalResolution(dynamic);
 		}
 
-		private static EDhApiVerticalQuality defaultVerticalQuality() {
+		private static EDhApiVerticalQuality defaultVerticalQuality(
+			PauCTerrainGeneratorDetector.GeneratorKind terrainGenerator,
+			PauCTerrainGeneratorDetector.ModpackClass modpackClass
+		) {
 			EDhApiVerticalQuality configured = readEnum(
 				FAST_VERTICAL_QUALITY_PROPERTY,
 				EDhApiVerticalQuality.class,
 				!isShaderPackRuntimeInUse() ? EDhApiVerticalQuality.MEDIUM : EDhApiVerticalQuality.LOW
 			);
 			EDhApiVerticalQuality dynamic = readEnum(DYNAMIC_VERTICAL_QUALITY_PROPERTY, EDhApiVerticalQuality.class, configured);
-			return PauCClientSurfaceLodMode.adjustVerticalQuality(dynamic);
+			return terrainAwareVerticalQuality(PauCClientSurfaceLodMode.adjustVerticalQuality(dynamic), terrainGenerator, modpackClass);
+		}
+
+		private static EDhApiVerticalQuality terrainAwareVerticalQuality(
+			EDhApiVerticalQuality requestedQuality,
+			PauCTerrainGeneratorDetector.GeneratorKind terrainGenerator,
+			PauCTerrainGeneratorDetector.ModpackClass modpackClass
+		) {
+			if (!readBoolean("pauc.lod.terrainAwareVerticalQuality", true)) {
+				return requestedQuality;
+			}
+			boolean shaderRuntime = isShaderPackRuntimeInUse();
+			boolean heavyModpack = modpackClass == PauCTerrainGeneratorDetector.ModpackClass.HEAVY
+				|| modpackClass == PauCTerrainGeneratorDetector.ModpackClass.EXTREME;
+			return switch (terrainGenerator) {
+				case TECTONIC, STRATOSPHERIC, WILDER_WILDS -> raiseVerticalQuality(
+					requestedQuality,
+					(shaderRuntime || heavyModpack) ? EDhApiVerticalQuality.MEDIUM : EDhApiVerticalQuality.HIGH
+				);
+				case TERRALITH, CONTINENTS, BOP, BYG -> raiseVerticalQuality(requestedQuality, EDhApiVerticalQuality.MEDIUM);
+				default -> requestedQuality;
+			};
+		}
+
+		private static EDhApiVerticalQuality raiseVerticalQuality(EDhApiVerticalQuality current, EDhApiVerticalQuality minimum) {
+			if (current == null || current == EDhApiVerticalQuality.HIGH) {
+				return current == null ? minimum : current;
+			}
+			if (minimum == EDhApiVerticalQuality.HIGH) {
+				return switch (current) {
+					case LOW, MEDIUM, HEIGHT_MAP -> EDhApiVerticalQuality.HIGH;
+					default -> current;
+				};
+			}
+			return switch (current) {
+				case LOW, HEIGHT_MAP -> EDhApiVerticalQuality.MEDIUM;
+				default -> current;
+			};
 		}
 
 		private static EDhApiHorizontalQuality defaultHorizontalQuality() {
@@ -1039,6 +1206,23 @@ public final class PauCEmbeddedDhBridge {
 			);
 			EDhApiHorizontalQuality dynamic = readEnum(DYNAMIC_HORIZONTAL_QUALITY_PROPERTY, EDhApiHorizontalQuality.class, configured);
 			return PauCClientSurfaceLodMode.adjustHorizontalQuality(dynamic);
+		}
+
+		private static int defaultBiomeBlending(
+			PauCTerrainGeneratorDetector.GeneratorKind terrainGenerator,
+			PauCTerrainGeneratorDetector.ModpackClass modpackClass,
+			boolean shaderRuntime,
+			boolean fpsFirstVanilla
+		) {
+			int fallback = terrainGenerator.wideBiomeTransitions() ? 3 : 2;
+			if (fpsFirstVanilla || shaderRuntime) {
+				fallback = Math.min(fallback, 2);
+			}
+			if (modpackClass == PauCTerrainGeneratorDetector.ModpackClass.HEAVY
+				|| modpackClass == PauCTerrainGeneratorDetector.ModpackClass.EXTREME) {
+				fallback = Math.min(fallback, 2);
+			}
+			return fallback;
 		}
 
 		private static EDhApiDistantGeneratorMode defaultGeneratorMode() {

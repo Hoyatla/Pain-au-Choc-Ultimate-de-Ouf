@@ -86,6 +86,7 @@ public final class PauCClientSurfaceLodMode {
 	private static int stickyFeatureTransitionChunkX;
 	private static int stickyFeatureTransitionChunkZ;
 	private static int stickyFeatureTransitionSurfaceY = Integer.MIN_VALUE;
+	private static int stickyFeatureReleaseTicks;
 	private static int transientSurfaceRecoveryTicks;
 	private static int transientSurfaceRecoveryChunkX;
 	private static int transientSurfaceRecoveryChunkZ;
@@ -154,11 +155,28 @@ public final class PauCClientSurfaceLodMode {
 		stickyFeatureTransitionChunkX = 0;
 		stickyFeatureTransitionChunkZ = 0;
 		stickyFeatureTransitionSurfaceY = Integer.MIN_VALUE;
+		stickyFeatureReleaseTicks = 0;
 		transientSurfaceRecoveryTicks = 0;
 		transientSurfaceRecoveryChunkX = 0;
 		transientSurfaceRecoveryChunkZ = 0;
 		transientSurfaceRecoverySurfaceY = Integer.MIN_VALUE;
 		PauCLodNearClipOverride.setFeatureTransitionMask(false, "reset");
+	}
+
+	public static void onConfiguredTargetDistanceChanged(int configuredTargetDistance) {
+		featureTransitionActive = false;
+		featureTransitionTicks = 0;
+		nonFeatureTransitionTicks = 0;
+		featureTransitionReason = "";
+		pendingFeatureTransitionReason = "";
+		featurePresentationMode = FeaturePresentationMode.NONE;
+		featureReasonSwitchTicks = 0;
+		clearStickyFeatureTransition();
+		transientSurfaceRecoveryTicks = 0;
+		transientSurfaceRecoveryChunkX = 0;
+		transientSurfaceRecoveryChunkZ = 0;
+		transientSurfaceRecoverySurfaceY = Integer.MIN_VALUE;
+		PauCLodNearClipOverride.setFeatureTransitionMask(false, "target-distance-changed:" + configuredTargetDistance);
 	}
 
 	public static boolean isSurfaceOnlyActive() {
@@ -189,6 +207,22 @@ public final class PauCClientSurfaceLodMode {
 
 	public static String featurePresentationModeId() {
 		return featurePresentationMode.id;
+	}
+
+	public static String telemetryStateKey() {
+		SurfaceState state = lastState;
+		return "active="
+			+ state.active()
+			+ ",candidate="
+			+ state.candidate()
+			+ ",reason="
+			+ stableReasonFamily(state.reason())
+			+ ",featureTransition="
+			+ featureTransitionActive
+			+ ",featureMode="
+			+ featurePresentationMode.id
+			+ ",accurate="
+			+ prefersAccurateFeatureLods();
 	}
 
 	public static String adjustVerticalQuality(String requestedQuality) {
@@ -271,7 +305,7 @@ public final class PauCClientSurfaceLodMode {
 			return SurfaceSample.of(false, "surface-height-too-low", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
 
-		int tolerance = readInt(SURFACE_TOLERANCE_PROPERTY, 6, 0, 32);
+		int tolerance = readInt(SURFACE_TOLERANCE_PROPERTY, 8, 0, 32);
 		if (cameraY < surfaceY - tolerance) {
 			return SurfaceSample.of(false, "below-local-surface", cameraY, surfaceY, cameraChunkX, cameraChunkZ);
 		}
@@ -349,7 +383,7 @@ public final class PauCClientSurfaceLodMode {
 	private static boolean isDenseVegetationAroundCamera(ClientLevel level, BlockPos cameraPos, int cameraY, int surfaceY) {
 		int scanRadius = readInt(DENSE_VEGETATION_SCAN_RADIUS_PROPERTY, 6, 2, 12);
 		int scanHeight = readInt(DENSE_VEGETATION_SCAN_HEIGHT_PROPERTY, 12, 4, 24);
-		int minScore = readInt(DENSE_VEGETATION_SCORE_PROPERTY, 22, 4, 96);
+		int minScore = readInt(DENSE_VEGETATION_SCORE_PROPERTY, 28, 4, 96);
 		int lowerY = Math.max(level.getMinBuildHeight(), Math.min(cameraY, surfaceY) - 2);
 		int upperY = Math.min(level.getMaxBuildHeight() - 1, Math.max(cameraY, surfaceY) + scanHeight);
 		int score = 0;
@@ -382,7 +416,7 @@ public final class PauCClientSurfaceLodMode {
 
 	private static String tallFeatureReason(ClientLevel level, BlockPos cameraPos, int cameraY) {
 		int scanRadius = readInt(TALL_FEATURE_SCAN_RADIUS_PROPERTY, 8, 2, 16);
-		int minScore = readInt(TALL_FEATURE_SCORE_PROPERTY, 16, 4, 96);
+		int minScore = readInt(TALL_FEATURE_SCORE_PROPERTY, 22, 4, 96);
 		int minLeafDelta = readInt(TALL_FEATURE_LEAF_DELTA_PROPERTY, 4, 1, 24);
 		int cameraMargin = readInt(TALL_FEATURE_CAMERA_MARGIN_PROPERTY, 2, 0, 12);
 		int vegetationScore = 0;
@@ -597,11 +631,12 @@ public final class PauCClientSurfaceLodMode {
 			return sample;
 		}
 		if (shouldRequestFeatureTransitionMask(sample)) {
-			stickyFeatureTransitionTicks = readInt(FEATURE_TRANSITION_STICKY_TICKS_PROPERTY, 16, 0, 80);
+			stickyFeatureTransitionTicks = adaptiveFeatureStickyTicks();
 			stickyFeatureTransitionReason = sample.reason();
 			stickyFeatureTransitionChunkX = sample.cameraChunkX();
 			stickyFeatureTransitionChunkZ = sample.cameraChunkZ();
 			stickyFeatureTransitionSurfaceY = sample.surfaceY();
+			stickyFeatureReleaseTicks = 0;
 			return sample;
 		}
 		if (stickyFeatureTransitionTicks <= 0 || stickyFeatureTransitionReason.isBlank()) {
@@ -620,6 +655,15 @@ public final class PauCClientSurfaceLodMode {
 			clearStickyFeatureTransition();
 			return sample;
 		}
+		if (sample.candidate()) {
+			stickyFeatureReleaseTicks++;
+			if (stickyFeatureReleaseTicks >= adaptiveFeatureReleaseTicks()) {
+				clearStickyFeatureTransition();
+				return sample;
+			}
+		} else {
+			stickyFeatureReleaseTicks = 0;
+		}
 		stickyFeatureTransitionTicks--;
 		return SurfaceSample.of(
 			false,
@@ -635,14 +679,15 @@ public final class PauCClientSurfaceLodMode {
 		if (sample == null || !sample.available() || sample.candidate()) {
 			return sample;
 		}
-		if (!isTransientSurfaceReason(sample.reason())) {
+		boolean featureRecovery = shouldRecoverFeatureBlockAsStableSurface(sample);
+		if (!featureRecovery && !isTransientSurfaceReason(sample.reason())) {
 			return sample;
 		}
 		if (transientSurfaceRecoveryTicks <= 0 || !isFiniteSurface(transientSurfaceRecoverySurfaceY)) {
 			return sample;
 		}
 
-		int chunkRadius = readInt(TRANSIENT_SURFACE_RECOVERY_CHUNK_RADIUS_PROPERTY, 1, 0, 4);
+		int chunkRadius = readInt(TRANSIENT_SURFACE_RECOVERY_CHUNK_RADIUS_PROPERTY, 2, 0, 4);
 		boolean sameRegion = Math.max(
 			Math.abs(sample.cameraChunkX() - transientSurfaceRecoveryChunkX),
 			Math.abs(sample.cameraChunkZ() - transientSurfaceRecoveryChunkZ)
@@ -651,7 +696,7 @@ public final class PauCClientSurfaceLodMode {
 			return sample;
 		}
 
-		int surfaceDelta = readInt(TRANSIENT_SURFACE_RECOVERY_SURFACE_DELTA_PROPERTY, 24, 0, 128);
+		int surfaceDelta = readInt(TRANSIENT_SURFACE_RECOVERY_SURFACE_DELTA_PROPERTY, 32, 0, 128);
 		boolean compatibleSurface = !isFiniteSurface(sample.surfaceY())
 			|| Math.abs(sample.surfaceY() - transientSurfaceRecoverySurfaceY) <= surfaceDelta;
 		if (!compatibleSurface) {
@@ -669,9 +714,38 @@ public final class PauCClientSurfaceLodMode {
 		);
 	}
 
+	private static boolean shouldRecoverFeatureBlockAsStableSurface(SurfaceSample sample) {
+		if (sample == null || !sample.available() || sample.candidate()) {
+			return false;
+		}
+		if (!shouldRequestFeatureTransitionMask(sample)) {
+			return false;
+		}
+		if (PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation()) {
+			return false;
+		}
+		int configuredTarget = PauCLodClientSettings.configuredTargetDistanceChunks();
+		int minimumTarget = readInt(
+			"pauc.lod.surfaceOnlyFeatureRecoveryMinTarget",
+			24,
+			PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS,
+			PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS
+		);
+		if (configuredTarget < minimumTarget) {
+			return false;
+		}
+		return PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() <= readDouble(
+			"pauc.lod.surfaceOnlyFeatureRecoveryMaxQueuePressure",
+			0.08D,
+			0.0D,
+			1.0D
+		);
+	}
+
 	private static void updateTransientSurfaceRecovery(SurfaceSample sample) {
 		if (sample != null && sample.available() && sample.candidate() && isFiniteSurface(sample.surfaceY())) {
-			transientSurfaceRecoveryTicks = readInt(TRANSIENT_SURFACE_RECOVERY_TICKS_PROPERTY, 12, 0, 80);
+			transientSurfaceRecoveryTicks = adaptiveTransientSurfaceRecoveryTicks();
 			transientSurfaceRecoveryChunkX = sample.cameraChunkX();
 			transientSurfaceRecoveryChunkZ = sample.cameraChunkZ();
 			transientSurfaceRecoverySurfaceY = sample.surfaceY();
@@ -690,18 +764,19 @@ public final class PauCClientSurfaceLodMode {
 			featureTransitionTicks++;
 			nonFeatureTransitionTicks = 0;
 			FeaturePresentationMode sampleMode = FeaturePresentationMode.fromReason(sample.reason());
-			if (featureTransitionReason.isBlank() || sampleMode != featurePresentationMode || sample.reason().equals(featureTransitionReason)) {
-				featureTransitionReason = sample.reason();
-				featurePresentationMode = sampleMode;
+			if (featureTransitionReason.isBlank()) {
+				applyFeatureTransitionReason(sample.reason(), sampleMode);
+			} else if (sample.reason().equals(featureTransitionReason)) {
 				pendingFeatureTransitionReason = "";
 				featureReasonSwitchTicks = 0;
+				featurePresentationMode = sampleMode;
 			} else if (sample.reason().equals(pendingFeatureTransitionReason)) {
 				featureReasonSwitchTicks++;
-				if (featureReasonSwitchTicks >= readInt(FEATURE_TRANSITION_REASON_SWITCH_TICKS_PROPERTY, 4, 1, 40)) {
-					featureTransitionReason = sample.reason();
-					featurePresentationMode = sampleMode;
-					pendingFeatureTransitionReason = "";
-					featureReasonSwitchTicks = 0;
+				if (featureReasonSwitchTicks >= adaptiveFeatureReasonSwitchTicks(
+					sampleMode != featurePresentationMode,
+					isFeatureReasonFamilySwitch(featureTransitionReason, sample.reason())
+				)) {
+					applyFeatureTransitionReason(sample.reason(), sampleMode);
 				}
 			} else {
 				pendingFeatureTransitionReason = sample.reason();
@@ -714,8 +789,16 @@ public final class PauCClientSurfaceLodMode {
 			featureReasonSwitchTicks = 0;
 		}
 
-		int enterTicks = readInt(FEATURE_TRANSITION_ENTER_TICKS_PROPERTY, 1, 0, 40);
-		int exitTicks = readInt(FEATURE_TRANSITION_EXIT_TICKS_PROPERTY, 80, 0, 200);
+		int enterTicks = clamp(
+			readInt(FEATURE_TRANSITION_ENTER_TICKS_PROPERTY, 3, 0, 40) + adaptiveTargetBonus(1, 2),
+			0,
+			60
+		);
+		int exitTicks = clamp(
+			readInt(FEATURE_TRANSITION_EXIT_TICKS_PROPERTY, 80, 0, 200) + adaptiveTargetBonus(6, 12),
+			0,
+			240
+		);
 		if (!featureTransitionActive && requestTransition && featureTransitionTicks >= enterTicks) {
 			featureTransitionActive = true;
 		}
@@ -734,11 +817,88 @@ public final class PauCClientSurfaceLodMode {
 		}
 	}
 
+	private static void applyFeatureTransitionReason(String reason, FeaturePresentationMode mode) {
+		featureTransitionReason = reason;
+		featurePresentationMode = mode;
+		pendingFeatureTransitionReason = "";
+		featureReasonSwitchTicks = 0;
+	}
+
+	private static int adaptiveFeatureStickyTicks() {
+		return clamp(
+			readInt(FEATURE_TRANSITION_STICKY_TICKS_PROPERTY, 20, 0, 80) + adaptiveTargetBonus(6, 12),
+			0,
+			80
+		);
+	}
+
+	private static int adaptiveTransientSurfaceRecoveryTicks() {
+		return clamp(
+			readInt(TRANSIENT_SURFACE_RECOVERY_TICKS_PROPERTY, 18, 0, 80) + adaptiveTargetBonus(6, 14),
+			0,
+			80
+		);
+	}
+
+	private static int adaptiveFeatureReasonSwitchTicks(boolean modeSwitch, boolean familySwitch) {
+		int base = readInt(FEATURE_TRANSITION_REASON_SWITCH_TICKS_PROPERTY, 6, 1, 40);
+		int switchPenalty = modeSwitch ? 2 : 0;
+		int familyPenalty = familySwitch ? adaptiveTargetBonus(2, 4) : 0;
+		return clamp(base + switchPenalty + familyPenalty + adaptiveTargetBonus(1, 3), 1, 48);
+	}
+
+	private static int adaptiveFeatureReleaseTicks() {
+		return clamp(
+			readInt("pauc.lod.featureTransitionReleaseTicks", 8, 1, 40) + adaptiveTargetBonus(2, 4),
+			1,
+			40
+		);
+	}
+
+	private static int adaptiveTargetBonus(int mediumBonus, int farBonus) {
+		int configuredTarget = PauCLodClientSettings.configuredTargetDistanceChunks();
+		if (configuredTarget >= 64) {
+			return farBonus;
+		}
+		if (configuredTarget >= 32) {
+			return mediumBonus;
+		}
+		return 0;
+	}
+
 	private static boolean sameReasonFamily(String left, String right) {
 		if (left.equals(right)) {
 			return true;
 		}
 		return isFeatureReason(left) && isFeatureReason(right);
+	}
+
+	private static boolean isFeatureReasonFamilySwitch(String currentReason, String candidateReason) {
+		if (currentReason == null || currentReason.isBlank() || candidateReason == null || candidateReason.isBlank()) {
+			return false;
+		}
+		return isFeatureReason(currentReason)
+			&& isFeatureReason(candidateReason)
+			&& !stableReasonFamily(currentReason).equals(stableReasonFamily(candidateReason));
+	}
+
+	private static String stableReasonFamily(String reason) {
+		if (reason == null || reason.isBlank()) {
+			return "-";
+		}
+		if ("dense-vegetation".equals(reason)) {
+			return "dense-vegetation";
+		}
+		if (reason.startsWith("tall-local-features")) {
+			return "tall-local-features";
+		}
+		if ("surface-stable".equals(reason) || "surface-stable-cache".equals(reason)) {
+			return "surface-stable";
+		}
+		if (reason.startsWith("surface-height")) {
+			return "surface-height";
+		}
+		return reason;
 	}
 
 	private static boolean isFeatureReason(String reason) {
@@ -760,6 +920,7 @@ public final class PauCClientSurfaceLodMode {
 		stickyFeatureTransitionChunkX = 0;
 		stickyFeatureTransitionChunkZ = 0;
 		stickyFeatureTransitionSurfaceY = Integer.MIN_VALUE;
+		stickyFeatureReleaseTicks = 0;
 	}
 
 	private record SurfaceSample(

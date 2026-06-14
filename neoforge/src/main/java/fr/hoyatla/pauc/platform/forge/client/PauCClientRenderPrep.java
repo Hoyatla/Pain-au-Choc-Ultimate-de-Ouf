@@ -149,6 +149,9 @@ public final class PauCClientRenderPrep {
 		if (hint <= 0) {
 			return Math.min(requestedSections, snapMode ? 2 : 1);
 		}
+		if (PauCClientFpsGovernor.isBacklogResolved() && !PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()) {
+			hint = Math.min(requestedSections, hint + (snapMode ? 4 : 2));
+		}
 		if (snapMode) {
 			hint = Math.max(hint, Math.min(requestedSections, hint + 2));
 		}
@@ -223,12 +226,19 @@ public final class PauCClientRenderPrep {
 		int backlog = snapshot.builderAvailable() ? Math.max(0, snapshot.scheduledJobs() - Math.max(2, snapshot.totalThreads() * 2)) : 0;
 		int busyThreads = snapshot.totalThreads() > 0 ? snapshot.busyThreads() : 0;
 		double busyPressure = snapshot.totalThreads() > 0 ? (double) busyThreads / (double) snapshot.totalThreads() : 0.0D;
+		boolean backlogResolved = PauCClientFpsGovernor.isBacklogResolved();
 		double fastScale = snapshot.snapMode() ? 1.55D : (snapshot.movementCatchup() ? 1.45D : (snapshot.fastTravel() ? 1.30D : 1.0D));
 		double backlogScale = Math.max(0.35D, 1.0D - Math.min(0.65D, backlog * 0.06D));
+		if (backlogResolved && backlog <= 0) {
+			backlogScale = Math.max(backlogScale, 1.18D);
+		}
 		double busyScale = Math.max(0.45D, 1.0D - Math.min(0.55D, busyPressure * 0.45D));
 		int meshHeadroom = Math.max(0, Math.min(snapshot.maxQueuedMeshSections(), Math.min(snapshot.maxHotMeshSections(), snapshot.maxVramMeshSections())) - snapshot.scheduledJobs());
 		boolean acceleratedWarmup = snapshot.snapMode() || snapshot.movementCatchup();
 		int warmupHint = clamp((int) Math.floor((meshHeadroom / 10.0D) * fastScale * backlogScale * busyScale * PauCLodShaderRuntime.uploadBudgetScale()), acceleratedWarmup ? 3 : 1, snapshot.snapMode() ? 28 : (snapshot.movementCatchup() ? 24 : 16));
+		if (backlogResolved && meshHeadroom > 0) {
+			warmupHint = clamp(warmupHint + (snapshot.snapMode() ? 4 : (snapshot.movementCatchup() ? 3 : 2)), acceleratedWarmup ? 3 : 1, snapshot.snapMode() ? 28 : (snapshot.movementCatchup() ? 24 : 16));
+		}
 		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(snapshot.targetFps())) {
 			double fpsFirstScale = acceleratedWarmup ? 0.82D : 0.68D;
 			warmupHint = clamp((int) Math.floor(warmupHint * fpsFirstScale), acceleratedWarmup ? 2 : 1, snapshot.snapMode() ? 18 : 10);

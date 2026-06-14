@@ -10,6 +10,8 @@ import com.sun.jna.ptr.PointerByReference;
 import fr.hoyatla.pauc.lod.PauCLodCudaBridge;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
+import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
+import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -37,6 +39,17 @@ public final class PauCCudaWorker {
 	private static final String SHADER_TERRAIN_MIN_USEFUL_BATCH_PROPERTY = "pauc.client.cuda.shaderTerrainMinUsefulBatch";
 	private static final String SHADER_TERRAIN_INTERVAL_MS_PROPERTY = "pauc.client.cuda.shaderTerrainSeamMinIntervalMs";
 	private static final String SHADER_TERRAIN_CPU_SMALL_BATCH_PROPERTY = "pauc.client.cuda.shaderTerrainCpuSmallBatch";
+	private static final String WORLD_CACHE_COALESCER_ENABLED_PROPERTY = "pauc.lod.cuda.worldCacheCoalescer";
+	private static final String WORLD_CACHE_COALESCER_MIN_FEATURES_PROPERTY = "pauc.lod.cuda.worldCacheCoalescerMinFeatures";
+	private static final String WORLD_CACHE_COALESCER_HOT_RESTORE_SCALE_PROPERTY = "pauc.lod.cuda.worldCacheCoalescerHotRestoreScale";
+	private static final String BULK_RESTORE_ENABLED_PROPERTY = "pauc.lod.cuda.bulkRestore";
+	private static final String BULK_RESTORE_VALIDATED_PROPERTY = "pauc.lod.cuda.bulkRestoreValidated";
+	private static final String VANILLA_MESHER_ENABLED_PROPERTY = "pauc.lod.cuda.vanillaMesher";
+	private static final String VANILLA_MESHER_VALIDATED_PROPERTY = "pauc.lod.cuda.vanillaMesherValidated";
+	private static final String WORLDGEN_SUPPORT_ENABLED_PROPERTY = "pauc.lod.cuda.worldgenSupport";
+	private static final String WORLDGEN_SUPPORT_VALIDATED_PROPERTY = "pauc.lod.cuda.worldgenSupportValidated";
+	private static final String HORDE_FLOW_ENABLED_PROPERTY = "pauc.lod.cuda.hordeFlow";
+	private static final String HORDE_FLOW_VALIDATED_PROPERTY = "pauc.lod.cuda.hordeFlowValidated";
 	private static final int CUDA_SUCCESS = 0;
 	private static final Object RUNTIME_LOCK = new Object();
 	private static final AtomicLong CUDA_JOBS = new AtomicLong();
@@ -58,6 +71,7 @@ public final class PauCCudaWorker {
 	private static final AtomicLong TERRAIN_COST_SAMPLES = new AtomicLong();
 	private static final AtomicLong TERRAIN_CUDA_COST_MICROS = new AtomicLong();
 	private static final AtomicLong TERRAIN_CPU_COST_MICROS = new AtomicLong();
+	private static final AtomicLong WORLD_CACHE_COALESCED_BATCHES = new AtomicLong();
 	private static volatile WorkerState lastState = WorkerState.unavailable("not-run");
 	private static volatile CudaRuntime runtime;
 	private static volatile boolean selfTestAttempted;
@@ -66,6 +80,7 @@ public final class PauCCudaWorker {
 	private static volatile String lastTerrainStatus = "not-run";
 	private static volatile String lastTerrainProfile = "unknown";
 	private static volatile int lastTerrainBatchSize;
+	private static volatile String lastAccelerationPlan = "cudaPlan[not-run]";
 
 	private static final String CUDA_KERNELS_PTX = """
 		.version 6.0
@@ -365,6 +380,10 @@ public final class PauCCudaWorker {
 			+ average(TERRAIN_CUDA_COST_MICROS.get(), TERRAIN_COST_SAMPLES.get())
 			+ ", avgCpuMicros="
 			+ average(TERRAIN_CPU_COST_MICROS.get(), TERRAIN_COST_SAMPLES.get())
+			+ ", coalescedWorldBatches="
+			+ WORLD_CACHE_COALESCED_BATCHES.get()
+			+ ", "
+			+ describeAccelerationPlan()
 			+ ", lastTerrain="
 			+ lastTerrainStatus
 			+ "]";
@@ -372,6 +391,55 @@ public final class PauCCudaWorker {
 
 	public static int preferredTerrainBatchSize() {
 		return currentTerrainProfile().minUsefulBatch();
+	}
+
+	public static int coalescedWorldCacheBatchFeatures(int requestedFeatures, int requestRadius, boolean hotRestore) {
+		int sanitized = Math.max(1, requestedFeatures);
+		if (!readBoolean(WORLD_CACHE_COALESCER_ENABLED_PROPERTY, true)) {
+			lastAccelerationPlan = buildAccelerationPlan("coalescer-disabled", sanitized, requestRadius, hotRestore);
+			return sanitized;
+		}
+
+		int samplesPerFeature = 3;
+		int profileMinimum = Math.max(1, (preferredTerrainBatchSize() + samplesPerFeature - 1) / samplesPerFeature);
+		int configuredMinimum = readInt(WORLD_CACHE_COALESCER_MIN_FEATURES_PROPERTY, profileMinimum, 1, 2048);
+		int target = Math.max(sanitized, Math.max(profileMinimum, configuredMinimum));
+		if (hotRestore) {
+			float scale = readFloat(WORLD_CACHE_COALESCER_HOT_RESTORE_SCALE_PROPERTY, 1.25F, 1.0F, 3.0F);
+			target = Math.max(target, (int) Math.ceil(target * scale));
+		}
+		if (requestRadius >= 192) {
+			target = Math.max(target, 96);
+		} else if (requestRadius >= 128) {
+			target = Math.max(target, 64);
+		}
+		target = Math.min(2048, target);
+		if (target != sanitized) {
+			WORLD_CACHE_COALESCED_BATCHES.incrementAndGet();
+		}
+		lastAccelerationPlan = buildAccelerationPlan("world-cache", target, requestRadius, hotRestore);
+		return target;
+	}
+
+	public static boolean isBulkRestoreGpuReady() {
+		return validatedCudaPath(BULK_RESTORE_ENABLED_PROPERTY, BULK_RESTORE_VALIDATED_PROPERTY);
+	}
+
+	public static boolean isVanillaMesherGpuReady() {
+		return validatedCudaPath(VANILLA_MESHER_ENABLED_PROPERTY, VANILLA_MESHER_VALIDATED_PROPERTY);
+	}
+
+	public static boolean isWorldgenSupportGpuReady() {
+		return validatedCudaPath(WORLDGEN_SUPPORT_ENABLED_PROPERTY, WORLDGEN_SUPPORT_VALIDATED_PROPERTY);
+	}
+
+	public static boolean isHordeFlowGpuReady() {
+		return validatedCudaPath(HORDE_FLOW_ENABLED_PROPERTY, HORDE_FLOW_VALIDATED_PROPERTY);
+	}
+
+	public static String describeAccelerationPlan() {
+		lastAccelerationPlan = buildAccelerationPlan("describe", lastTerrainBatchSize, preferredTerrainBatchSize(), false);
+		return lastAccelerationPlan;
 	}
 
 	public static void resetMetrics() {
@@ -394,11 +462,13 @@ public final class PauCCudaWorker {
 		TERRAIN_COST_SAMPLES.set(0L);
 		TERRAIN_CUDA_COST_MICROS.set(0L);
 		TERRAIN_CPU_COST_MICROS.set(0L);
+		WORLD_CACHE_COALESCED_BATCHES.set(0L);
 		TERRAIN_AUTO_DISABLED_PROFILES.clear();
 		lastTerrainLaunchNs = 0L;
 		lastTerrainStatus = "not-run";
 		lastTerrainProfile = "unknown";
 		lastTerrainBatchSize = 0;
+		lastAccelerationPlan = "cudaPlan[not-run]";
 	}
 
 	private static PauCLodCudaBridge.Result runTerrainSeamAverage(int[] sums, int[] counts, int samplesPerFeature, float[] cpuFallback, long cpuMicros, TerrainProfile profile) {
@@ -735,20 +805,52 @@ public final class PauCCudaWorker {
 	private static TerrainProfile currentTerrainProfile() {
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		boolean hotRestore = PauCClientFrontierWarmupManager.isHotRestoreActive();
-		boolean recoveryBias = hotRestore || PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
+		boolean queueResolved = PauCClientFpsGovernor.isBacklogResolved();
+		boolean fastCatchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
+		boolean hordePressure = PauCVillagePerformanceDiagnostics.isHordePressureActive();
+		PauCTerrainGeneratorDetector.GeneratorKind terrain = PauCTerrainGeneratorDetector.currentClientKind();
+		PauCTerrainGeneratorDetector.ModpackClass modpackClass = PauCTerrainGeneratorDetector.currentModpackClass();
+		int terrainBatchDiscount = terrain.complexVerticalRelief() ? 24 : terrain.wideBiomeTransitions() ? 16 : 0;
+		long terrainIntervalDiscount = terrain.complexVerticalRelief() ? 24L : terrain.wideBiomeTransitions() ? 16L : 0L;
+		int modpackBatchDiscount = switch (modpackClass) {
+			case EXTREME -> 24;
+			case HEAVY -> 16;
+			case MEDIUM -> 8;
+			case LIGHT -> 0;
+		};
+		long modpackIntervalDiscount = switch (modpackClass) {
+			case EXTREME -> 24L;
+			case HEAVY -> 16L;
+			case MEDIUM -> 8L;
+			case LIGHT -> 0L;
+		};
+		int hordeBatchDiscount = hordePressure ? 12 : 0;
+		long hordeIntervalDiscount = hordePressure ? 12L : 0L;
+		boolean recoveryBias = hotRestore
+			|| queueResolved
+			|| fastCatchup
+			|| PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
 		if (!shaderActive) {
 			int defaultMinBatch = readInt(TERRAIN_MIN_USEFUL_BATCH_PROPERTY, 160, 8, 4096);
 			long defaultInterval = readLong(TERRAIN_INTERVAL_MS_PROPERTY, 160L, 0L, 5_000L);
+			defaultMinBatch = Math.max(24, defaultMinBatch - terrainBatchDiscount - modpackBatchDiscount - hordeBatchDiscount);
+			defaultInterval = Math.max(8L, defaultInterval - terrainIntervalDiscount - modpackIntervalDiscount - hordeIntervalDiscount);
 			if (recoveryBias) {
 				defaultMinBatch = Math.max(64, defaultMinBatch / 2);
 				defaultInterval = Math.max(20L, defaultInterval / 2L);
 			}
+			if (queueResolved || fastCatchup) {
+				defaultMinBatch = Math.max(24, Math.min(defaultMinBatch, readInt("pauc.cuda.vanillaTerrainResolvedMinUsefulBatch", 48, 8, 4096)));
+				defaultInterval = Math.max(8L, Math.min(defaultInterval, readLong("pauc.cuda.vanillaTerrainResolvedIntervalMs", 20L, 0L, 5_000L)));
+			}
 			return new TerrainProfile(
-				recoveryBias ? "shader-off-recovery" : "shader-off",
+				(queueResolved ? "shader-off-resolved" : recoveryBias ? "shader-off-recovery" : "shader-off")
+					+ (hordePressure ? "-horde" : "")
+					+ "-" + terrain.id() + "-" + modpackClass.id(),
 				false,
 				readInt(VANILLA_TERRAIN_MIN_USEFUL_BATCH_PROPERTY, defaultMinBatch, 8, 4096),
 				readLong(VANILLA_TERRAIN_INTERVAL_MS_PROPERTY, defaultInterval, 0L, 5_000L),
-				readBoolean(VANILLA_TERRAIN_CPU_SMALL_BATCH_PROPERTY, readBoolean(TERRAIN_CPU_SMALL_BATCH_PROPERTY, !recoveryBias))
+				readBoolean(VANILLA_TERRAIN_CPU_SMALL_BATCH_PROPERTY, readBoolean(TERRAIN_CPU_SMALL_BATCH_PROPERTY, !(recoveryBias || queueResolved)))
 			);
 		}
 
@@ -769,11 +871,23 @@ public final class PauCCudaWorker {
 			baseMinBatch = Math.max(24, baseMinBatch - 16);
 			baseIntervalMillis = Math.max(15L, baseIntervalMillis / 2L);
 		}
+		baseMinBatch = Math.max(12, baseMinBatch - (terrainBatchDiscount / 2) - (modpackBatchDiscount / 2) - (hordeBatchDiscount / 2));
+		baseIntervalMillis = Math.max(8L, baseIntervalMillis - (terrainIntervalDiscount / 2L) - (modpackIntervalDiscount / 2L) - (hordeIntervalDiscount / 2L));
+		if (queueResolved || fastCatchup) {
+			baseMinBatch = Math.max(12, Math.min(baseMinBatch, readInt("pauc.cuda.shaderTerrainResolvedMinUsefulBatch", 20, 8, 4096)));
+			baseIntervalMillis = Math.max(8L, Math.min(baseIntervalMillis, readLong("pauc.cuda.shaderTerrainResolvedIntervalMs", 16L, 0L, 5_000L)));
+		}
 		String pressureId = pressure == PauCLodShaderRuntime.Pressure.OFF
 			? "startup"
 			: pressure.name().toLowerCase(Locale.ROOT);
+		if (queueResolved) {
+			pressureId += "-resolved";
+		}
 		if (recoveryBias) {
 			pressureId += "-recovery";
+		}
+		if (hordePressure) {
+			pressureId += "-horde";
 		}
 		String shaderMode = switch (PauCLodShaderContext.effectiveDhMode()) {
 			case EXPLICIT_NATIVE -> "native-explicit";
@@ -782,7 +896,7 @@ public final class PauCCudaWorker {
 			default -> "generic";
 		};
 		return new TerrainProfile(
-			"shader-" + pressureId + "-" + shaderMode,
+			"shader-" + pressureId + "-" + shaderMode + "-" + terrain.id() + "-" + modpackClass.id(),
 			true,
 			readInt(SHADER_TERRAIN_MIN_USEFUL_BATCH_PROPERTY, baseMinBatch, 8, 4096),
 			readLong(SHADER_TERRAIN_INTERVAL_MS_PROPERTY, baseIntervalMillis, 0L, 5_000L),
@@ -800,14 +914,30 @@ public final class PauCCudaWorker {
 			? readInt("pauc.cuda.shaderTerrainSmallBatchFloor", 16, 8, 512)
 			: readInt("pauc.cuda.vanillaTerrainSmallBatchFloor", 24, 8, 512);
 		double scale = profile.shaderActive() ? 0.72D : 0.80D;
+		boolean queueResolved = PauCClientFpsGovernor.isBacklogResolved();
+		boolean catchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
+		boolean hordePressure = PauCVillagePerformanceDiagnostics.isHordePressureActive();
 		boolean fillCritical = PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
-			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| catchup
 			|| PauCClientFrontierWarmupManager.isHotRestoreActive()
 			|| PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
 		if (fillCritical) {
 			scale = Math.min(scale, profile.shaderActive()
 				? readFloat("pauc.cuda.shaderTerrainFillCriticalThresholdScale", 0.60F, 0.20F, 1.0F)
 				: readFloat("pauc.cuda.vanillaTerrainFillCriticalThresholdScale", 0.55F, 0.20F, 1.0F));
+		}
+		if (queueResolved) {
+			scale = Math.min(scale, profile.shaderActive()
+				? readFloat("pauc.cuda.shaderTerrainResolvedThresholdScale", 0.42F, 0.10F, 1.0F)
+				: readFloat("pauc.cuda.vanillaTerrainResolvedThresholdScale", 0.34F, 0.10F, 1.0F));
+		}
+		if (hordePressure) {
+			scale = Math.min(scale, profile.shaderActive()
+				? readFloat("pauc.cuda.shaderTerrainHordeThresholdScale", 0.50F, 0.10F, 1.0F)
+				: readFloat("pauc.cuda.vanillaTerrainHordeThresholdScale", 0.44F, 0.10F, 1.0F));
+			floor = Math.min(floor, profile.shaderActive()
+				? readInt("pauc.cuda.shaderTerrainHordeFloor", 12, 8, 512)
+				: readInt("pauc.cuda.vanillaTerrainHordeFloor", 16, 8, 512));
 		}
 		long cpuRoutes = terrainCpuRoutes(profile);
 		long cudaRoutes = terrainCudaRoutes(profile);
@@ -817,11 +947,21 @@ public final class PauCCudaWorker {
 				? readFloat("pauc.cuda.shaderTerrainCpuDominanceThresholdScale", 0.74F, 0.20F, 1.0F)
 				: readFloat("pauc.cuda.vanillaTerrainCpuDominanceThresholdScale", 0.66F, 0.20F, 1.0F));
 		}
+		if (routeSamples >= readInt("pauc.cuda.terrainAdaptiveRouteSamples", 96, 8, 8192) && cudaRoutes > Math.max(24L, cpuRoutes)) {
+			scale = Math.min(scale, profile.shaderActive()
+				? readFloat("pauc.cuda.shaderTerrainCudaHealthyThresholdScale", 0.34F, 0.10F, 1.0F)
+				: readFloat("pauc.cuda.vanillaTerrainCudaHealthyThresholdScale", 0.28F, 0.10F, 1.0F));
+		}
 		if (cudaRoutes >= readInt("pauc.cuda.terrainAdaptiveHealthySamples", 48, 4, 4096)
 			&& CUDA_THROTTLES.get() <= Math.max(4L, cudaRoutes / 4L)) {
 			scale = Math.min(scale, profile.shaderActive()
 				? readFloat("pauc.cuda.shaderTerrainHealthyThresholdScale", 0.84F, 0.20F, 1.0F)
 				: readFloat("pauc.cuda.vanillaTerrainHealthyThresholdScale", 0.78F, 0.20F, 1.0F));
+		}
+		if (queueResolved && !fillCritical) {
+			floor = Math.min(floor, profile.shaderActive()
+				? readInt("pauc.cuda.shaderTerrainResolvedFloor", 12, 8, 512)
+				: readInt("pauc.cuda.vanillaTerrainResolvedFloor", 12, 8, 512));
 		}
 		int threshold = (int) Math.floor(minUsefulBatch * scale);
 		return Math.max(floor, Math.min(Math.max(floor, minUsefulBatch - 1), threshold));
@@ -833,6 +973,59 @@ public final class PauCCudaWorker {
 
 	private static long terrainCudaRoutes(TerrainProfile profile) {
 		return profile.shaderActive() ? TERRAIN_SHADER_CUDA_ROUTES.get() : TERRAIN_VANILLA_CUDA_ROUTES.get();
+	}
+
+	private static boolean validatedCudaPath(String enabledProperty, String validatedProperty) {
+		return readBoolean(enabledProperty, false)
+			&& readBoolean(validatedProperty, false)
+			&& lastState.available()
+			&& readBoolean(CUDA_AVAILABLE_PROPERTY, lastState.available());
+	}
+
+	private static String buildAccelerationPlan(String reason, int batchFeatures, int requestRadius, boolean hotRestore) {
+		boolean cudaRuntimeReady = lastState.available() && readBoolean(CUDA_AVAILABLE_PROPERTY, lastState.available());
+		boolean bulkRestore = isBulkRestoreGpuReady();
+		boolean vanillaMesher = isVanillaMesherGpuReady();
+		boolean worldgenSupport = isWorldgenSupportGpuReady();
+		boolean hordeFlow = isHordeFlowGpuReady();
+		String interop = cudaRuntimeReady ? "driver-api-copy" : "cpu-fallback";
+		return "cudaPlan[reason="
+			+ reason
+			+ ", runtime="
+			+ (cudaRuntimeReady ? "ready" : "fallback")
+			+ ", residentBuffers="
+			+ (runtime != null ? "ready" : "lazy")
+			+ ", graphs=off"
+			+ ", interop="
+			+ interop
+			+ ", coalescedFeatures="
+			+ batchFeatures
+			+ ", requestRadius="
+			+ requestRadius
+			+ ", hotRestore="
+			+ hotRestore
+			+ ", bulkRestore="
+			+ pathState(BULK_RESTORE_ENABLED_PROPERTY, BULK_RESTORE_VALIDATED_PROPERTY, bulkRestore)
+			+ ", vanillaMesher="
+			+ pathState(VANILLA_MESHER_ENABLED_PROPERTY, VANILLA_MESHER_VALIDATED_PROPERTY, vanillaMesher)
+			+ ", worldgen="
+			+ pathState(WORLDGEN_SUPPORT_ENABLED_PROPERTY, WORLDGEN_SUPPORT_VALIDATED_PROPERTY, worldgenSupport)
+			+ ", hordeFlow="
+			+ pathState(HORDE_FLOW_ENABLED_PROPERTY, HORDE_FLOW_VALIDATED_PROPERTY, hordeFlow)
+			+ "]";
+	}
+
+	private static String pathState(String enabledProperty, String validatedProperty, boolean ready) {
+		if (ready) {
+			return "ready";
+		}
+		if (!readBoolean(enabledProperty, false)) {
+			return "disabled";
+		}
+		if (!readBoolean(validatedProperty, false)) {
+			return "unvalidated";
+		}
+		return lastState.available() ? "blocked" : "cuda-unavailable";
 	}
 
 	private static Memory nulTerminated(String text) {

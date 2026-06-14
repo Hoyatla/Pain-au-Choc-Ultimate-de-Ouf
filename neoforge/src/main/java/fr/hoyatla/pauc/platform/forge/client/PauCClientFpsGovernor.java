@@ -58,9 +58,15 @@ public final class PauCClientFpsGovernor {
 	private static final String SYNTHETIC_DH_HEADROOM_STABLE_TICKS_PROPERTY = "pauc.lod.syntheticDhHeadroomStableTicks";
 	private static final String SOLAS_SYNTHETIC_BALANCED_MAX_QUALITY_PROPERTY = "pauc.lod.solasSyntheticBalancedMaxQualityTier";
 	private static final String SOLAS_SYNTHETIC_HEADROOM_MAX_QUALITY_PROPERTY = "pauc.lod.solasSyntheticHeadroomMaxQualityTier";
+	private static final String PRESENTATION_QUALITY_DROP_STABLE_TICKS_PROPERTY = "pauc.lod.presentationQualityDropStableTicks";
+	private static final String PRESENTATION_QUALITY_DROP_HOLD_MS_PROPERTY = "pauc.lod.presentationQualityDropHoldMs";
 	private static final String EMERGENCY_GENERATION_CAP_PROPERTY = "pauc.lod.emergencyGenerationRequestCap";
 	private static final String SHADER_EMERGENCY_GENERATION_CAP_PROPERTY = "pauc.lod.shaderEmergencyGenerationRequestCap";
 	private static final String RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY = "pauc.runtime.frameWatchdogSpike";
+	private static final String DRAINED_QUEUE_STABLE_TICKS_PROPERTY = "pauc.lod.drainedQueueStableTicks";
+	private static final String DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY = "pauc.lod.drainedQueueResolvedMaxHeapRatio";
+	private static final String DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY = "pauc.lod.drainedQueueResolvedMinDeliveryRatio";
+	private static final String IDLE_QUEUE_RESOLVED_STABLE_TICKS_PROPERTY = "pauc.lod.idleQueueResolvedStableTicks";
 	private static final int LOG_THROTTLE_TICKS = 100;
 	private static double smoothedFps = -1.0D;
 	private static double slowSmoothedFps = -1.0D;
@@ -82,13 +88,29 @@ public final class PauCClientFpsGovernor {
 	private static int villageSevereCandidateTicks;
 	private static int villageSevereRecoveryTicks;
 	private static int villageSevereHoldTicks;
+	private static boolean idleQueueResolvedState;
 	private static boolean lastMovementCatchup;
+	private static int queueDrainedStableTicks;
+	private static boolean backlogResolved;
+	private static boolean lastWorkloadRecovered;
+	private static int appliedTargetDistance = -1;
+	private static int pendingTargetDistance = -1;
+	private static int pendingTargetDistanceTicks;
+	private static long pendingTargetDistanceSinceMillis;
+	private static long lastTargetDistanceDecreaseAtMillis;
+	private static int lastConfiguredTargetDistance = -1;
+	private static int lastPresentationQualityTargetDistance = -1;
+	private static QualityTier pendingPresentationQualityTier;
+	private static int pendingPresentationQualityTicks;
+	private static long pendingPresentationQualitySinceMillis;
 
 	private PauCClientFpsGovernor() {
 	}
 
 	public static void onClientTick(Minecraft minecraft) {
 		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
+			resetTargetDistanceStabilizer();
+			clearPresentationQualityStabilizer();
 			clearDynamicOverrides();
 			return;
 		}
@@ -96,6 +118,7 @@ public final class PauCClientFpsGovernor {
 			suspendOutsideWorld();
 			return;
 		}
+		synchronizeConfiguredTargetDistance();
 
 		int fps = queryFps(minecraft);
 		if (fps <= 0) {
@@ -105,6 +128,8 @@ public final class PauCClientFpsGovernor {
 
 		double queuePressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
 		boolean queueDrained = isPauCQueueDrained(queuePressure);
+		boolean queueFullyDrained = isPauCQueueFullyDrained(queuePressure);
+		updateQueueDrainState(queueDrained, queueFullyDrained);
 		double previousSmoothedFps = smoothedFps;
 		double smoothingAlpha = fpsSmoothingAlpha(previousSmoothedFps, fps, queuePressure, false);
 		smoothedFps = previousSmoothedFps < 0.0D ? fps : (previousSmoothedFps * (1.0D - smoothingAlpha)) + (fps * smoothingAlpha);
@@ -157,17 +182,79 @@ public final class PauCClientFpsGovernor {
 			qualityHeadroomStreak = 0;
 			qualityUpgradeConfirmations = 0;
 			lastQualityRuntime = currentRuntime;
+			clearPresentationQualityStabilizer();
+			PauCEmbeddedDhBridge.resetPresentationStability("runtime-switch:" + currentRuntime);
 			LOGGER.info("PauC reset LOD quality headroom tracking after runtime switch to {}.", currentRuntime);
 		}
 
 		boolean frameWatchdogSpike = Boolean.parseBoolean(System.getProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY, "false"));
-		boolean externalFpsDip = isExternalFpsDip(queueDrained, frameWatchdogSpike, deliveryRatio, heapPressure);
-		boolean reliefEligibleFromFps = !externalFpsDip && (rawRatio < 0.66D || deliveryRatio < 0.68D);
+		boolean coverageTelemetry = PauCClientFrontierWarmupManager.hasCoverageTelemetry();
+		boolean stableCoverage = PauCClientFrontierWarmupManager.hasStablePresentationCoverage();
+		boolean coverageHoldActive = PauCClientFrontierWarmupManager.isPresentationHoldActive();
+		boolean idleQueueResolved = isQueueIdleResolved(frameWatchdogSpike, heapPressure, queueDrained, queueFullyDrained);
+		idleQueueResolvedState = idleQueueResolved;
+		backlogResolved = isBacklogResolved(
+			frameWatchdogSpike,
+			heapPressure,
+			queueDrained,
+			queueFullyDrained,
+			stableCoverage,
+			coverageHoldActive,
+			idleQueueResolved
+		);
+		boolean workloadRecovered = isPauCWorkloadRecovered(
+			queueDrained,
+			queueFullyDrained,
+			coverageTelemetry,
+			stableCoverage,
+			coverageHoldActive,
+			frameWatchdogSpike,
+			heapPressure,
+			idleQueueResolved
+		);
+		lastWorkloadRecovered = workloadRecovered;
+		boolean paucResolved = isPauCResolved(queueDrained, queueFullyDrained, stableCoverage, coverageHoldActive, idleQueueResolved, backlogResolved, workloadRecovered);
+		boolean externalFpsDip = isExternalFpsDip(
+			queueDrained,
+			queueFullyDrained,
+			backlogResolved,
+			coverageTelemetry,
+			stableCoverage,
+			coverageHoldActive,
+			frameWatchdogSpike,
+			deliveryRatio,
+			heapPressure,
+			idleQueueResolved
+		);
+		boolean resolvedFpsDip = externalFpsDip
+			|| (paucResolved
+				&& queueFullyDrained
+				&& !frameWatchdogSpike
+				&& heapPressure < 0.88D
+				&& queuePressure < 0.08D);
+		boolean reliefEligibleFromFps = !externalFpsDip && !paucResolved && (rawRatio < 0.66D || deliveryRatio < 0.68D);
 		if (frameWatchdogSpike || reliefEligibleFromFps || heapPressure > 0.90D || queuePressure > 0.28D) {
 			lowFpsStreak = rawRatio < 0.66D ? Math.max(lowFpsStreak + 1, 3) : lowFpsStreak + 1;
 			highFpsStreak = 0;
 			qualityHeadroomStreak = 0;
 			qualityUpgradeConfirmations = 0;
+		} else if (resolvedFpsDip) {
+			lowFpsStreak = Math.max(0, lowFpsStreak - 3);
+			highFpsStreak = Math.max(0, highFpsStreak - 1);
+			if (deliveryRatio >= 0.97D && heapPressure < 0.84D && queuePressure < 0.10D) {
+				qualityHeadroomStreak++;
+			} else if (deliveryRatio < 0.92D || heapPressure > 0.86D || queuePressure > 0.12D) {
+				qualityHeadroomStreak = 0;
+				qualityUpgradeConfirmations = 0;
+			}
+		} else if (workloadRecovered) {
+			lowFpsStreak = Math.max(0, lowFpsStreak - 2);
+			if (deliveryRatio >= 0.99D && heapPressure < 0.82D && queuePressure < 0.12D) {
+				qualityHeadroomStreak++;
+			} else if (deliveryRatio < 0.94D || heapPressure > 0.86D || queuePressure > 0.12D) {
+				qualityHeadroomStreak = 0;
+				qualityUpgradeConfirmations = 0;
+			}
 		} else if (rawRatio > 1.03D && deliveryRatio > 1.0D && heapPressure < 0.80D && queuePressure < 0.10D) {
 			highFpsStreak++;
 			lowFpsStreak = 0;
@@ -182,10 +269,10 @@ public final class PauCClientFpsGovernor {
 				qualityUpgradeConfirmations = 0;
 			}
 		}
-		updateVillageSeverePressure(deliveryRatio);
+		updateVillageSeverePressure(deliveryRatio, workloadRecovered, queueDrained, queueFullyDrained, idleQueueResolved);
 
 		Policy policy;
-		boolean reliefPolicyFromFps = !externalFpsDip && (rawRatio < 0.66D || deliveryRatio < 0.72D);
+		boolean reliefPolicyFromFps = !resolvedFpsDip && !paucResolved && (rawRatio < 0.66D || deliveryRatio < 0.72D);
 		if (frameWatchdogSpike || reliefPolicyFromFps || queuePressure > 0.30D || lowFpsStreak >= 3) {
 			policy = shaderActive ? Policy.SHADER_RELIEF : Policy.VANILLA_RELIEF;
 		} else if (deliveryRatio < 0.95D || heapPressure > 0.82D || queuePressure > 0.12D) {
@@ -195,12 +282,21 @@ public final class PauCClientFpsGovernor {
 		} else {
 			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
 		}
-		if (fluiditySnapshot.band() == PauCClientFluidityState.Band.RELIEF) {
+		if (fluiditySnapshot.band() == PauCClientFluidityState.Band.RELIEF && !backlogResolved && !paucResolved) {
 			policy = shaderActive ? Policy.SHADER_RELIEF : Policy.VANILLA_RELIEF;
 		} else if (fluiditySnapshot.band() == PauCClientFluidityState.Band.RECOVERY) {
 			policy = shaderActive ? Policy.SHADER_RECOVERY : Policy.VANILLA_RECOVERY;
 		} else if (fluiditySnapshot.band() == PauCClientFluidityState.Band.BALANCED
 			&& (policy == Policy.SHADER_HEADROOM || policy == Policy.VANILLA_HEADROOM)) {
+			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
+		}
+		if (resolvedFpsDip && (policy == Policy.SHADER_RELIEF || policy == Policy.VANILLA_RELIEF)) {
+			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
+		}
+		if (paucResolved
+			&& (policy == Policy.SHADER_RELIEF || policy == Policy.VANILLA_RELIEF)
+			&& heapPressure < 0.90D
+			&& queuePressure < 0.18D) {
 			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
 		}
 		if (shaderActive && dhMode == PauCLodShaderContext.DhShaderMode.SYNTHETIC_NATIVE) {
@@ -244,6 +340,13 @@ public final class PauCClientFpsGovernor {
 		villageSevereCandidateTicks = 0;
 		villageSevereRecoveryTicks = 0;
 		villageSevereHoldTicks = 0;
+		idleQueueResolvedState = false;
+		queueDrainedStableTicks = 0;
+		backlogResolved = false;
+		lastWorkloadRecovered = false;
+		lastConfiguredTargetDistance = -1;
+		resetTargetDistanceStabilizer();
+		clearPresentationQualityStabilizer();
 		System.clearProperty(RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY);
 		System.clearProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY);
 		PauCLodShaderRuntime.updatePerformance(false, PauCLodShaderProfiles.Family.GENERIC, -1, 0, 0.0D, false, false, false);
@@ -263,6 +366,8 @@ public final class PauCClientFpsGovernor {
 			+ ", queuePressure="
 			+ round(lastQueuePressure * 100.0D)
 			+ "%"
+			+ ", queueResolved="
+			+ (backlogResolved ? "on" : "off")
 			+ ", quality="
 			+ lastAppliedQualityTier.id
 			+ "@"
@@ -272,7 +377,7 @@ public final class PauCClientFpsGovernor {
 			+ ", qualityConf="
 			+ qualityUpgradeConfirmations
 			+ ", targetDistance="
-			+ System.getProperty(DYNAMIC_TARGET_DISTANCE_PROPERTY, "-")
+			+ describeTargetDistance(appliedTargetDistance < 0 ? PauCLodClientSettings.targetDistanceChunks() : appliedTargetDistance)
 			+ ", generation="
 			+ System.getProperty(DYNAMIC_GENERATION_RATE_PROPERTY, "-")
 			+ ", retention="
@@ -296,6 +401,31 @@ public final class PauCClientFpsGovernor {
 			+ "]";
 	}
 
+	public static String telemetryStateKey() {
+		return "policy="
+			+ lastPolicy.id
+			+ ",quality="
+			+ lastAppliedQualityTier.id
+			+ "@"
+			+ lastQualityRuntime
+			+ ",band="
+			+ PauCClientFluidityState.lastSnapshot().band().name().toLowerCase(Locale.ROOT)
+			+ ",targetDistance="
+			+ (appliedTargetDistance < 0 ? "-" : Integer.toString(appliedTargetDistance))
+			+ ",generation="
+			+ System.getProperty(DYNAMIC_GENERATION_RATE_PROPERTY, "-")
+			+ ",retention="
+			+ System.getProperty(DYNAMIC_RETENTION_MARGIN_PROPERTY, "-")
+			+ ",queueResolved="
+			+ (backlogResolved ? "on" : "off")
+			+ ",villagePressure="
+			+ (PauCVillagePerformanceDiagnostics.isVillagePressureActive() ? "on" : "off")
+			+ ",villageSevere="
+			+ (villageSeverePressure ? "on" : "off")
+			+ ",movementCatchup="
+			+ (PauCClientChunkPriorityScorer.isMovementCatchupActive() ? "on" : "off");
+	}
+
 	public static boolean isUnderPressure() {
 		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
 			return false;
@@ -306,6 +436,10 @@ public final class PauCClientFpsGovernor {
 		}
 
 		return lastPolicy == Policy.STARTUP || lastPolicy == Policy.SHADER_RELIEF || lastPolicy == Policy.VANILLA_RELIEF;
+	}
+
+	public static boolean isBacklogResolved() {
+		return backlogResolved;
 	}
 
 	public static double warmupAggressionScale() {
@@ -324,10 +458,10 @@ public final class PauCClientFpsGovernor {
 			case VANILLA_RECOVERY -> 1.25D;
 			case VANILLA_HEADROOM -> 1.25D;
 		};
-		if (PauCVillagePerformanceDiagnostics.isVillagePressureActive()) {
+		if (shouldApplyVillagePressureRelief()) {
 			scale *= readDouble(VILLAGE_WARMUP_SCALE_PROPERTY, 0.65D, 0.25D, 1.0D);
 		}
-		if (villageSeverePressure) {
+		if (shouldApplyVillageSevereRelief()) {
 			scale *= readDouble(VILLAGE_SEVERE_WARMUP_SCALE_PROPERTY, 0.35D, 0.10D, 1.0D);
 			scale = Math.max(scale, readDouble(VILLAGE_SEVERE_WARMUP_FLOOR_PROPERTY, 0.35D, 0.10D, 1.0D));
 		}
@@ -349,7 +483,7 @@ public final class PauCClientFpsGovernor {
 		}
 		boolean highTargetVanilla = highTargetVanillaMode();
 		double scale;
-		if (villageSeverePressure) {
+		if (shouldApplyVillageSevereRelief()) {
 			scale = readDouble("pauc.lod.villageSevereMeshBudgetScale", 0.55D, 0.20D, 1.0D);
 		} else if (lastPolicy == Policy.SHADER_RECOVERY || lastPolicy == Policy.VANILLA_RECOVERY) {
 			scale = highTargetVanilla
@@ -376,22 +510,75 @@ public final class PauCClientFpsGovernor {
 		return PauCClientFluidityState.adjustMeshBudgetScale(scale);
 	}
 
-	private static void updateVillageSeverePressure(double ratio) {
+	private static void updateVillageSeverePressure(
+		double ratio,
+		boolean workloadRecovered,
+		boolean queueDrained,
+		boolean queueFullyDrained,
+		boolean idleQueueResolved
+	) {
 		boolean villagePressure = PauCVillagePerformanceDiagnostics.isVillagePressureActive();
-		boolean queueDrained = isPauCQueueDrained(lastQueuePressure);
+		boolean recentVillageLoad = PauCVillagePerformanceDiagnostics.lastClientVillageEntityCount() > 0
+			|| PauCVillagePerformanceDiagnostics.lastRenderedVillageEntitiesWindow() >= readInt("pauc.lod.villageSevereRecentEntityWindow", 8, 0, 4096)
+			|| PauCVillagePerformanceDiagnostics.lastRenderedVillageBlockEntitiesWindow() >= readInt("pauc.lod.villageSevereRecentBlockEntityWindow", 24, 0, 4096);
+		boolean villageLoadGone = !villagePressure || !recentVillageLoad;
 		double enterRatio = readDouble(VILLAGE_SEVERE_RATIO_PROPERTY, 0.83D, 0.40D, 1.20D);
 		double recoveryRatio = readDouble(VILLAGE_SEVERE_RECOVERY_RATIO_PROPERTY, 0.88D, enterRatio, 1.30D);
-		boolean severeCandidate = villagePressure && ratio < enterRatio && lowFpsStreak >= 3;
+		boolean severeCandidate = villagePressure
+			&& recentVillageLoad
+			&& ratio < enterRatio
+			&& lowFpsStreak >= 3
+			&& !idleQueueResolved
+			&& !backlogResolved
+			&& !workloadRecovered;
 		int enterTicks = readInt(VILLAGE_SEVERE_ENTER_TICKS_PROPERTY, 6, 1, 200);
 		int exitTicks = readInt(VILLAGE_SEVERE_EXIT_TICKS_PROPERTY, 48, 1, 600);
 		int minHoldTicks = readInt(VILLAGE_SEVERE_MIN_HOLD_TICKS_PROPERTY, 36, 1, 600);
-		int releaseStep = !villagePressure && queueDrained ? Math.max(2, Math.max(1, minHoldTicks / 6)) : 1;
-		int effectiveExitTicks = !villagePressure && queueDrained
+		boolean resolved = idleQueueResolved || backlogResolved || workloadRecovered;
+		int releaseStep = villageLoadGone && queueFullyDrained
+			? Math.max(10, Math.max(1, minHoldTicks / 2))
+			: !villagePressure && idleQueueResolved
+			? Math.max(6, Math.max(1, minHoldTicks / 2))
+			: !villagePressure && workloadRecovered
+			? Math.max(4, Math.max(1, minHoldTicks / 3))
+			: !villagePressure && resolved
+			? Math.max(3, Math.max(1, minHoldTicks / 4))
+			: !villagePressure && (queueFullyDrained || queueDrained)
+				? Math.max(2, Math.max(1, minHoldTicks / 6))
+				: 1;
+		int effectiveExitTicks = villageLoadGone && (idleQueueResolved || queueFullyDrained)
+			? Math.max(1, readInt("pauc.lod.villageSevereGoneExitTicks", Math.max(1, exitTicks / 12), 1, 600))
+			: !villagePressure && idleQueueResolved
+			? Math.max(2, readInt("pauc.lod.villageSevereIdleResolvedExitTicks", Math.max(2, exitTicks / 10), 1, 600))
+			: !villagePressure && workloadRecovered
+			? Math.max(3, readInt("pauc.lod.villageSevereCoverageExitTicks", Math.max(3, exitTicks / 8), 1, 600))
+			: !villagePressure && resolved
+			? Math.max(4, readInt("pauc.lod.villageSevereResolvedExitTicks", Math.max(4, exitTicks / 6), 1, 600))
+			: !villagePressure && (queueFullyDrained || queueDrained)
 			? Math.max(6, readInt("pauc.lod.villageSevereIdleExitTicks", Math.max(6, exitTicks / 4), 1, 600))
 			: exitTicks;
-		boolean fastRecovery = !villagePressure
-			&& queueDrained
+		boolean fastRecovery = villageLoadGone && (idleQueueResolved || queueFullyDrained || workloadRecovered);
+		if (!fastRecovery) {
+			fastRecovery = !villagePressure && idleQueueResolved;
+		}
+		if (!fastRecovery) {
+			fastRecovery = !villagePressure
+				&& workloadRecovered
+				&& ratio >= Math.max(0.40D, recoveryRatio - readDouble("pauc.lod.villageSevereCoverageRecoveryMargin", 0.18D, 0.0D, 0.40D));
+		}
+		if (!fastRecovery) {
+			fastRecovery = !villagePressure
+				&& resolved
+				&& ratio >= Math.max(0.40D, recoveryRatio - readDouble("pauc.lod.villageSevereResolvedRecoveryMargin", 0.14D, 0.0D, 0.40D));
+		}
+		if (!fastRecovery) {
+			fastRecovery = !villagePressure
+			&& (queueFullyDrained || queueDrained)
 			&& ratio >= Math.max(0.40D, recoveryRatio - readDouble("pauc.lod.villageSevereIdleRecoveryMargin", 0.10D, 0.0D, 0.40D));
+		}
+		if (!fastRecovery) {
+			fastRecovery = isPauCResolved(queueDrained, queueFullyDrained, true, false, idleQueueResolved, backlogResolved, workloadRecovered);
+		}
 
 		if (severeCandidate) {
 			villageSevereCandidateTicks = Math.min(enterTicks, villageSevereCandidateTicks + 1);
@@ -405,6 +592,9 @@ public final class PauCClientFpsGovernor {
 		} else {
 			villageSevereCandidateTicks = 0;
 			if (villageSeverePressure) {
+				if (villageLoadGone && (queueFullyDrained || resolved) && villageSevereHoldTicks <= Math.max(1, minHoldTicks / 3)) {
+					villageSevereHoldTicks = 0;
+				}
 				if (villageSevereHoldTicks > 0) {
 					villageSevereHoldTicks = Math.max(0, villageSevereHoldTicks - releaseStep);
 					if (!fastRecovery) {
@@ -442,6 +632,7 @@ public final class PauCClientFpsGovernor {
 		QualityTier achievedQualityTier = currentQualityTier(shaderActive, shaderFamily);
 		QualityTier qualityTier = presentationQualityTier(achievedQualityTier, stabilizeLodPresentation);
 		qualityTier = vanillaHighTargetPresentationTier(policy, qualityTier);
+		qualityTier = stabilizePresentationQualityTier(qualityTier, policy, targetDistance, stabilizeLodPresentation, movementCatchup);
 		String qualityLabel = qualityTier == achievedQualityTier ? qualityTier.id : qualityTier.id + "/achieved=" + achievedQualityTier.id;
 		lastAppliedQualityTier = qualityTier;
 		lastQualityRuntime = runtimeId(shaderActive, shaderFamily);
@@ -456,10 +647,10 @@ public final class PauCClientFpsGovernor {
 		if (!villageSeverePressure || stabilizeLodPresentation) {
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, visibleFillFloor);
 		}
-		if (villagePressure && !stabilizeLodPresentation) {
+		if (shouldApplyVillagePressureRelief() && !stabilizeLodPresentation) {
 			generationRequestRateLimit = Math.min(generationRequestRateLimit, readInt(VILLAGE_GENERATION_RATE_PROPERTY, 32, 4, 128));
 		}
-		if (villageSeverePressure && !stabilizeLodPresentation) {
+		if (shouldApplyVillageSevereRelief() && !stabilizeLodPresentation) {
 			generationRequestRateLimit = Math.min(generationRequestRateLimit, readInt(VILLAGE_SEVERE_GENERATION_RATE_PROPERTY, 8, 2, 64));
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, readInt(VILLAGE_SEVERE_GENERATION_FLOOR_PROPERTY, 32, 8, 128));
 		}
@@ -483,10 +674,18 @@ public final class PauCClientFpsGovernor {
 			generationRequestRateLimit = Math.min(generationRequestRateLimit, emergencyCap);
 		}
 		int retentionMarginChunks = policy.retentionMarginChunks;
-		if (villageSeverePressure) {
+		if (shouldApplyVillageSevereRelief()) {
 			retentionMarginChunks = Math.min(retentionMarginChunks, readInt(VILLAGE_SEVERE_RETENTION_MARGIN_PROPERTY, 12, 3, 12));
 		}
 		retentionMarginChunks = PauCClientFluidityState.adjustRetentionMargin(retentionMarginChunks);
+		targetDistance = stabilizeTargetDistance(
+			targetDistance,
+			configuredTarget,
+			policy,
+			backlogResolved,
+			lastQueuePressure,
+			movementCatchup
+		);
 		setSystemPropertyIfChanged(DYNAMIC_TARGET_DISTANCE_PROPERTY, Integer.toString(targetDistance));
 		setSystemPropertyIfChanged(DYNAMIC_RETENTION_MARGIN_PROPERTY, Integer.toString(retentionMarginChunks));
 		setSystemPropertyIfChanged(DYNAMIC_GENERATION_RATE_PROPERTY, Integer.toString(generationRequestRateLimit));
@@ -509,7 +708,7 @@ public final class PauCClientFpsGovernor {
 				policy.id,
 				reason + ", " + PauCLodGameplayProfile.describe(),
 				qualityLabel,
-				targetDistance,
+				describeTargetDistance(targetDistance),
 				generationRequestRateLimit,
 				retentionMarginChunks,
 				qualityTier.maxHorizontalResolution,
@@ -671,6 +870,227 @@ public final class PauCClientFpsGovernor {
 			&& PauCClientTargetFps.effectiveTargetFps() >= readInt("pauc.lod.vanillaHighTargetFps", 132, 90, 240);
 	}
 
+	private static int stabilizeTargetDistance(
+		int requestedTargetDistance,
+		int configuredTargetDistance,
+		Policy policy,
+		boolean queueResolved,
+		double queuePressure,
+		boolean movementCatchup
+	) {
+		int requested = PauCLodClientSettings.sanitizeTargetDistanceChunks(Math.min(configuredTargetDistance, requestedTargetDistance));
+		if (appliedTargetDistance < PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS) {
+			appliedTargetDistance = requested;
+			clearPendingTargetDistance();
+			return requested;
+		}
+		if (requested == appliedTargetDistance) {
+			clearPendingTargetDistance();
+			return appliedTargetDistance;
+		}
+
+		long now = System.currentTimeMillis();
+		if (requested < appliedTargetDistance) {
+			int previous = appliedTargetDistance;
+			appliedTargetDistance = requested;
+			lastTargetDistanceDecreaseAtMillis = now;
+			clearPendingTargetDistance();
+			LOGGER.info(
+				"PauC target distance stabilizer reduced LOD range from {} to {} (requested={}, policy={}, queueResolved={}, queue={}%, movementCatchup={}).",
+				previous,
+				appliedTargetDistance,
+				requested,
+				policy.id,
+				queueResolved ? "on" : "off",
+				round(queuePressure * 100.0D),
+				movementCatchup ? "on" : "off"
+			);
+			return appliedTargetDistance;
+		}
+
+		boolean highTarget = configuredTargetDistance >= 48;
+		long recoveryCooldownMs = readInt(
+			"pauc.lod.targetDistanceRecoveryCooldownMs",
+			highTarget ? 2_500 : 1_500,
+			0,
+			15_000
+		);
+		if (movementCatchup || now - lastTargetDistanceDecreaseAtMillis < recoveryCooldownMs) {
+			clearPendingTargetDistance();
+			return appliedTargetDistance;
+		}
+		if (!PauCClientFrontierWarmupManager.isTargetDistanceUpgradeReady(appliedTargetDistance, configuredTargetDistance)) {
+			clearPendingTargetDistance();
+			return appliedTargetDistance;
+		}
+
+		double maxQueuePressure = readDouble(
+			"pauc.lod.targetDistanceUpgradeMaxQueuePressure",
+			queueResolved ? 0.24D : 0.12D,
+			0.0D,
+			1.0D
+		);
+		if (!queueResolved && queuePressure > maxQueuePressure) {
+			clearPendingTargetDistance();
+			return appliedTargetDistance;
+		}
+
+		if (requested != pendingTargetDistance) {
+			pendingTargetDistance = requested;
+			pendingTargetDistanceTicks = 1;
+			pendingTargetDistanceSinceMillis = now;
+			return appliedTargetDistance;
+		}
+
+		pendingTargetDistanceTicks++;
+		int requiredTicks = readInt("pauc.lod.targetDistanceUpgradeStableTicks", highTarget ? 32 : 22, 1, 400)
+			+ (queueResolved ? 0 : highTarget ? 14 : 8);
+		long requiredHoldMs = readInt("pauc.lod.targetDistanceUpgradeHoldMs", highTarget ? 1_600 : 1_000, 0, 15_000)
+			+ (queueResolved ? 0L : highTarget ? 600L : 300L);
+		if (pendingTargetDistanceTicks < requiredTicks && now - pendingTargetDistanceSinceMillis < requiredHoldMs) {
+			return appliedTargetDistance;
+		}
+
+		int baseStep = readInt("pauc.lod.targetDistanceUpgradeStep", highTarget ? 8 : configuredTargetDistance >= 32 ? 6 : 4, 1, 24);
+		int adaptiveStep = queueResolved
+			? baseStep + (configuredTargetDistance >= 64 ? 4 : configuredTargetDistance >= 48 ? 2 : 0)
+			: baseStep;
+		int nextTargetDistance = Math.min(requested, appliedTargetDistance + adaptiveStep);
+		if (nextTargetDistance != appliedTargetDistance) {
+			int previous = appliedTargetDistance;
+			appliedTargetDistance = nextTargetDistance;
+			clearPendingTargetDistance();
+			LOGGER.info(
+				"PauC target distance stabilizer raised LOD range from {} to {} (requested={}, step={}, policy={}, queueResolved={}, queue={}%).",
+				previous,
+				appliedTargetDistance,
+				requested,
+				adaptiveStep,
+				policy.id,
+				queueResolved ? "on" : "off",
+				round(queuePressure * 100.0D)
+			);
+		}
+		return appliedTargetDistance;
+	}
+
+	private static void clearPendingTargetDistance() {
+		pendingTargetDistance = -1;
+		pendingTargetDistanceTicks = 0;
+		pendingTargetDistanceSinceMillis = 0L;
+	}
+
+	private static QualityTier stabilizePresentationQualityTier(
+		QualityTier candidate,
+		Policy policy,
+		int targetDistance,
+		boolean stabilizeLodPresentation,
+		boolean movementCatchup
+	) {
+		if (lastPresentationQualityTargetDistance < 0) {
+			lastPresentationQualityTargetDistance = targetDistance;
+			clearPendingPresentationQuality();
+			return candidate;
+		}
+		if (candidate.ordinal() >= lastAppliedQualityTier.ordinal()) {
+			lastPresentationQualityTargetDistance = targetDistance;
+			clearPendingPresentationQuality();
+			return candidate;
+		}
+
+		boolean urgentDrop = policy == Policy.STARTUP
+			|| policy == Policy.SHADER_RELIEF
+			|| policy == Policy.VANILLA_RELIEF
+			|| movementCatchup
+			|| stabilizeLodPresentation
+			|| !backlogResolved
+			|| !lastWorkloadRecovered
+			|| targetDistance < lastPresentationQualityTargetDistance
+			|| lastQueuePressure > readDouble("pauc.lod.presentationQualityDropMaxQueuePressure", 0.06D, 0.0D, 1.0D)
+			|| PauCClientSurfaceLodMode.prefersAccurateFeatureLods();
+		if (urgentDrop) {
+			lastPresentationQualityTargetDistance = targetDistance;
+			clearPendingPresentationQuality();
+			return candidate;
+		}
+
+		long now = System.currentTimeMillis();
+		if (candidate == pendingPresentationQualityTier) {
+			pendingPresentationQualityTicks++;
+		} else {
+			pendingPresentationQualityTier = candidate;
+			pendingPresentationQualityTicks = 1;
+			pendingPresentationQualitySinceMillis = now;
+		}
+
+		boolean highTarget = PauCLodClientSettings.configuredTargetDistanceChunks() >= 48;
+		int requiredTicks = readInt(
+			PRESENTATION_QUALITY_DROP_STABLE_TICKS_PROPERTY,
+			highTarget ? 30 : 18,
+			1,
+			240
+		) + (PauCLodShaderContext.isShaderPackInUse() ? 4 : 0);
+		long requiredHoldMs = readInt(
+			PRESENTATION_QUALITY_DROP_HOLD_MS_PROPERTY,
+			highTarget ? 1_400 : 900,
+			0,
+			10_000
+		);
+		if (pendingPresentationQualityTicks >= requiredTicks || now - pendingPresentationQualitySinceMillis >= requiredHoldMs) {
+			lastPresentationQualityTargetDistance = targetDistance;
+			clearPendingPresentationQuality();
+			return candidate;
+		}
+		return lastAppliedQualityTier;
+	}
+
+	private static void resetTargetDistanceStabilizer() {
+		appliedTargetDistance = -1;
+		lastTargetDistanceDecreaseAtMillis = 0L;
+		clearPendingTargetDistance();
+	}
+
+	private static void clearPendingPresentationQuality() {
+		pendingPresentationQualityTier = null;
+		pendingPresentationQualityTicks = 0;
+		pendingPresentationQualitySinceMillis = 0L;
+	}
+
+	private static void clearPresentationQualityStabilizer() {
+		lastAppliedQualityTier = QualityTier.NEAR;
+		lastPresentationQualityTargetDistance = -1;
+		clearPendingPresentationQuality();
+	}
+
+	private static String describeTargetDistance(int appliedDistance) {
+		if (pendingTargetDistance > appliedDistance) {
+			return appliedDistance + " (requested=" + pendingTargetDistance + ", pending=" + pendingTargetDistanceTicks + "t)";
+		}
+		return Integer.toString(appliedDistance);
+	}
+
+	private static void synchronizeConfiguredTargetDistance() {
+		int configuredTargetDistance = PauCLodClientSettings.configuredTargetDistanceChunks();
+		if (configuredTargetDistance == lastConfiguredTargetDistance) {
+			return;
+		}
+
+		boolean initialized = lastConfiguredTargetDistance >= PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS;
+		lastConfiguredTargetDistance = configuredTargetDistance;
+		if (!initialized) {
+			lastPresentationQualityTargetDistance = configuredTargetDistance;
+			return;
+		}
+
+		resetTargetDistanceStabilizer();
+		clearPresentationQualityStabilizer();
+		lastPresentationQualityTargetDistance = configuredTargetDistance;
+		PauCClientFrontierWarmupManager.onConfiguredTargetDistanceChanged(configuredTargetDistance);
+		PauCClientSurfaceLodMode.onConfiguredTargetDistanceChanged(configuredTargetDistance);
+		PauCEmbeddedDhBridge.resetPresentationStability("target-distance:" + configuredTargetDistance);
+		LOGGER.info("PauC synchronized manual LOD distance change to {} chunks and cleared stale presentation state.", configuredTargetDistance);
+	}
+
 	private static void clearDynamicOverrides() {
 		System.clearProperty(DYNAMIC_TARGET_DISTANCE_PROPERTY);
 		System.clearProperty(DYNAMIC_RETENTION_MARGIN_PROPERTY);
@@ -702,6 +1122,13 @@ public final class PauCClientFpsGovernor {
 		lastVillagePressure = false;
 		lastVillageSeverePressure = false;
 		lastMovementCatchup = false;
+		idleQueueResolvedState = false;
+		queueDrainedStableTicks = 0;
+		backlogResolved = false;
+		lastWorkloadRecovered = false;
+		lastConfiguredTargetDistance = -1;
+		resetTargetDistanceStabilizer();
+		clearPresentationQualityStabilizer();
 		lastPolicy = Policy.STARTUP;
 		System.clearProperty(RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY);
 		System.clearProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY);
@@ -766,11 +1193,146 @@ public final class PauCClientFpsGovernor {
 			&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= readInt("pauc.lod.drainedQueuePendingChunks", 0, 0, 256);
 	}
 
-	private static boolean isExternalFpsDip(boolean queueDrained, boolean frameWatchdogSpike, double deliveryRatio, double heapPressure) {
+	private static void updateQueueDrainState(boolean queueDrained, boolean queueFullyDrained) {
+		if (queueFullyDrained) {
+			queueDrainedStableTicks = Math.min(600, queueDrainedStableTicks + 2);
+			return;
+		}
+		if (queueDrained) {
+			queueDrainedStableTicks = Math.min(600, queueDrainedStableTicks + 1);
+			return;
+		}
+		queueDrainedStableTicks = Math.max(0, queueDrainedStableTicks - 2);
+	}
+
+	private static boolean isBacklogResolved(
+		boolean frameWatchdogSpike,
+		double heapPressure,
+		boolean queueDrained,
+		boolean queueFullyDrained,
+		boolean stableCoverage,
+		boolean coverageHoldActive,
+		boolean idleQueueResolved
+	) {
+		if (!queueDrained || frameWatchdogSpike) {
+			return false;
+		}
+		if (heapPressure > readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D)) {
+			return false;
+		}
+		if (idleQueueResolved) {
+			return true;
+		}
+		boolean stableResolved = queueDrainedStableTicks >= readInt(DRAINED_QUEUE_STABLE_TICKS_PROPERTY, 10, 1, 200);
+		boolean fastResolved = queueFullyDrained && stableCoverage && !coverageHoldActive;
+		boolean villagePressure = PauCVillagePerformanceDiagnostics.isVillagePressureActive();
+		return (stableResolved || fastResolved)
+			&& (!villagePressure || queueFullyDrained)
+			&& (!villageSeverePressure || queueFullyDrained);
+	}
+
+	private static boolean isPauCWorkloadRecovered(
+		boolean queueDrained,
+		boolean queueFullyDrained,
+		boolean coverageTelemetry,
+		boolean stableCoverage,
+		boolean coverageHoldActive,
+		boolean frameWatchdogSpike,
+		double heapPressure,
+		boolean idleQueueResolved
+	) {
+		if (frameWatchdogSpike
+			|| heapPressure > readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D)) {
+			return false;
+		}
+		if (idleQueueResolved) {
+			return true;
+		}
+		boolean villagePressure = PauCVillagePerformanceDiagnostics.isVillagePressureActive();
+		if (villageSeverePressure && !(queueFullyDrained && !coverageHoldActive)) {
+			return false;
+		}
+		if (!coverageTelemetry) {
+			return backlogResolved && (!villagePressure || queueFullyDrained);
+		}
+		if (queueDrained && queueFullyDrained && stableCoverage && !coverageHoldActive) {
+			return true;
+		}
+		return backlogResolved && (!villagePressure || queueFullyDrained);
+	}
+
+	private static boolean isPauCResolved(
+		boolean queueDrained,
+		boolean queueFullyDrained,
+		boolean stableCoverage,
+		boolean coverageHoldActive,
+		boolean idleQueueResolved,
+		boolean backlogResolved,
+		boolean workloadRecovered
+	) {
+		return idleQueueResolved
+			|| backlogResolved
+			|| workloadRecovered
+			|| (queueDrained && queueFullyDrained && stableCoverage && !coverageHoldActive);
+	}
+
+	private static boolean isExternalFpsDip(
+		boolean queueDrained,
+		boolean queueFullyDrained,
+		boolean backlogResolved,
+		boolean coverageTelemetry,
+		boolean stableCoverage,
+		boolean coverageHoldActive,
+		boolean frameWatchdogSpike,
+		double deliveryRatio,
+		double heapPressure,
+		boolean idleQueueResolved
+	) {
+		if (frameWatchdogSpike) {
+			return false;
+		}
+		if (heapPressure > readDouble("pauc.lod.externalReliefMaxHeapRatio", 0.84D, 0.20D, 0.95D)) {
+			return false;
+		}
+		if (idleQueueResolved || backlogResolved) {
+			return deliveryRatio >= readDouble(DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY, 0.46D, 0.10D, 1.10D);
+		}
+		if (coverageTelemetry && queueDrained && queueFullyDrained && stableCoverage && !coverageHoldActive) {
+			return deliveryRatio >= readDouble(DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY, 0.46D, 0.10D, 1.10D);
+		}
 		return queueDrained
-			&& !frameWatchdogSpike
-			&& heapPressure <= readDouble("pauc.lod.externalReliefMaxHeapRatio", 0.84D, 0.20D, 0.95D)
 			&& deliveryRatio >= readDouble("pauc.lod.externalReliefMinDeliveryRatio", 0.74D, 0.40D, 1.10D);
+	}
+
+	private static boolean isQueueIdleResolved(boolean frameWatchdogSpike, double heapPressure, boolean queueDrained, boolean queueFullyDrained) {
+		return queueDrained
+			&& queueFullyDrained
+			&& queueDrainedStableTicks >= readInt(IDLE_QUEUE_RESOLVED_STABLE_TICKS_PROPERTY, 12, 1, 240)
+			&& !frameWatchdogSpike
+			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D);
+	}
+
+	private static boolean shouldApplyVillagePressureRelief() {
+		return PauCVillagePerformanceDiagnostics.isVillagePressureActive()
+			&& !idleQueueResolvedState
+			&& !backlogResolved
+			&& !lastWorkloadRecovered;
+	}
+
+	private static boolean shouldApplyVillageSevereRelief() {
+		return villageSeverePressure
+			&& !idleQueueResolvedState
+			&& !backlogResolved
+			&& !lastWorkloadRecovered;
+	}
+
+	private static boolean isPauCQueueFullyDrained(double queuePressure) {
+		if (!isPauCQueueDrained(queuePressure)) {
+			return false;
+		}
+		return PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= 0;
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
@@ -878,6 +1440,7 @@ public final class PauCClientFpsGovernor {
 			if (rawValue == null || rawValue.isBlank()) {
 				if (!PauCLodShaderContext.isShaderPackInUse()) {
 					return switch (PauCLodGameplayProfile.current()) {
+						case SHOOTER -> FAR;
 						case COMPETITIVE, BALANCED -> FAR;
 						case CINEMATIC -> POLISH;
 					};

@@ -1,24 +1,26 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
+import fr.hoyatla.pauc.lod.PauCLodGameplayProfile;
+import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
 
 public final class PauCClientMemoryBudgetController {
-	private static final long MIN_RAM_BUDGET_BYTES = 96L * 1024L * 1024L;
+	private static final long MIN_RAM_BUDGET_BYTES = 256L * 1024L * 1024L;
 	private static final long MAX_RAM_BUDGET_BYTES = 4L * 1024L * 1024L * 1024L;
 	private static final long BASE_CHUNK_RAM_BYTES = 16L * 1024L;
 	private static final long PER_SECTION_RAM_BYTES = 24L * 1024L;
 	private static final int MIN_TRACKED_CHUNKS = 96;
-	private static final int MAX_TRACKED_CHUNKS = 65536;
+	private static final int MAX_TRACKED_CHUNKS = 262144;
 	private static final int MIN_RETAINED_CHUNKS = 24;
-	private static final int MAX_RETAINED_CHUNKS = 2048;
+	private static final int MAX_RETAINED_CHUNKS = 8192;
 	private static final int MIN_PENDING_PLANS = 16;
-	private static final int MAX_PENDING_PLANS = 512;
+	private static final int MAX_PENDING_PLANS = 2048;
 	private static final int MIN_QUEUED_MESH_SECTIONS = 32;
-	private static final int MAX_QUEUED_MESH_SECTIONS = 1024;
+	private static final int MAX_QUEUED_MESH_SECTIONS = 4096;
 	private static final int MIN_HOT_MESH_SECTIONS = 96;
-	private static final int MAX_HOT_MESH_SECTIONS = 3072;
+	private static final int MAX_HOT_MESH_SECTIONS = 12288;
 	private static final int MIN_VRAM_MESH_SECTIONS = 128;
-	private static final int MAX_VRAM_MESH_SECTIONS = 6144;
+	private static final int MAX_VRAM_MESH_SECTIONS = 24576;
 
 	private PauCClientMemoryBudgetController() {
 	}
@@ -27,12 +29,25 @@ public final class PauCClientMemoryBudgetController {
 		long runtimeMaxMemory = Runtime.getRuntime().maxMemory();
 		long configuredBudgetBytes = (long) PauCLodClientSettings.memoryBudgetMb() * 1024L * 1024L;
 		double pressureScale = PauCClientFpsGovernor.meshBudgetScale();
-		double heapBudgetRatio = readDouble("pauc.client.cache.heapBudgetRatio", 0.17D, 0.05D, 0.40D);
+		if (PauCClientFpsGovernor.isBacklogResolved()) {
+			pressureScale = Math.max(
+				pressureScale,
+				Math.min(1.10D, pressureScale * readDouble("pauc.client.cache.meshBudgetResolvedScale", 1.08D, 1.0D, 1.30D))
+			);
+		}
+		double gameplayScale = Math.max(0.70D, Math.min(1.10D, PauCLodGameplayProfile.qualityScale()));
+		double effectiveScale = pressureScale * gameplayScale;
+		PauCTerrainGeneratorDetector.ModpackClass modpackClass = PauCTerrainGeneratorDetector.currentModpackClass();
+		boolean heavyModpack = modpackClass == PauCTerrainGeneratorDetector.ModpackClass.HEAVY
+			|| modpackClass == PauCTerrainGeneratorDetector.ModpackClass.EXTREME;
+		double heapBudgetRatio = readDouble("pauc.client.cache.heapBudgetRatio", heavyModpack ? modpackClass.heapBudgetShare() : 0.17D, 0.05D, 0.40D);
 		double heapBudgetCeilingRatio = readDouble("pauc.client.cache.heapBudgetCeilingRatio", 0.38D, heapBudgetRatio, 0.75D);
 		long heapShareBudgetBytes = Math.round(runtimeMaxMemory * heapBudgetRatio);
 		long heapShareCeilingBytes = Math.round(runtimeMaxMemory * heapBudgetCeilingRatio);
-		long baselineBudgetBytes = Math.max(configuredBudgetBytes, heapShareBudgetBytes);
-		long clampedBudgetBytes = clamp(baselineBudgetBytes, MIN_RAM_BUDGET_BYTES, Math.min(MAX_RAM_BUDGET_BYTES, Math.max(MIN_RAM_BUDGET_BYTES, heapShareCeilingBytes)));
+		long modpackBoostBytes = (long) modpackClass.memoryBoostMb() * 1024L * 1024L;
+		long baselineBudgetBytes = Math.max(configuredBudgetBytes, heapShareBudgetBytes) + modpackBoostBytes;
+		long effectiveCeilingBytes = Math.min(MAX_RAM_BUDGET_BYTES, Math.max(MIN_RAM_BUDGET_BYTES, heapShareCeilingBytes + modpackBoostBytes));
+		long clampedBudgetBytes = clamp(baselineBudgetBytes, MIN_RAM_BUDGET_BYTES, effectiveCeilingBytes);
 		long ramBudgetBytes = readLong("pauc.client.cache.ramBudgetBytes", clampedBudgetBytes);
 		int trackedChunks = readInt(
 			"pauc.client.cache.maxTrackedChunks",
@@ -40,23 +55,23 @@ public final class PauCClientMemoryBudgetController {
 		);
 		int retainedChunks = readInt(
 			"pauc.client.cache.maxRetainedChunks",
-			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 12, MIN_RETAINED_CHUNKS, MAX_RETAINED_CHUNKS), pressureScale, MIN_RETAINED_CHUNKS)
+			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 12, MIN_RETAINED_CHUNKS, MAX_RETAINED_CHUNKS), effectiveScale, MIN_RETAINED_CHUNKS)
 		);
 		int pendingPlans = readInt(
 			"pauc.client.cache.maxPendingPlans",
-			scaleBudget(clamp(renderDistanceChunks * 3, MIN_PENDING_PLANS, MAX_PENDING_PLANS), pressureScale, MIN_PENDING_PLANS)
+			scaleBudget(clamp(renderDistanceChunks * 3, MIN_PENDING_PLANS, MAX_PENDING_PLANS), effectiveScale, MIN_PENDING_PLANS)
 		);
 		int queuedMeshSections = readInt(
 			"pauc.client.cache.maxQueuedMeshSections",
-			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 10, MIN_QUEUED_MESH_SECTIONS, MAX_QUEUED_MESH_SECTIONS), pressureScale, MIN_QUEUED_MESH_SECTIONS)
+			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 10, MIN_QUEUED_MESH_SECTIONS, MAX_QUEUED_MESH_SECTIONS), effectiveScale, MIN_QUEUED_MESH_SECTIONS)
 		);
 		int hotMeshSections = readInt(
 			"pauc.client.cache.maxHotMeshSections",
-			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 18, MIN_HOT_MESH_SECTIONS, MAX_HOT_MESH_SECTIONS), pressureScale, MIN_HOT_MESH_SECTIONS)
+			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 18, MIN_HOT_MESH_SECTIONS, MAX_HOT_MESH_SECTIONS), effectiveScale, MIN_HOT_MESH_SECTIONS)
 		);
 		int vramMeshSections = readInt(
 			"pauc.client.cache.maxVramMeshSections",
-			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 24, MIN_VRAM_MESH_SECTIONS, MAX_VRAM_MESH_SECTIONS), pressureScale, MIN_VRAM_MESH_SECTIONS)
+			scaleBudget(clamp((renderDistanceChunks + warmMarginChunks) * 24, MIN_VRAM_MESH_SECTIONS, MAX_VRAM_MESH_SECTIONS), effectiveScale, MIN_VRAM_MESH_SECTIONS)
 		);
 		return new BudgetSnapshot(
 			ramBudgetBytes,
@@ -66,7 +81,7 @@ public final class PauCClientMemoryBudgetController {
 			queuedMeshSections,
 			hotMeshSections,
 			vramMeshSections,
-			pressureScale
+			effectiveScale
 		);
 	}
 

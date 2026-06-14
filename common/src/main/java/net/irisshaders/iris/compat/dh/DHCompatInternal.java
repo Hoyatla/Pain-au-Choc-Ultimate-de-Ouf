@@ -65,11 +65,13 @@ public class DHCompatInternal {
 		}
 
 		boolean hasExplicitDhTerrainShader = pipeline.hasExplicitDHTerrainShader();
+		Optional<ProgramSource> terrainSource = hasExplicitDhTerrainShader ? pipeline.getDHTerrainShader() : Optional.empty();
+		boolean detectedRuntimeDhShader = terrainSource.isPresent();
+		boolean detectedNativeDhShader = detectedRuntimeDhShader;
 		boolean packBlocksSyntheticDhTerrainShader = PauCLodShaderContext.blocksSyntheticDhTerrainShader();
-		boolean detectedRuntimeDhShader = hasExplicitDhTerrainShader && !packBlocksSyntheticDhTerrainShader && pipeline.getDHTerrainShader().isPresent();
-		boolean detectedNativeDhShader = detectedRuntimeDhShader && PauCLodShaderContext.hasScannedDhTerrainProgram();
-		boolean syntheticDhShaderAllowed = !detectedNativeDhShader && PauCLodShaderContext.shouldUseSyntheticDhTerrainShader();
-		Optional<ProgramSource> terrainSource = detectedRuntimeDhShader ? pipeline.getDHTerrainShader() : Optional.empty();
+		boolean syntheticDhShaderAllowed = !detectedRuntimeDhShader
+			&& !packBlocksSyntheticDhTerrainShader
+			&& PauCLodShaderContext.shouldUseSyntheticDhTerrainShader();
 		boolean syntheticDhTerrainShader = false;
 		if (syntheticDhShaderAllowed) {
 			if (terrainSource.isEmpty()) {

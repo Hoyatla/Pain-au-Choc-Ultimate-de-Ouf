@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
+import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 import fr.hoyatla.pauc.platform.PauCPlatformServices;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
@@ -28,17 +29,27 @@ public final class PauCClientFluidityState {
 	private static final String RECOVERY_GENERATION_SCALE_PROPERTY = "pauc.fluidity.recoveryGenerationScale";
 	private static final String RECOVERY_WARMUP_SCALE_PROPERTY = "pauc.fluidity.recoveryWarmupScale";
 	private static final String RECOVERY_MESH_SCALE_PROPERTY = "pauc.fluidity.recoveryMeshScale";
+	private static final String DRAINED_QUEUE_STABLE_TICKS_PROPERTY = "pauc.lod.drainedQueueStableTicks";
+	private static final String DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY = "pauc.lod.drainedQueueResolvedMaxHeapRatio";
+	private static final String DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY = "pauc.lod.drainedQueueResolvedMinDeliveryRatio";
+	private static final String IDLE_QUEUE_RESOLVED_STABLE_TICKS_PROPERTY = "pauc.lod.idleQueueResolvedStableTicks";
+	private static final String BAND_STABLE_TICKS_PROPERTY = "pauc.fluidity.bandStableTicks";
+	private static final String BAND_HOLD_MS_PROPERTY = "pauc.fluidity.bandHoldMs";
 	private static final int CONFIG_RELOAD_TICKS = 100;
 	private static final int LOG_THROTTLE_TICKS = 200;
 	private static volatile Config config = Config.read();
 	private static volatile Snapshot lastSnapshot = Snapshot.neutral();
 	private static String lastRuntimeSignature = "";
 	private static String lastLoggedBand = "";
+	private static Band pendingBand = Band.HEADROOM;
+	private static int pendingBandTicks;
+	private static long pendingBandSinceMillis;
 	private static int cachedModCount = Integer.MIN_VALUE;
 	private static int configReloadTicks;
 	private static int modCountRetryTicks;
 	private static int shaderTransitionTicks;
 	private static int logTicks;
+	private static int drainedQueueStableTicks;
 
 	private PauCClientFluidityState() {
 	}
@@ -63,9 +74,6 @@ public final class PauCClientFluidityState {
 
 		int modCount = loadedModCount();
 		long maxHeapMiB = Runtime.getRuntime().maxMemory() / (1024L * 1024L);
-		boolean hugePack = modCount >= currentConfig.hugeModCount;
-		boolean heavyPack = modCount >= currentConfig.heavyModCount;
-		boolean mediumPack = modCount >= Math.max(40, currentConfig.heavyModCount / 2);
 		boolean constrainedHeap = maxHeapMiB > 0L && maxHeapMiB <= currentConfig.constrainedHeapMiB;
 		boolean tightHeap = maxHeapMiB > 0L && maxHeapMiB <= currentConfig.tightHeapMiB;
 
@@ -73,19 +81,14 @@ public final class PauCClientFluidityState {
 		if (!runtimeSignature.equals(lastRuntimeSignature)) {
 			lastRuntimeSignature = runtimeSignature;
 			shaderTransitionTicks = currentConfig.shaderTransitionHoldTicks;
+			clearPendingBand();
 		} else if (shaderTransitionTicks > 0) {
 			shaderTransitionTicks--;
 		}
 
-		double fpsPressure = deliveryRatio > 0.0D ? clamp01((0.98D - deliveryRatio) / 0.48D) : 0.30D;
-		double rawFpsPressure = targetFps > 0 ? clamp01((targetFps - rawFps) / (double) Math.max(1, targetFps)) : 0.0D;
-		double queueLoad = clamp01(queuePressure * 1.85D);
-		double heapLoad = clamp01((heapPressure - 0.76D) / 0.22D);
-		double packLoad = hugePack ? 0.38D : heavyPack ? 0.24D : mediumPack ? 0.10D : 0.0D;
-		double heapClassLoad = tightHeap ? 0.22D : constrainedHeap ? 0.12D : 0.0D;
-		double transitionLoad = shaderTransitionTicks > 0 ? 0.18D : 0.0D;
 		boolean queueAvailable = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable();
 		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
+		int pendingTasks = PauCEmbeddedLodRuntimeDiagnostics.pendingTasks();
 		int backlogTasks = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks();
 		double avgChunkMs = PauCEmbeddedLodRuntimeDiagnostics.rollingAverageChunkMs();
 		boolean frameWatchdogSpike = readBoolean("pauc.runtime.frameWatchdogSpike", false);
@@ -97,14 +100,66 @@ public final class PauCClientFluidityState {
 			&& pendingChunks <= readInt("pauc.lod.nearlyDrainedQueuePendingChunks", 96, 0, 512)
 			&& backlogTasks <= readInt("pauc.lod.nearlyDrainedQueueBacklogTasks", 8, 0, 96)
 			&& queuePressure <= readDouble("pauc.lod.nearlyDrainedQueuePressure", 0.08D, 0.0D, 0.30D);
-		double fpsPressureScale = queueDrained ? 0.38D : queueNearlyDrained ? 0.72D : 1.0D;
-		fpsPressure *= fpsPressureScale;
-		rawFpsPressure *= queueDrained ? 0.34D : queueNearlyDrained ? 0.74D : 1.0D;
-		double pressure = clamp01(Math.max(Math.max(fpsPressure, rawFpsPressure * 0.8D), Math.max(queueLoad, heapLoad)) + packLoad + heapClassLoad + transitionLoad);
-		boolean externalFpsDip = queueDrained
+		boolean queueFullyDrained = queueDrained && pendingTasks <= 0 && backlogTasks <= 0 && pendingChunks <= 0;
+		boolean coverageTelemetry = PauCClientFrontierWarmupManager.hasCoverageTelemetry();
+		boolean stableCoverage = PauCClientFrontierWarmupManager.hasStablePresentationCoverage();
+		boolean coverageHoldActive = PauCClientFrontierWarmupManager.isPresentationHoldActive();
+		if (queueFullyDrained) {
+			drainedQueueStableTicks = Math.min(600, drainedQueueStableTicks + 2);
+		} else if (queueDrained) {
+			drainedQueueStableTicks = Math.min(600, drainedQueueStableTicks + 1);
+		} else if (queueNearlyDrained) {
+			drainedQueueStableTicks = Math.max(0, drainedQueueStableTicks - 1);
+		} else {
+			drainedQueueStableTicks = 0;
+		}
+		boolean queueIdleResolved = isQueueIdleResolved(queueFullyDrained, frameWatchdogSpike, heapPressure);
+		boolean queueResolved = queueIdleResolved
+			|| (queueDrained
+				&& drainedQueueStableTicks >= Math.max(4, readInt(DRAINED_QUEUE_STABLE_TICKS_PROPERTY, 10, 1, 200) / 2)
+				&& !frameWatchdogSpike
+				&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D));
+		boolean backlogResolved = (
+			drainedQueueStableTicks >= readInt(DRAINED_QUEUE_STABLE_TICKS_PROPERTY, 10, 1, 200)
+				|| (queueFullyDrained && stableCoverage && !coverageHoldActive)
+				|| queueResolved
+			)
 			&& !frameWatchdogSpike
-			&& heapPressure <= readDouble("pauc.lod.externalReliefMaxHeapRatio", 0.84D, 0.20D, 0.95D)
-			&& deliveryRatio >= readDouble("pauc.lod.externalReliefMinDeliveryRatio", 0.74D, 0.40D, 1.10D);
+			&& (!PauCVillagePerformanceDiagnostics.isVillagePressureActive() || queueResolved)
+			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D);
+		boolean workloadRecovered = queueResolved
+			|| (!frameWatchdogSpike
+				&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D)
+				&& !PauCVillagePerformanceDiagnostics.isVillagePressureActive()
+				&& ((coverageTelemetry && queueFullyDrained && stableCoverage && !coverageHoldActive) || backlogResolved));
+		RuntimeProfile runtimeProfile = classifyRuntimeProfile(currentConfig, modCount, maxHeapMiB, shaderActive, heapPressure);
+		boolean hugePack = runtimeProfile.tier() == PackTier.HUGE;
+		boolean heavyPack = runtimeProfile.tier().atLeast(PackTier.HEAVY);
+		boolean mediumPack = runtimeProfile.tier().atLeast(PackTier.MEDIUM);
+		boolean paucResolved = queueResolved
+			|| backlogResolved
+			|| workloadRecovered
+			|| (queueDrained && queueFullyDrained && stableCoverage && !coverageHoldActive);
+		double fpsPressure = deliveryRatio > 0.0D ? clamp01((0.98D - deliveryRatio) / 0.48D) : 0.30D;
+		double rawFpsPressure = targetFps > 0 ? clamp01((targetFps - rawFps) / (double) Math.max(1, targetFps)) : 0.0D;
+		double queueLoad = clamp01(queuePressure * 1.85D);
+		double heapLoad = clamp01((heapPressure - 0.76D) / 0.22D);
+		double packLoad = switch (runtimeProfile.tier()) {
+			case HUGE -> 0.38D;
+			case HEAVY -> 0.24D;
+			case MEDIUM -> 0.10D;
+			case LIGHT -> 0.0D;
+		};
+		double heapClassLoad = tightHeap ? 0.22D : constrainedHeap ? 0.12D : 0.0D;
+		double transitionLoad = shaderTransitionTicks > 0 ? 0.18D : 0.0D;
+		double fpsPressureScale = paucResolved ? 0.10D : workloadRecovered ? 0.14D : backlogResolved ? 0.18D : queueDrained ? 0.38D : queueNearlyDrained ? 0.72D : 1.0D;
+		fpsPressure *= fpsPressureScale;
+		rawFpsPressure *= paucResolved ? 0.08D : workloadRecovered ? 0.12D : backlogResolved ? 0.16D : queueDrained ? 0.34D : queueNearlyDrained ? 0.74D : 1.0D;
+		double pressure = clamp01(Math.max(Math.max(fpsPressure, rawFpsPressure * 0.8D), Math.max(queueLoad, heapLoad)) + packLoad + heapClassLoad + transitionLoad);
+		boolean externalFpsDip = queueResolved
+			&& queuePressure <= readDouble("pauc.lod.externalReliefMaxQueuePressure", 0.08D, 0.0D, 0.30D)
+			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D)
+			&& deliveryRatio >= readDouble(DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY, 0.46D, 0.10D, 1.10D);
 		boolean recoveryCandidate = targetFps > 0
 			&& steadyFps >= targetFps * readDouble(RECOVERY_MIN_FPS_RATIO_PROPERTY, 0.76D, 0.40D, 1.50D)
 			&& heapPressure <= readDouble(RECOVERY_MAX_HEAP_RATIO_PROPERTY, 0.72D, 0.20D, 0.95D)
@@ -114,7 +169,7 @@ public final class PauCClientFluidityState {
 		if (recoveryCandidate) {
 			band = Band.RECOVERY;
 		}
-		if (rawFps > 0 && targetFps > 0 && rawFps < Math.max(24, targetFps / 2)) {
+		if (rawFps > 0 && targetFps > 0 && rawFps < Math.max(24, targetFps / 2) && !workloadRecovered) {
 			band = Band.RELIEF;
 		}
 		if (heapPressure > 0.92D || queuePressure > 0.32D) {
@@ -123,8 +178,25 @@ public final class PauCClientFluidityState {
 		if (externalFpsDip && band == Band.RELIEF) {
 			band = Band.BALANCED;
 		}
+		if (paucResolved && band == Band.RELIEF && heapPressure < 0.90D && queuePressure < 0.18D) {
+			band = Band.BALANCED;
+		}
+		band = stabilizeBand(
+			band,
+			pressure,
+			frameWatchdogSpike,
+			queuePressure,
+			queueDrained,
+			queueFullyDrained,
+			backlogResolved,
+			workloadRecovered
+		);
 
-		double packScale = hugePack ? 0.82D : heavyPack ? 0.90D : 1.0D;
+		double packScale = switch (runtimeProfile.tier()) {
+			case HUGE -> 0.82D;
+			case HEAVY -> 0.90D;
+			case MEDIUM, LIGHT -> 1.0D;
+		};
 		double heapScale = heapPressure > 0.90D ? 0.76D : heapPressure > 0.84D ? 0.88D : 1.0D;
 		double transitionScale = shaderTransitionTicks > 0 ? 0.88D : 1.0D;
 		double generationScale = clamp(1.08D - pressure * 0.58D, currentConfig.minGenerationScale, 1.18D) * packScale * heapScale * transitionScale;
@@ -144,6 +216,7 @@ public final class PauCClientFluidityState {
 			band,
 			modCount,
 			maxHeapMiB,
+			runtimeProfile,
 			heapPressure,
 			queuePressure,
 			deliveryRatio,
@@ -151,6 +224,7 @@ public final class PauCClientFluidityState {
 			pendingChunks,
 			backlogTasks,
 			queueDrained,
+			backlogResolved,
 			externalFpsDip,
 			avgChunkMs
 		);
@@ -184,9 +258,11 @@ public final class PauCClientFluidityState {
 		lastSnapshot = Snapshot.neutral();
 		lastRuntimeSignature = "";
 		lastLoggedBand = "";
+		clearPendingBand();
 		configReloadTicks = 0;
 		shaderTransitionTicks = 0;
 		logTicks = 0;
+		drainedQueueStableTicks = 0;
 	}
 
 	public static String describeState() {
@@ -340,6 +416,7 @@ public final class PauCClientFluidityState {
 		Band band,
 		int modCount,
 		long maxHeapMiB,
+		RuntimeProfile runtimeProfile,
 		double heapPressure,
 		double queuePressure,
 		double deliveryRatio,
@@ -347,6 +424,7 @@ public final class PauCClientFluidityState {
 		int pendingChunks,
 		int backlogTasks,
 		boolean queueDrained,
+		boolean backlogResolved,
 		boolean externalFpsDip,
 		double avgChunkMs
 	) {
@@ -354,6 +432,10 @@ public final class PauCClientFluidityState {
 			+ band.id
 			+ ", mods="
 			+ (modCount >= 0 ? modCount : "?")
+			+ ", runtime="
+			+ runtimeProfile.tier().id
+			+ "/"
+			+ runtimeProfile.score()
 			+ ", heap="
 			+ maxHeapMiB
 			+ "MiB/"
@@ -368,6 +450,8 @@ public final class PauCClientFluidityState {
 			+ backlogTasks
 			+ ", queueDrained="
 			+ queueDrained
+			+ ", backlogResolved="
+			+ backlogResolved
 			+ ", externalDip="
 			+ externalFpsDip
 			+ ", avgChunkMs="
@@ -448,6 +532,110 @@ public final class PauCClientFluidityState {
 		return Math.max(min, Math.min(max, value));
 	}
 
+	private static boolean isQueueIdleResolved(boolean queueFullyDrained, boolean frameWatchdogSpike, double heapPressure) {
+		return queueFullyDrained
+			&& drainedQueueStableTicks >= readInt(IDLE_QUEUE_RESOLVED_STABLE_TICKS_PROPERTY, 12, 1, 240)
+			&& !frameWatchdogSpike
+			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D);
+	}
+
+	private static Band stabilizeBand(
+		Band candidate,
+		double pressure,
+		boolean frameWatchdogSpike,
+		double queuePressure,
+		boolean queueDrained,
+		boolean queueFullyDrained,
+		boolean backlogResolved,
+		boolean workloadRecovered
+	) {
+		Band current = lastSnapshot.active ? lastSnapshot.band : Band.HEADROOM;
+		if (candidate == current) {
+			clearPendingBand();
+			return candidate;
+		}
+		boolean urgentRelief = candidate == Band.RELIEF
+			&& (frameWatchdogSpike || pressure >= 0.84D || queuePressure >= 0.24D);
+		if (urgentRelief) {
+			clearPendingBand();
+			return candidate;
+		}
+		boolean resolved = queueFullyDrained || backlogResolved || workloadRecovered;
+		if (candidate != pendingBand) {
+			pendingBand = candidate;
+			pendingBandTicks = 1;
+			pendingBandSinceMillis = System.currentTimeMillis();
+			return current;
+		}
+
+		pendingBandTicks++;
+		boolean reliefTransition = current == Band.RELIEF || candidate == Band.RELIEF;
+		boolean recoveryTransition = current == Band.RECOVERY || candidate == Band.RECOVERY;
+		int requiredTicks = readInt(BAND_STABLE_TICKS_PROPERTY, 10, 1, 240)
+			+ (reliefTransition ? resolved ? 6 : 16 : 0)
+			+ (recoveryTransition ? resolved ? 4 : 10 : 0);
+		long requiredHoldMs = readInt(BAND_HOLD_MS_PROPERTY, 420, 0, 5_000)
+			+ (reliefTransition ? resolved ? 180L : 520L : 0L)
+			+ (recoveryTransition ? resolved ? 120L : 280L : 0L);
+		long now = System.currentTimeMillis();
+		if (pendingBandTicks >= requiredTicks || now - pendingBandSinceMillis >= requiredHoldMs) {
+			clearPendingBand();
+			return candidate;
+		}
+		return current;
+	}
+
+	private static void clearPendingBand() {
+		pendingBand = Band.HEADROOM;
+		pendingBandTicks = 0;
+		pendingBandSinceMillis = 0L;
+	}
+
+	private static RuntimeProfile classifyRuntimeProfile(Config config, int modCount, long maxHeapMiB, boolean shaderActive, double heapPressure) {
+		int mediumModCount = Math.max(40, config.heavyModCount / 2);
+		int score = 0;
+		if (modCount >= config.hugeModCount) {
+			score += 6;
+		} else if (modCount >= config.heavyModCount) {
+			score += 4;
+		} else if (modCount >= mediumModCount) {
+			score += 2;
+		} else if (modCount >= 16) {
+			score += 1;
+		}
+		if (shaderActive) {
+			score += 1;
+		}
+		if (maxHeapMiB > 0L && maxHeapMiB <= config.tightHeapMiB) {
+			score += 2;
+		} else if (maxHeapMiB > 0L && maxHeapMiB <= config.constrainedHeapMiB) {
+			score += 1;
+		}
+		int clientEntities = PauCVillagePerformanceDiagnostics.lastClientEntityCount();
+		long renderedEntitiesWindow = PauCVillagePerformanceDiagnostics.lastRenderedEntitiesWindow();
+		long renderedBlockEntitiesWindow = PauCVillagePerformanceDiagnostics.lastRenderedBlockEntitiesWindow();
+		if (clientEntities >= 128 || renderedEntitiesWindow >= 192L) {
+			score += 2;
+		} else if (clientEntities >= 64 || renderedEntitiesWindow >= 80L) {
+			score += 1;
+		}
+		if (renderedBlockEntitiesWindow >= 1024L) {
+			score += 3;
+		} else if (renderedBlockEntitiesWindow >= 384L) {
+			score += 2;
+		} else if (renderedBlockEntitiesWindow >= 128L) {
+			score += 1;
+		}
+		if (PauCVillagePerformanceDiagnostics.isVillagePressureActive()) {
+			score += 1;
+		}
+		if (heapPressure >= 0.88D) {
+			score += 1;
+		}
+		PackTier tier = score >= 8 ? PackTier.HUGE : score >= 5 ? PackTier.HEAVY : score >= 2 ? PackTier.MEDIUM : PackTier.LIGHT;
+		return new RuntimeProfile(tier, score);
+	}
+
 	private static String round(double value) {
 		return String.format(Locale.ROOT, "%.2f", value);
 	}
@@ -463,6 +651,26 @@ public final class PauCClientFluidityState {
 		Band(String id) {
 			this.id = id;
 		}
+	}
+
+	private enum PackTier {
+		LIGHT("light"),
+		MEDIUM("medium"),
+		HEAVY("heavy"),
+		HUGE("huge");
+
+		private final String id;
+
+		PackTier(String id) {
+			this.id = id;
+		}
+
+		private boolean atLeast(PackTier other) {
+			return ordinal() >= other.ordinal();
+		}
+	}
+
+	private record RuntimeProfile(PackTier tier, int score) {
 	}
 
 	public record Snapshot(

@@ -7,6 +7,7 @@ import com.seibel.distanthorizons.common.render.openGl.terrain.GlDhTerrainShader
 import fr.hoyatla.pauc.lod.PauCLodFallbackVisuals;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
 import fr.hoyatla.pauc.lod.PauCLodShaderPresentation;
+import net.irisshaders.iris.shadows.ShadowRenderingState;
 import org.slf4j.Logger;
 import org.lwjgl.opengl.GL32;
 import org.spongepowered.asm.mixin.Mixin;
@@ -164,6 +165,9 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 
 	@Unique
 	private void pauc$applyPaucBoundaryClip(DhApiRenderParam renderParameters, PauCLodFallbackVisuals.State state) {
+		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			return;
+		}
 		if (!PauCLodNearClipOverride.shouldOverrideCurrentRange()) {
 			return;
 		}

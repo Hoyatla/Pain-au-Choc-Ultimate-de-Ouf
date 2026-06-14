@@ -28,17 +28,34 @@ public final class PauCClientUploadBudgetController {
 		int targetFps = PauCClientTargetFps.effectiveTargetFps(minecraft);
 		double frameTimeMs = fps > 0 ? (1000.0D / fps) : -1.0D;
 		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(targetFps);
+		boolean backlogResolved = PauCClientFpsGovernor.isBacklogResolved();
+		boolean recoveryBand = PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
 		int baseRefill = Math.max(5, budgetSnapshot.maxQueuedMeshSections() / 6);
 		int backlogPenalty = Math.max(0, rendererStats.scheduledJobs() - Math.max(2, rendererStats.totalThreads() * 2));
 		double fpsPenalty = fps > 0 ? clamp01((targetFps - fps) / (double) targetFps) : 0.35D;
 		refreshCachedScales(fpsFirstVanilla, aggressiveUpload);
+		double meshScale = Math.max(0.60D, Math.min(1.35D, PauCClientFpsGovernor.meshBudgetScale()));
 		double directGpuScale = aggressiveUpload ? cachedDirectGpuAggressiveScale : cachedDirectGpuNormalScale;
 		double refillScale = (aggressiveUpload ? 1.35D : 1.0D)
 			* PauCLodShaderRuntime.uploadBudgetScale()
 			* directGpuScale
+			* meshScale
 			* cachedHighTargetUploadScale;
+		if (backlogResolved) {
+			refillScale *= readDouble("pauc.lod.uploadBudgetResolvedRefillScale", aggressiveUpload ? 1.20D : 1.12D, 1.0D, 1.60D);
+		}
+		if (recoveryBand) {
+			refillScale *= readDouble("pauc.lod.uploadBudgetRecoveryRefillScale", aggressiveUpload ? 1.42D : 1.30D, 1.0D, 2.25D);
+			backlogPenalty = Math.max(0, backlogPenalty / 2);
+			fpsPenalty = Math.min(fpsPenalty, readDouble("pauc.lod.uploadBudgetRecoveryMaxFpsPenalty", 0.35D, 0.0D, 0.90D));
+		}
 		double refill = Math.max(1.0D, (baseRefill - backlogPenalty) * (1.0D - (fpsPenalty * 0.58D)) * refillScale);
-		if (fps > 0 && fps < targetFps * 0.65D) {
+		if (recoveryBand) {
+			refill = Math.max(refill, aggressiveUpload ? 10.0D : 7.0D);
+		} else if (backlogResolved && rendererStats.scheduledJobs() <= Math.max(2, rendererStats.totalThreads())) {
+			refill = Math.max(refill, aggressiveUpload ? 6.0D : 4.0D);
+		}
+		if (!recoveryBand && fps > 0 && fps < targetFps * 0.65D) {
 			refill = Math.min(refill, aggressiveUpload ? 4.0D : 3.0D);
 		}
 		double maxTokens = Math.max(
@@ -46,6 +63,8 @@ public final class PauCClientUploadBudgetController {
 			budgetSnapshot.maxQueuedMeshSections()
 				* (aggressiveUpload ? 1.05D : 0.85D)
 				* (fpsFirstVanilla ? 0.72D : 1.0D)
+				* (backlogResolved ? readDouble("pauc.lod.uploadBudgetResolvedTokenScale", 1.10D, 1.0D, 1.40D) : 1.0D)
+				* (recoveryBand ? readDouble("pauc.lod.uploadBudgetRecoveryTokenScale", 1.30D, 1.0D, 2.0D) : 1.0D)
 		);
 		tokens = Math.min(maxTokens, tokens + refill);
 		lastFps = fps;
@@ -60,16 +79,35 @@ public final class PauCClientUploadBudgetController {
 		}
 
 		int targetFps = PauCClientTargetFps.effectiveTargetFps();
+		boolean backlogResolved = PauCClientFpsGovernor.isBacklogResolved();
+		boolean recoveryBand = PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
 		double multiplier = (snapUploadMode ? 1.15D : 1.0D)
 			* PauCLodShaderRuntime.uploadBudgetScale()
 			* (snapUploadMode ? cachedDirectGpuAggressiveScale : cachedDirectGpuNormalScale)
 			* (snapUploadMode ? cachedHighTargetBurstSnapScale : cachedHighTargetBurstNormalScale);
-		if (lastFps > 0 && lastFps < targetFps * 0.8D) {
+		if (backlogResolved) {
+			multiplier *= readDouble("pauc.lod.uploadBudgetResolvedBurstScale", snapUploadMode ? 1.16D : 1.08D, 1.0D, 1.50D);
+		}
+		if (recoveryBand) {
+			multiplier *= readDouble("pauc.lod.uploadBudgetRecoveryBurstScale", snapUploadMode ? 1.35D : 1.22D, 1.0D, 2.25D);
+		}
+		if (!recoveryBand && lastFps > 0 && lastFps < targetFps * 0.8D) {
 			multiplier *= lastFps < targetFps * 0.65D ? 0.65D : 0.85D;
 		}
 		int granted = Math.min(requestedSections, Math.max(0, (int) Math.floor(tokens * multiplier)));
-		if (granted <= 0 && (snapUploadMode || lastFps <= 0)) {
+		if (granted <= 0 && recoveryBand && tokens >= 1.0D) {
+			granted = Math.min(requestedSections, snapUploadMode ? 8 : 5);
+		} else if (granted <= 0 && backlogResolved && tokens >= 1.0D) {
+			granted = Math.min(requestedSections, snapUploadMode ? 4 : 2);
+		} else if (granted <= 0 && (snapUploadMode || lastFps <= 0)) {
 			granted = Math.min(requestedSections, snapUploadMode ? 3 : 2);
+		}
+		if (recoveryBand && granted > 0) {
+			int recoveryFloor = snapUploadMode ? 8 : (PauCClientChunkPriorityScorer.isMovementCatchupActive() ? 6 : 5);
+			granted = Math.min(requestedSections, Math.max(granted, recoveryFloor));
+		} else if (backlogResolved && granted > 0) {
+			int reboundFloor = snapUploadMode ? 4 : (PauCClientChunkPriorityScorer.isMovementCatchupActive() ? 3 : 2);
+			granted = Math.min(requestedSections, Math.max(granted, reboundFloor));
 		}
 		tokens = Math.max(0.0D, tokens - granted);
 		lastGrantedBudget = granted;

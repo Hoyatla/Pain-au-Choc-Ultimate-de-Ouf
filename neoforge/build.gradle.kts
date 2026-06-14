@@ -216,6 +216,11 @@ val sameLengthJarReplacements = listOf(
     "DH " to "PL ",
     "dh_" to "pl_",
     "DhApi" to "PlApi",
+    "SelfUpdater" to "SafeNoopRun",
+    "GitlabGetter" to "SafeGitNoopX",
+    "ModrinthGetter" to "SafeModNoopRun",
+    "WebDownloader" to "SafeWebNoopXX",
+    "ProcessRunner" to "NoProcessInfo",
     "IRIS" to "PAUC",
     "Iris" to "PauC",
     "iris" to "pauc"
@@ -258,7 +263,9 @@ val nativeSqliteJarReplacements = listOf(
 val releaseSafetyStrippedEntries = setOf(
     "fr/hoyatla/pauc/lodruntime/core/jar/installer/GitlabGetter.class",
     "fr/hoyatla/pauc/lodruntime/core/jar/installer/ModrinthGetter.class",
-    "fr/hoyatla/pauc/lodruntime/core/jar/installer/WebDownloader.class"
+    "fr/hoyatla/pauc/lodruntime/core/jar/installer/WebDownloader.class",
+    "fr/hoyatla/pauc/lodruntime/core/jar/updater/SelfUpdater.class",
+    "pl_sqlite/util/ProcessRunner.class"
 )
 val releaseSafetyEntryChecks = mapOf(
     "fr/hoyatla/pauc/lodruntime/core/jar/updater/SelfUpdater.class" to listOf(

@@ -1187,12 +1187,19 @@ public class IrisLodRenderProgram {
 	}
 
 	private static boolean shouldApplyPaucBoundaryLodShadow(PauCLodShaderProfiles.Profile profile) {
-		return readBoolean(BOUNDARY_LOD_SHADOW_PROPERTY, true)
-			&& profile != null
-			&& profile.family() != PauCLodShaderProfiles.Family.PHOTON
-			&& profile.family() != PauCLodShaderProfiles.Family.SOLAS
-			&& profile.family() != PauCLodShaderProfiles.Family.GENERIC
-			&& profile.preservesNativeDhPresentation();
+		if (!readBoolean(BOUNDARY_LOD_SHADOW_PROPERTY, true)
+			|| profile == null
+			|| !profile.preservesNativeDhPresentation()
+			|| profile.family() == PauCLodShaderProfiles.Family.GENERIC) {
+			return false;
+		}
+
+		if (profile.family() == PauCLodShaderProfiles.Family.PHOTON
+			|| profile.family() == PauCLodShaderProfiles.Family.SOLAS) {
+			return PauCLodShaderContext.hasScannedDhShadowProgram();
+		}
+
+		return true;
 	}
 
 	private static float boundaryShadowNearStrength(PauCLodShaderProfiles.Profile profile) {

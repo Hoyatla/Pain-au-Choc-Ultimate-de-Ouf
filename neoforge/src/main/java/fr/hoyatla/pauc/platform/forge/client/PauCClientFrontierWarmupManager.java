@@ -107,6 +107,8 @@ public final class PauCClientFrontierWarmupManager {
 	private static volatile boolean lastMovementCatchup;
 	private static volatile CoverageSnapshot lastCoverageSnapshot = CoverageSnapshot.unavailable();
 	private static volatile long lastCoveragePresentationHoldUntilMillis;
+	private static volatile long lastCoverageHoldDemandAtMillis;
+	private static volatile long lastConfiguredTargetChangeAtMillis;
 	private static volatile long lastDiskSeedScheduleAtMillis;
 	private static volatile long lastCudaPreparationScheduleAtMillis;
 	private static volatile long lastCudaPreparationLogAtMillis;
@@ -435,9 +437,9 @@ public final class PauCClientFrontierWarmupManager {
 		}
 
 		long now = System.currentTimeMillis();
-		long durationMillis = readLong(HOT_RESTORE_DURATION_MS_PROPERTY, 12_000L, 1_000L, 120_000L);
-		double coverageTarget = readDouble(HOT_RESTORE_COVERAGE_TARGET_PROPERTY, 0.70D, 0.20D, 1.0D);
-		int minimumRenderReady = readInt(HOT_RESTORE_MIN_RENDER_READY_PROPERTY, 96, 8, 4096);
+		long durationMillis = readLong(HOT_RESTORE_DURATION_MS_PROPERTY, 18_000L, 1_000L, 120_000L);
+		double coverageTarget = readDouble(HOT_RESTORE_COVERAGE_TARGET_PROPERTY, 0.62D, 0.20D, 1.0D);
+		int minimumRenderReady = readInt(HOT_RESTORE_MIN_RENDER_READY_PROPERTY, 64, 8, 4096);
 		CoverageSnapshot snapshot = lastCoverageSnapshot;
 		boolean coverageReached = snapshot.available()
 			&& (snapshot.ratio() >= coverageTarget || snapshot.activeBandRatio() >= coverageTarget);
@@ -455,7 +457,7 @@ public final class PauCClientFrontierWarmupManager {
 	private static String describeHotRestoreState() {
 		long remainingMillis = 0L;
 		if (sessionResumedAtMillis > 0L) {
-			long durationMillis = readLong(HOT_RESTORE_DURATION_MS_PROPERTY, 12_000L, 1_000L, 120_000L);
+			long durationMillis = readLong(HOT_RESTORE_DURATION_MS_PROPERTY, 18_000L, 1_000L, 120_000L);
 			remainingMillis = Math.max(0L, durationMillis - (System.currentTimeMillis() - sessionResumedAtMillis));
 		}
 		return "hotRestore[active="
@@ -562,7 +564,7 @@ public final class PauCClientFrontierWarmupManager {
 		boolean coverageHold = shouldHoldPresentationForCoverage();
 		int extraBands = isActiveTravelFill() || shaderFallbackFillActive() ? 2 : shouldPreferCoarseFill() ? 1 : 0;
 		if (coverageHold && PauCLodShaderContext.isShaderPackInUse()) {
-			extraBands = Math.max(extraBands, isActiveTravelFill() ? 3 : 2);
+			extraBands = Math.max(extraBands, isActiveTravelFill() ? 2 : 1);
 		}
 		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode() && !shaderFallbackFillActive() && !isActiveTravelFill()) {
 			extraBands = Math.max(0, extraBands - 1);
@@ -578,6 +580,14 @@ public final class PauCClientFrontierWarmupManager {
 		return PauCLodShaderContext.isShaderPackInUse() && PauCLodShaderContext.isFallbackActive();
 	}
 
+	public static void onConfiguredTargetDistanceChanged(int configuredTargetDistance) {
+		lastCoverageSnapshot = CoverageSnapshot.unavailable();
+		lastCoveragePresentationHoldUntilMillis = 0L;
+		lastCoverageHoldDemandAtMillis = 0L;
+		lastConfiguredTargetChangeAtMillis = System.currentTimeMillis();
+		PauCLodNearClipOverride.setTerrainContinuityHold(false, "target-distance-changed:" + configuredTargetDistance);
+	}
+
 	public static boolean shouldStabilizeLodPresentation() {
 		CoverageSnapshot snapshot = lastCoverageSnapshot;
 		if (!snapshot.available()) {
@@ -587,6 +597,58 @@ public final class PauCClientFrontierWarmupManager {
 		return shouldHoldPresentationForCoverage();
 	}
 
+	public static boolean hasCoverageTelemetry() {
+		return lastCoverageSnapshot.available();
+	}
+
+	public static boolean isPresentationHoldActive() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.available()) {
+			return false;
+		}
+		return coverageNeedsPresentationHold(snapshot)
+			|| System.currentTimeMillis() < lastCoveragePresentationHoldUntilMillis;
+	}
+
+	public static boolean hasStablePresentationCoverage() {
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		return snapshot.available()
+			&& !snapshot.preferCoarseFill()
+			&& !isPresentationHoldActive()
+			&& hasRecoveredPresentationCoverage(snapshot);
+	}
+
+	public static boolean isTargetDistanceUpgradeReady(int currentTargetDistance, int configuredTargetDistance) {
+		long now = System.currentTimeMillis();
+		if (isTargetDistanceChangeGraceActive(now)) {
+			return true;
+		}
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (!snapshot.available()) {
+			return true;
+		}
+		if (snapshot.preferCoarseFill() || isPresentationHoldActive()) {
+			return false;
+		}
+		if (hasRecoveredPresentationCoverage(snapshot)) {
+			return true;
+		}
+		if (isPauCQueueFullyDrained() && hasStaleQueueDrainedReleaseCoverage(snapshot, now)) {
+			return true;
+		}
+
+		int relaxedCeiling = readInt(
+			"pauc.lod.targetDistanceCoverageReleaseCeiling",
+			12,
+			PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS,
+			PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS
+		);
+		return currentTargetDistance <= relaxedCeiling
+			&& configuredTargetDistance <= Math.max(16, relaxedCeiling * 2)
+			&& isPauCQueueDrained()
+			&& hasQueueDrainedReleaseCoverage(snapshot);
+	}
+
 	public static boolean shouldHoldPresentationForCoverage() {
 		CoverageSnapshot snapshot = lastCoverageSnapshot;
 		if (!snapshot.available()) {
@@ -594,25 +656,49 @@ public final class PauCClientFrontierWarmupManager {
 		}
 
 		long now = System.currentTimeMillis();
-		boolean queueDrained = isPauCQueueDrained();
-		if (queueDrained && hasRecoveredPresentationCoverage(snapshot)) {
+		if (isTargetDistanceChangeGraceActive(now)) {
 			lastCoveragePresentationHoldUntilMillis = now;
 			return false;
 		}
+		boolean queueDrained = isPauCQueueDrained();
+		boolean queueFullyDrained = isPauCQueueFullyDrained();
+		if (queueDrained && hasRecoveredPresentationCoverage(snapshot)) {
+			lastCoveragePresentationHoldUntilMillis = now;
+			lastCoverageHoldDemandAtMillis = 0L;
+			return false;
+		}
+		if (queueFullyDrained && hasQueueDrainedReleaseCoverage(snapshot)) {
+			lastCoveragePresentationHoldUntilMillis = now;
+			lastCoverageHoldDemandAtMillis = 0L;
+			return false;
+		}
+		if (queueFullyDrained && hasStaleQueueDrainedReleaseCoverage(snapshot, now)) {
+			lastCoveragePresentationHoldUntilMillis = now;
+			lastCoverageHoldDemandAtMillis = 0L;
+			return false;
+		}
 		if (coverageNeedsPresentationHold(snapshot)) {
+			if (lastCoverageHoldDemandAtMillis <= 0L) {
+				lastCoverageHoldDemandAtMillis = now;
+			}
 			long defaultHoldMs = PauCLodShaderContext.isShaderPackInUse()
-				? (isActiveTravelFill() ? 420L : 280L)
-				: (isActiveTravelFill() ? 240L : 160L);
-			if (queueDrained) {
-				defaultHoldMs = Math.max(40L, defaultHoldMs / 2L);
+				? (isActiveTravelFill() ? 320L : 180L)
+				: (isActiveTravelFill() ? 160L : 100L);
+			if (queueFullyDrained) {
+				defaultHoldMs = Math.max(10L, defaultHoldMs / 4L);
+			} else if (queueDrained) {
+				defaultHoldMs = Math.max(20L, defaultHoldMs / 3L);
 			}
 			long holdMs = readLong(PRESENTATION_STABILIZE_HOLD_MS_PROPERTY, defaultHoldMs, 0L, 5_000L);
 			lastCoveragePresentationHoldUntilMillis = Math.max(lastCoveragePresentationHoldUntilMillis, now + holdMs);
 			return true;
 		}
 
-		if (queueDrained && hasRecoveredPresentationCoverage(snapshot)) {
+		if ((queueDrained && hasRecoveredPresentationCoverage(snapshot))
+			|| (queueFullyDrained && hasQueueDrainedReleaseCoverage(snapshot))
+			|| (queueFullyDrained && hasStaleQueueDrainedReleaseCoverage(snapshot, now))) {
 			lastCoveragePresentationHoldUntilMillis = now;
+			lastCoverageHoldDemandAtMillis = 0L;
 			return false;
 		}
 		return now < lastCoveragePresentationHoldUntilMillis;
@@ -647,11 +733,17 @@ public final class PauCClientFrontierWarmupManager {
 		if (hasRecoveredPresentationCoverage(snapshot)) {
 			return false;
 		}
+		if (isPauCQueueFullyDrained() && hasQueueDrainedReleaseCoverage(snapshot)) {
+			return false;
+		}
+		if (isPauCQueueFullyDrained() && hasStaleQueueDrainedReleaseCoverage(snapshot, System.currentTimeMillis())) {
+			return false;
+		}
 
 		boolean queueDrained = isPauCQueueDrained();
 		double stabilizeRatio = readDouble(
 			PRESENTATION_STABILIZE_RATIO_PROPERTY,
-			queueDrained ? 0.66D : 0.72D,
+			queueDrained ? 0.58D : 0.68D,
 			0.20D,
 			0.98D
 		);
@@ -665,8 +757,8 @@ public final class PauCClientFrontierWarmupManager {
 		}
 
 		double defaultShaderRatio = queueDrained
-			? (isActiveTravelFill() ? 0.76D : 0.70D)
-			: (isActiveTravelFill() ? 0.84D : 0.78D);
+			? (isActiveTravelFill() ? 0.70D : 0.64D)
+			: (isActiveTravelFill() ? 0.80D : 0.74D);
 		double shaderRatio = readDouble(SHADER_PRESENTATION_STABILIZE_RATIO_PROPERTY, defaultShaderRatio, 0.20D, 0.99D);
 		return snapshot.activeBandRatio() < shaderRatio;
 	}
@@ -941,7 +1033,7 @@ public final class PauCClientFrontierWarmupManager {
 			)
 		);
 		if (hotRestore) {
-			baseSectionBudget = Math.min(baseBudgetCeiling, Math.max(baseSectionBudget, baseSectionBudget + PLAN_COMPLETION_BUDGET_PER_TICK));
+			baseSectionBudget = Math.min(baseBudgetCeiling, Math.max(baseSectionBudget, baseSectionBudget + (PLAN_COMPLETION_BUDGET_PER_TICK * 2)));
 		}
 		if (catchupRecovery) {
 			baseSectionBudget = Math.min(baseBudgetCeiling, baseSectionBudget + PLAN_COMPLETION_BUDGET_PER_TICK);
@@ -959,7 +1051,7 @@ public final class PauCClientFrontierWarmupManager {
 			PLAN_COMPLETION_BUDGET_MIN
 		);
 		if (hotRestore) {
-			completionBudget = Math.max(completionBudget, completionBudget + Math.max(1, PLAN_COMPLETION_BUDGET_PER_TICK / 2));
+			completionBudget = Math.max(completionBudget, completionBudget + PLAN_COMPLETION_BUDGET_PER_TICK);
 		}
 		if (catchupRecovery) {
 			completionBudget += Math.max(2, PLAN_COMPLETION_BUDGET_PER_TICK / 2);
@@ -1004,7 +1096,7 @@ public final class PauCClientFrontierWarmupManager {
 		}
 		planSlots = scaleWarmupBudget(planSlots, PauCClientFpsGovernor.warmupAggressionScale(), 1);
 		if (hotRestore) {
-			planSlots = Math.max(planSlots, Math.min(lastBudget.maxPendingPlans(), planSlots + 4));
+			planSlots = Math.max(planSlots, Math.min(lastBudget.maxPendingPlans(), planSlots + 6));
 		}
 
 		long now = System.currentTimeMillis();
@@ -1017,7 +1109,7 @@ public final class PauCClientFrontierWarmupManager {
 			minScore = Math.max(0.30D, minScore - 0.05D);
 		}
 		if (hotRestore) {
-			minScore = Math.max(0.24D, minScore - 0.12D);
+			minScore = Math.max(0.20D, minScore - 0.16D);
 		}
 		double adjustedMinScore = minScore;
 		String dimensionId = level.dimension().location().toString();
@@ -1048,8 +1140,8 @@ public final class PauCClientFrontierWarmupManager {
 		int batchBudget = readInt(DISK_SEED_DRAIN_BATCHES_PROPERTY, defaultDiskSeedDrainBatches(fillRadius, frame), 1, 32);
 		int chunkBudget = readInt(DISK_SEED_DRAIN_CHUNKS_PROPERTY, defaultDiskSeedDrainChunks(fillRadius, frame), 16, 8192);
 		if (hotRestore) {
-			batchBudget = Math.min(32, Math.max(batchBudget, batchBudget + 2));
-			chunkBudget = Math.min(8192, Math.max(chunkBudget, (int) Math.ceil(chunkBudget * 1.5D)));
+			batchBudget = Math.min(32, Math.max(batchBudget, batchBudget + 4));
+			chunkBudget = Math.min(8192, Math.max(chunkBudget, (int) Math.ceil(chunkBudget * 2.0D)));
 		}
 		int drainedChunks = 0;
 		long now = System.currentTimeMillis();
@@ -1105,7 +1197,7 @@ public final class PauCClientFrontierWarmupManager {
 		boolean hotRestore = isHotRestoreActive();
 		long intervalMillis = readLong(DISK_SEED_INTERVAL_MS_PROPERTY, 450L, 50L, 10_000L);
 		if (hotRestore) {
-			intervalMillis = Math.max(50L, intervalMillis / 2L);
+			intervalMillis = Math.max(50L, intervalMillis / 3L);
 		}
 		if (now - lastDiskSeedScheduleAtMillis < intervalMillis) {
 			return;
@@ -1115,7 +1207,7 @@ public final class PauCClientFrontierWarmupManager {
 		int fillRadius = backgroundFillRadiusChunks(frame.warmRadiusChunks());
 		int maxPendingRegions = readInt(DISK_SEED_MAX_PENDING_REGIONS_PROPERTY, defaultDiskSeedPendingRegions(fillRadius, frame), 1, 32);
 		if (hotRestore) {
-			maxPendingRegions = Math.min(32, Math.max(maxPendingRegions, maxPendingRegions + 4));
+			maxPendingRegions = Math.min(32, Math.max(maxPendingRegions, maxPendingRegions + 6));
 		}
 		if (PENDING_DISK_SEED_REGIONS.size() >= maxPendingRegions) {
 			return;
@@ -1157,8 +1249,8 @@ public final class PauCClientFrontierWarmupManager {
 		);
 		int chunkLimit = readInt(DISK_SEED_MAX_CHUNKS_PER_REGION_PROPERTY, defaultDiskSeedChunkLimit(fillRadius, frame), 8, 2048);
 		if (hotRestore) {
-			maxRegions = Math.min(24, Math.max(maxRegions, maxRegions + 2));
-			chunkLimit = Math.min(2048, Math.max(chunkLimit, (int) Math.ceil(chunkLimit * 1.5D)));
+			maxRegions = Math.min(24, Math.max(maxRegions, maxRegions + 4));
+			chunkLimit = Math.min(2048, Math.max(chunkLimit, (int) Math.ceil(chunkLimit * 2.0D)));
 		}
 		final int regionChunkLimit = chunkLimit;
 		Path sessionRoot = PauCClientWarmChunkDiskCache.resolveSessionRoot(level);
@@ -1326,9 +1418,7 @@ public final class PauCClientFrontierWarmupManager {
 		int samplesPerFeature = 3;
 		int minimumFeatures = Math.max(1, (PauCCudaWorker.preferredTerrainBatchSize() + samplesPerFeature - 1) / samplesPerFeature);
 		int batchFeatures = readInt(CUDA_WORLD_CACHE_BATCH_FEATURES_PROPERTY, defaultCudaBatchFeatures(minimumFeatures, requestRadius, frame), 8, 2048);
-		if (hotRestore) {
-			batchFeatures = Math.min(2048, Math.max(batchFeatures, (int) Math.ceil(batchFeatures * 1.5D)));
-		}
+		batchFeatures = PauCCudaWorker.coalescedWorldCacheBatchFeatures(batchFeatures, requestRadius, hotRestore);
 		int minimumCandidateCount = minimumCudaCandidateCount(minimumFeatures, batchFeatures, requestRadius, frame);
 		if (hotRestore) {
 			minimumCandidateCount = Math.max(1, minimumCandidateCount / 2);
@@ -1398,7 +1488,7 @@ public final class PauCClientFrontierWarmupManager {
 		if (hotRestore) {
 			taskPriority = PauCTaskPriority.ACTIVE;
 		}
-		CompletableFuture<CudaPreparedBatch> future = PauCScheduler.submitClientPrepare(taskPriority, description, () -> prepareCudaBatch(workItem));
+		CompletableFuture<CudaPreparedBatch> future = PauCScheduler.submitChunkMesh(taskPriority, description, () -> prepareCudaBatch(workItem));
 		future.whenComplete((preparedBatch, throwable) -> {
 			for (CudaPrepRecord record : workRecords) {
 				PENDING_CUDA_PREP.remove(record.chunkPos().toLong());
@@ -1784,7 +1874,7 @@ public final class PauCClientFrontierWarmupManager {
 		);
 		PauCTaskPriority priority = frame.snapMode() || frame.fastTravel() || frame.movementCatchup() || record.lastPriorityScore >= 0.75D ? PauCTaskPriority.FOV : PauCTaskPriority.ACTIVE;
 		String description = "client warm " + record.chunkPos + " " + record.dimensionId;
-		CompletableFuture<PreparedWarmPlan> future = PauCScheduler.submitClientPrepare(priority, description, () -> preparePlan(workItem));
+		CompletableFuture<PreparedWarmPlan> future = PauCScheduler.submitChunkMesh(priority, description, () -> preparePlan(workItem));
 		future.whenComplete((plan, throwable) -> {
 			PENDING_PLANS.remove(chunkKey);
 			if (throwable != null) {
@@ -1925,6 +2015,8 @@ public final class PauCClientFrontierWarmupManager {
 		lastCoverageSnapshot = CoverageSnapshot.unavailable();
 		PauCLodNearClipOverride.setTerrainContinuityHold(false, "session-reset");
 		lastCoveragePresentationHoldUntilMillis = 0L;
+		lastCoverageHoldDemandAtMillis = 0L;
+		lastConfiguredTargetChangeAtMillis = 0L;
 		lastDiskSeedScheduleAtMillis = 0L;
 		lastCudaPreparationScheduleAtMillis = 0L;
 		lastCudaPreparationLogAtMillis = 0L;
@@ -2460,7 +2552,7 @@ public final class PauCClientFrontierWarmupManager {
 		boolean queueDrained = isPauCQueueDrained();
 		double recoveredRatio = readDouble(
 			queueDrained ? "pauc.lod.presentationRecoveredCoverageRatioIdle" : "pauc.lod.presentationRecoveredCoverageRatioBusy",
-			queueDrained ? 0.56D : 0.64D,
+			queueDrained ? 0.50D : 0.60D,
 			0.20D,
 			0.98D
 		);
@@ -2472,11 +2564,60 @@ public final class PauCClientFrontierWarmupManager {
 		}
 		double recoveredActiveRatio = readDouble(
 			queueDrained ? "pauc.lod.presentationRecoveredActiveBandRatioIdle" : "pauc.lod.presentationRecoveredActiveBandRatioBusy",
-			queueDrained ? 0.60D : 0.68D,
+			queueDrained ? 0.54D : 0.62D,
 			0.20D,
 			0.99D
 		);
 		return snapshot.activeBandRatio() >= recoveredActiveRatio;
+	}
+
+	private static boolean hasQueueDrainedReleaseCoverage(CoverageSnapshot snapshot) {
+		if (!snapshot.available() || snapshot.preferCoarseFill()) {
+			return false;
+		}
+		double recoveredRatio = readDouble(
+			isActiveTravelFill() ? "pauc.lod.presentationReleaseCoverageRatioTravel" : "pauc.lod.presentationReleaseCoverageRatioIdle",
+			isActiveTravelFill() ? 0.46D : 0.42D,
+			0.20D,
+			0.98D
+		);
+		if (snapshot.ratio() < recoveredRatio) {
+			return false;
+		}
+		if (snapshot.activeBandExpected() <= 0) {
+			return true;
+		}
+		double recoveredActiveRatio = readDouble(
+			isActiveTravelFill() ? "pauc.lod.presentationReleaseActiveBandRatioTravel" : "pauc.lod.presentationReleaseActiveBandRatioIdle",
+			isActiveTravelFill() ? 0.50D : 0.46D,
+			0.20D,
+			0.99D
+		);
+		return snapshot.activeBandRatio() >= recoveredActiveRatio;
+	}
+
+	private static boolean hasStaleQueueDrainedReleaseCoverage(CoverageSnapshot snapshot, long now) {
+		if (!snapshot.available() || snapshot.preferCoarseFill() || lastCoverageHoldDemandAtMillis <= 0L) {
+			return false;
+		}
+		long staleMs = readLong("pauc.lod.staleCoverageHoldReleaseMs", 900L, 0L, 15_000L);
+		if (now - lastCoverageHoldDemandAtMillis < staleMs) {
+			return false;
+		}
+		double recoveredRatio = readDouble("pauc.lod.staleCoverageHoldReleaseRatio", 0.34D, 0.20D, 0.98D);
+		if (snapshot.ratio() < recoveredRatio) {
+			return false;
+		}
+		if (snapshot.activeBandExpected() <= 0) {
+			return true;
+		}
+		double recoveredActiveRatio = readDouble("pauc.lod.staleCoverageHoldReleaseActiveBandRatio", 0.38D, 0.20D, 0.99D);
+		return snapshot.activeBandRatio() >= recoveredActiveRatio;
+	}
+
+	private static boolean isTargetDistanceChangeGraceActive(long now) {
+		long graceMs = readLong("pauc.lod.targetDistanceChangeCoverageReleaseMs", 750L, 0L, 10_000L);
+		return lastConfiguredTargetChangeAtMillis > 0L && now - lastConfiguredTargetChangeAtMillis <= graceMs;
 	}
 
 	private static boolean isPauCQueueDrained() {
@@ -2486,6 +2627,13 @@ public final class PauCClientFrontierWarmupManager {
 		return PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= readInt("pauc.lod.drainedQueueBacklogTasks", 0, 0, 64)
 			&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= readInt("pauc.lod.drainedQueuePendingChunks", 0, 0, 256)
 			&& PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() <= readDouble("pauc.lod.drainedQueuePressure", 0.03D, 0.0D, 0.20D);
+	}
+
+	private static boolean isPauCQueueFullyDrained() {
+		return isPauCQueueDrained()
+			&& PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= 0;
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {

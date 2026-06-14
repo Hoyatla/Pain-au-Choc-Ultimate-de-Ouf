@@ -51,7 +51,8 @@ public final class PauCLodClientSettings {
 	private static final String NVIDIA_ACCELERATION_STATUS_PROPERTY = "pauc.client.cuda.status";
 	private static final String DIRECT_GPU_UPLOAD_PROPERTY = "pauc.lod.directGpuOpenGlRenderer";
 	private static final String TERRAIN_MORPHING_PROPERTY = "pauc.lod.shaderOffSeamMorph";
-	private static final int PROFILE_DEFAULTS_VERSION = 3;
+	private static final String ADAPTIVE_RETENTION_MARGIN_PROPERTY = "pauc.lod.adaptiveRetentionMargin";
+	private static final int PROFILE_DEFAULTS_VERSION = 4;
 	private static volatile boolean loaded;
 	private static boolean lodsEnabled = true;
 	private static boolean lodCloudsEnabled = true;
@@ -143,9 +144,9 @@ public final class PauCLodClientSettings {
 		int configuredMargin = sanitizeRetentionMarginChunks(readIntProperty(RETENTION_MARGIN_PROPERTY, retentionMarginChunks));
 		String dynamicMargin = System.getProperty(DYNAMIC_RETENTION_MARGIN_PROPERTY);
 		if (dynamicMargin == null) {
-			return configuredMargin;
+			return effectiveRetentionMarginChunks(configuredMargin);
 		}
-		return sanitizeRetentionMarginChunks(readInt(dynamicMargin, configuredMargin));
+		return effectiveRetentionMarginChunks(readInt(dynamicMargin, configuredMargin));
 	}
 
 	public static int generationRequestRateLimit() {
@@ -242,10 +243,12 @@ public final class PauCLodClientSettings {
 			+ targetDistanceChunks()
 			+ ", "
 			+ PauCLodGameplayProfile.describe()
+			+ ", "
+			+ PauCTerrainGeneratorDetector.describeCurrentClientContext()
 			+ ", memory="
 			+ memoryBudgetMb()
 			+ "MiB, retainMargin="
-			+ effectiveRetentionMarginChunks()
+			+ retentionMarginChunks()
 			+ ", requestRate="
 			+ generationRequestRateLimit()
 			+ "/s, nSized="
@@ -397,6 +400,13 @@ public final class PauCLodClientSettings {
 				changed = true;
 			}
 		}
+		if (profileDefaultsVersion < 4) {
+			PauCLodGameplayProfile.Profile profile = PauCLodGameplayProfile.current();
+			if (profile == PauCLodGameplayProfile.Profile.SHOOTER && (targetDistanceChunks == 56 || targetDistanceChunks == 60 || targetDistanceChunks == 64)) {
+				targetDistanceChunks = PauCLodGameplayProfile.defaultTargetDistanceChunks();
+				changed = true;
+			}
+		}
 
 		int profileGenerationDefault = PauCLodGameplayProfile.defaultGenerationRequestRateLimit(defaultGenerationRequestRateLimit());
 		if (generationRequestRateLimit < profileGenerationDefault) {
@@ -453,16 +463,20 @@ public final class PauCLodClientSettings {
 	}
 
 	private static int sanitizeRetentionMarginChunks(int value) {
-		return Math.max(0, Math.min(16, value));
+		return Math.max(0, Math.min(24, value));
 	}
 
-	private static int effectiveRetentionMarginChunks() {
-		int configuredMargin = retentionMarginChunks();
+	private static int effectiveRetentionMarginChunks(int configuredMargin) {
+		if (readBooleanProperty(ADAPTIVE_RETENTION_MARGIN_PROPERTY, true)) {
+			PauCTerrainGeneratorDetector.GeneratorKind terrain = PauCTerrainGeneratorDetector.currentClientKind();
+			PauCTerrainGeneratorDetector.ModpackClass modpack = PauCTerrainGeneratorDetector.currentModpackClass();
+			configuredMargin += terrain.retentionMarginBoost() + modpack.retentionMarginBoost();
+		}
 		if (!PauCLodShaderContext.isShaderPackInUse()) {
-			return Math.max(8, configuredMargin);
+			return sanitizeRetentionMarginChunks(Math.max(8, configuredMargin));
 		}
 
-		return configuredMargin;
+		return sanitizeRetentionMarginChunks(configuredMargin);
 	}
 
 	private static int sanitizeGenerationRequestRateLimit(int value) {
@@ -475,13 +489,16 @@ public final class PauCLodClientSettings {
 
 	private static int defaultMemoryBudgetMb() {
 		long maxMemoryMb = Runtime.getRuntime().maxMemory() / (1024L * 1024L);
-		long heapShareBudgetMb = Math.round(maxMemoryMb * 0.15D);
-		return sanitizeMemoryBudgetMb((int) Math.max(256L, heapShareBudgetMb));
+		PauCTerrainGeneratorDetector.ModpackClass modpack = PauCTerrainGeneratorDetector.currentModpackClass();
+		long heapShareBudgetMb = Math.round(maxMemoryMb * modpack.heapBudgetShare());
+		return sanitizeMemoryBudgetMb((int) Math.max(256L, heapShareBudgetMb + modpack.memoryBoostMb()));
 	}
 
 	private static int defaultGenerationRequestRateLimit() {
 		int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
 		int memoryBonus = defaultMemoryBudgetMb() >= 640 ? 8 : 0;
-		return sanitizeGenerationRequestRateLimit(48 + processors * 3 + memoryBonus);
+		PauCTerrainGeneratorDetector.GeneratorKind terrain = PauCTerrainGeneratorDetector.currentClientKind();
+		PauCTerrainGeneratorDetector.ModpackClass modpack = PauCTerrainGeneratorDetector.currentModpackClass();
+		return sanitizeGenerationRequestRateLimit(48 + processors * 3 + memoryBonus + terrain.generationRateBoost() + modpack.generationRateBoost());
 	}
 }

@@ -19,6 +19,9 @@ public final class PauCClientChunkPriorityScorer {
 	private static final double MOVEMENT_CATCHUP_SPEED_THRESHOLD = 0.16D;
 	private static final int MOVEMENT_CATCHUP_TICKS = 80;
 	private static final int MOVEMENT_SUSTAINED_TICKS = 8;
+	private static final String MOVEMENT_CATCHUP_IDLE_RELEASE_STEP_PROPERTY = "pauc.lod.movementCatchupIdleReleaseStep";
+	private static final String MOVEMENT_CATCHUP_IDLE_MAX_QUEUE_PRESSURE_PROPERTY = "pauc.lod.movementCatchupIdleMaxQueuePressure";
+	private static final String MOVEMENT_CATCHUP_IDLE_MAX_PENDING_CHUNKS_PROPERTY = "pauc.lod.movementCatchupIdleMaxPendingChunks";
 	private static final String HIGH_TARGET_FPS_PROPERTY = "pauc.lod.vanillaHighTargetFps";
 	private static final String HIGH_TARGET_WARM_RADIUS_LEAD_PROPERTY = "pauc.lod.vanillaHighTargetWarmRadiusLeadChunks";
 	private static final String FOG_PRELOAD_RADIUS_PROPERTY = "pauc.lod.fogPreloadRadiusChunks";
@@ -125,9 +128,10 @@ public final class PauCClientChunkPriorityScorer {
 	}
 
 	public static boolean isFpsFirstVanillaMode(int targetFps) {
+		PauCLodGameplayProfile.Profile profile = PauCLodGameplayProfile.current();
 		return !PauCLodShaderContext.isShaderPackInUse()
-			&& PauCLodGameplayProfile.current() == PauCLodGameplayProfile.Profile.COMPETITIVE
-			&& targetFps >= readInt(HIGH_TARGET_FPS_PROPERTY, 132, 90, 240);
+			&& (profile == PauCLodGameplayProfile.Profile.SHOOTER || profile == PauCLodGameplayProfile.Profile.COMPETITIVE)
+			&& targetFps >= readInt(HIGH_TARGET_FPS_PROPERTY, profile == PauCLodGameplayProfile.Profile.SHOOTER ? 120 : 132, 90, 240);
 	}
 
 	public static ChunkPriority score(PriorityFrame frame, int chunkX, int chunkZ, boolean retained) {
@@ -152,6 +156,7 @@ public final class PauCClientChunkPriorityScorer {
 		boolean movementCatchup = frame.movementCatchup();
 		boolean priorityTravel = frame.fastTravel() || movementCatchup;
 		boolean fpsFirstVanilla = frame.fpsFirstVanilla();
+		boolean viewportCentralBias = PauCLodGameplayProfile.viewportCentralBias() && fpsFirstVanilla && !priorityTravel;
 		double speedReference = frame.fastTravel() ? 0.8D : (movementCatchup ? 0.22D : 0.25D);
 		double speedFactor = Math.min(1.0D, frame.speedBlocksPerTick() / speedReference);
 		double aheadScore = frame.fastTravel()
@@ -175,8 +180,12 @@ public final class PauCClientChunkPriorityScorer {
 			double lateralExposure = 1.0D - Math.max(facingScore, motionScore);
 			sidePenalty = Math.max(0.0D, lateralExposure - 0.35D) * 0.08D;
 		}
-		double ringWeight = fpsFirstVanilla ? 0.32D : 0.40D;
-		double aheadWeight = fpsFirstVanilla ? 0.48D : 0.40D;
+		if (viewportCentralBias && chebyshevDistance > frame.renderDistanceChunks() + 1) {
+			double lateralExposure = 1.0D - Math.max(facingScore, motionScore);
+			sidePenalty += Math.max(0.0D, lateralExposure - 0.22D) * 0.14D;
+		}
+		double ringWeight = viewportCentralBias ? 0.24D : fpsFirstVanilla ? 0.32D : 0.40D;
+		double aheadWeight = viewportCentralBias ? 0.60D : fpsFirstVanilla ? 0.48D : 0.40D;
 		double boundaryWeight = 1.0D - ringWeight - aheadWeight;
 		double totalScore = (ringScore * ringWeight)
 			+ (aheadScore * aheadWeight)
@@ -186,8 +195,8 @@ public final class PauCClientChunkPriorityScorer {
 			+ movementBoost
 			- rearPenalty
 			- sidePenalty;
-		boolean ahead = rawFacingDot >= (fpsFirstVanilla ? 0.08D : 0.15D)
-			|| rawMotionDot >= (fpsFirstVanilla ? 0.12D : 0.20D);
+		boolean ahead = rawFacingDot >= (viewportCentralBias ? 0.04D : fpsFirstVanilla ? 0.08D : 0.15D)
+			|| rawMotionDot >= (viewportCentralBias ? 0.08D : fpsFirstVanilla ? 0.12D : 0.20D);
 		int boundaryExtra = frame.elytraFlight() ? 4 : frame.fastTravel() ? 2 : movementCatchup ? 2 : 1;
 		boolean retain = totalScore >= RETAIN_SCORE_THRESHOLD
 			|| chebyshevDistance <= frame.renderDistanceChunks() + boundaryExtra
@@ -196,7 +205,7 @@ public final class PauCClientChunkPriorityScorer {
 		boolean nearLiveBand = chebyshevDistance <= frame.renderDistanceChunks() + (priorityTravel ? 2 : fpsFirstVanilla ? 1 : 0);
 		boolean warm = frame.snapMode()
 			? totalScore >= 0.34D && chebyshevDistance <= frame.warmRadiusChunks()
-			: totalScore >= (movementCatchup ? 0.38D : fpsFirstVanilla ? 0.50D : WARM_SCORE_THRESHOLD)
+			: totalScore >= (movementCatchup ? 0.38D : viewportCentralBias ? 0.54D : fpsFirstVanilla ? 0.50D : WARM_SCORE_THRESHOLD)
 				&& (ahead || nearLiveBand);
 		return new ChunkPriority(totalScore, chebyshevDistance, radialDistance, ahead, retain, warm);
 	}
@@ -214,16 +223,21 @@ public final class PauCClientChunkPriorityScorer {
 
 		boolean chunkChanged = playerChunk.x != previousPlayerChunkX || playerChunk.z != previousPlayerChunkZ;
 		boolean moving = speed >= MOVEMENT_CATCHUP_SPEED_THRESHOLD;
+		boolean idleQueueResolved = isMovementCatchupQueueResolved();
+		boolean idleRelease = idleQueueResolved && !chunkChanged && speed < (MOVEMENT_CATCHUP_SPEED_THRESHOLD * 0.50D);
 		if (chunkChanged || moving) {
 			sustainedMovementTicks = Math.min(MOVEMENT_SUSTAINED_TICKS, sustainedMovementTicks + 1);
 		} else {
-			sustainedMovementTicks = Math.max(0, sustainedMovementTicks - 1);
+			sustainedMovementTicks = Math.max(0, sustainedMovementTicks - (idleRelease ? 2 : 1));
 		}
 
 		if (chunkChanged || sustainedMovementTicks >= MOVEMENT_SUSTAINED_TICKS) {
 			movementCatchupRemainingTicks = MOVEMENT_CATCHUP_TICKS;
 		} else if (movementCatchupRemainingTicks > 0) {
-			movementCatchupRemainingTicks--;
+			int releaseStep = idleRelease
+				? readInt(MOVEMENT_CATCHUP_IDLE_RELEASE_STEP_PROPERTY, 4, 1, 20)
+				: 1;
+			movementCatchupRemainingTicks = Math.max(0, movementCatchupRemainingTicks - releaseStep);
 		}
 
 		previousPlayerChunkX = playerChunk.x;
@@ -267,6 +281,16 @@ public final class PauCClientChunkPriorityScorer {
 		return Math.max(baseWarmRadius, Math.min(configuredRadius, radiusCap));
 	}
 
+	private static boolean isMovementCatchupQueueResolved() {
+		if (!PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return false;
+		}
+		return PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= readInt(MOVEMENT_CATCHUP_IDLE_MAX_PENDING_CHUNKS_PROPERTY, 12, 0, 512)
+			&& PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() <= readDouble(MOVEMENT_CATCHUP_IDLE_MAX_QUEUE_PRESSURE_PROPERTY, 0.02D, 0.0D, 1.0D);
+	}
+
 	private static int readInt(String key, int fallback, int min, int max) {
 		String rawValue = System.getProperty(key);
 		if (rawValue == null) {
@@ -274,6 +298,18 @@ public final class PauCClientChunkPriorityScorer {
 		}
 		try {
 			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
+	private static double readDouble(String key, double fallback, double min, double max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Double.parseDouble(rawValue.trim())));
 		} catch (NumberFormatException ignored) {
 			return Math.max(min, Math.min(max, fallback));
 		}

@@ -102,6 +102,20 @@ public final class PauCClientLodGovernor {
 			: "lodGovernor[unavailable], " + PauCEmbeddedDhBridge.describeState() + ", " + PauCLodShaderContext.describe();
 	}
 
+	public static String telemetryStateKey() {
+		PauCLodRange range = currentRange;
+		return "enabled="
+			+ range.enabled()
+			+ ",vanilla="
+			+ range.vanillaRenderDistanceChunks()
+			+ ",lod="
+			+ (range.enabled() ? range.lodStartChunk() + "-" + range.lodEndChunk() : "inactive")
+			+ ",target="
+			+ range.configuredExtraDistanceChunks()
+			+ ",roundHorizon="
+			+ range.roundHorizonEndChunk();
+	}
+
 	private static int readVanillaDistance(Minecraft minecraft) {
 		if (minecraft == null || minecraft.options == null) {
 			return 2;

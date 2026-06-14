@@ -1,22 +1,39 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
+import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.PauCIdentity;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
+import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
+import org.slf4j.Logger;
 
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Locale;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
 import java.util.concurrent.locks.LockSupport;
 
 public final class PauCClientFrameMetrics {
+	private static final Logger LOGGER = LogUtils.getLogger();
+	private static final DateTimeFormatter WATCHDOG_FILE_TIMESTAMP =
+		DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(ZoneOffset.UTC);
 	private static final String[] FPS_METHOD_NAMES = { "getFps", "m_260875_", "m" };
 	private static final String[] FPS_STRING_FIELD_NAMES = { "fpsString", "f_90977_", "A" };
 	private static final String FRAME_PACING_ENABLED_PROPERTY = "pauc.client.framePacing";
 	private static final String FRAME_PACING_SLACK_MS_PROPERTY = "pauc.client.framePacingSlackMs";
 	private static final String FRAME_PACING_MAX_SLEEP_MS_PROPERTY = "pauc.client.framePacingMaxSleepMs";
 	private static final String FRAME_WATCHDOG_SPIKE_MS_PROPERTY = "pauc.client.frameWatchdogSpikeMs";
+	private static final String FRAME_WATCHDOG_DUMP_MS_PROPERTY = "pauc.client.frameWatchdogDumpMs";
+	private static final String FRAME_WATCHDOG_DUMP_COOLDOWN_MS_PROPERTY = "pauc.client.frameWatchdogDumpCooldownMs";
 	private static final String FRAME_WATCHDOG_RELIEF_SPIKES_PROPERTY = "pauc.client.frameWatchdogReliefSpikes";
 	private static final String RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY = "pauc.runtime.frameWatchdogSpike";
 	private static final int MAX_FRAME_SAMPLES = 4096;
@@ -34,6 +51,8 @@ public final class PauCClientFrameMetrics {
 	private static int watchdogSpikeCount;
 	private static int consecutiveWatchdogSpikes;
 	private static double lastWatchdogFrameMs;
+	private static volatile long lastWatchdogDumpAtMs;
+	private static volatile boolean watchdogDumpRunning;
 
 	private PauCClientFrameMetrics() {
 	}
@@ -44,6 +63,7 @@ public final class PauCClientFrameMetrics {
 		}
 
 		long now = System.nanoTime();
+		PauCScheduler.onClientFrameStart();
 		if (lastFrameStageAtNanos > 0L) {
 			long frameNanos = now - lastFrameStageAtNanos;
 			recordFrameSample(frameNanos);
@@ -294,11 +314,74 @@ public final class PauCClientFrameMetrics {
 			watchdogSpikeCount++;
 			consecutiveWatchdogSpikes++;
 			lastWatchdogFrameMs = frameMs;
+			long dumpMillis = readLong(FRAME_WATCHDOG_DUMP_MS_PROPERTY, 250L, 100L, 2_000L);
+			if (frameMs >= dumpMillis) {
+				scheduleFrameWatchdogDump(frameMs);
+			}
 		} else {
 			consecutiveWatchdogSpikes = 0;
 		}
 		int reliefSpikes = readInt(FRAME_WATCHDOG_RELIEF_SPIKES_PROPERTY, 2, 1, 8);
 		System.setProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY, Boolean.toString(consecutiveWatchdogSpikes >= reliefSpikes));
+	}
+
+	private static void scheduleFrameWatchdogDump(double frameMs) {
+		long nowMs = System.currentTimeMillis();
+		long cooldownMs = readLong(FRAME_WATCHDOG_DUMP_COOLDOWN_MS_PROPERTY, 30_000L, 1_000L, 600_000L);
+		if (watchdogDumpRunning || nowMs - lastWatchdogDumpAtMs < cooldownMs) {
+			return;
+		}
+
+		lastWatchdogDumpAtMs = nowMs;
+		watchdogDumpRunning = true;
+		Thread dumpThread = new Thread(() -> {
+			try {
+				writeFrameWatchdogDump(frameMs, nowMs);
+			} catch (RuntimeException exception) {
+				LOGGER.warn("PauC could not prepare the frame watchdog dump.", exception);
+			} finally {
+				watchdogDumpRunning = false;
+			}
+		}, "PauC Frame Watchdog Dump");
+		dumpThread.setDaemon(true);
+		dumpThread.start();
+	}
+
+	private static void writeFrameWatchdogDump(double frameMs, long capturedAtMs) {
+		Minecraft minecraft = Minecraft.getInstance();
+		Path reportDir = minecraft != null && minecraft.gameDirectory != null
+			? minecraft.gameDirectory.toPath().resolve("pauc_diagnostics")
+			: Path.of("pauc_diagnostics");
+		Path dumpPath = reportDir.resolve("frame-watchdog-" + WATCHDOG_FILE_TIMESTAMP.format(Instant.ofEpochMilli(capturedAtMs)) + ".txt");
+		StringBuilder builder = new StringBuilder(64 * 1024);
+		builder.append("PauC Frame Watchdog Dump\n");
+		builder.append("buildId=").append(PauCIdentity.buildId()).append('\n');
+		builder.append("frameMs=").append(formatMs(frameMs)).append('\n');
+		builder.append("frames=").append(describeFrameTimes()).append('\n');
+		builder.append("fpsGovernor=").append(PauCClientFpsGovernor.describeState()).append('\n');
+		builder.append("lodGovernor=").append(PauCClientLodGovernor.describeState()).append('\n');
+		builder.append("lodRuntime=").append(PauCEmbeddedLodRuntimeDiagnostics.describeState()).append('\n');
+		builder.append("fillPresentation=").append(PauCEmbeddedLodRuntimeDiagnostics.describeFillPresentationState()).append('\n');
+		builder.append("scheduler=").append(PauCScheduler.describeState()).append('\n');
+		builder.append('\n').append("Threads\n");
+		for (Map.Entry<Thread, StackTraceElement[]> entry : Thread.getAllStackTraces().entrySet()) {
+			Thread thread = entry.getKey();
+			builder.append('\n')
+				.append('"').append(thread.getName()).append('"')
+				.append(" state=").append(thread.getState())
+				.append(" daemon=").append(thread.isDaemon())
+				.append('\n');
+			for (StackTraceElement stackTraceElement : entry.getValue()) {
+				builder.append("  at ").append(stackTraceElement).append('\n');
+			}
+		}
+		try {
+			Files.createDirectories(reportDir);
+			Files.writeString(dumpPath, builder.toString(), StandardCharsets.UTF_8);
+			LOGGER.warn("PauC wrote frame watchdog dump: {}", dumpPath);
+		} catch (IOException exception) {
+			LOGGER.warn("PauC could not write frame watchdog dump to {}.", dumpPath, exception);
+		}
 	}
 
 	private static long applyFramePacing(long now) {
@@ -317,6 +400,19 @@ public final class PauCClientFrameMetrics {
 		if (targetFps <= 0 || targetFps > 240) {
 			lastPacedFrameAtNanos = now;
 			return now;
+		}
+		if (targetFps < readInt("pauc.client.framePacingMinTargetFps", 100, 60, 240)) {
+			lastPacedFrameAtNanos = now;
+			return now;
+		}
+		try {
+			int framerateLimit = minecraft.options.framerateLimit().get();
+			if (framerateLimit > 0 && framerateLimit < 260) {
+				lastPacedFrameAtNanos = now;
+				return now;
+			}
+		} catch (RuntimeException | LinkageError ignored) {
+			// Keep the fallback pacing logic below.
 		}
 
 		long targetFrameNanos = Math.max(1L, 1_000_000_000L / targetFps);

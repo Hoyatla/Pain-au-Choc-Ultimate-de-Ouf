@@ -46,7 +46,7 @@ public final class PauCLodFallbackVisuals {
 	private static final float STANDARD_CONTRAST = 1.0F;
 	private static final float STANDARD_GAMMA = 1.0F;
 	private static final float STANDARD_FOG_FLOOR = 0.0F;
-	private static final float STANDARD_DIRECTIONAL_LIGHT = 0.08F;
+	private static final float STANDARD_DIRECTIONAL_LIGHT = 0.14F;
 	private static final float STANDARD_WATER_BLEND = 0.18F;
 	private static final float STANDARD_FAR_DESATURATION = 0.0F;
 	private static final float STANDARD_EMISSIVE_BOOST = 0.0F;
@@ -67,8 +67,8 @@ public final class PauCLodFallbackVisuals {
 	private static final float LATE_DARK_CONTRAST = 0.78F;
 	private static final float LATE_CLEAR_GAMMA = 0.98F;
 	private static final float LATE_DARK_GAMMA = 0.9F;
-	private static final float LATE_CLEAR_DIRECTIONAL_LIGHT = 0.16F;
-	private static final float LATE_DARK_DIRECTIONAL_LIGHT = 0.08F;
+	private static final float LATE_CLEAR_DIRECTIONAL_LIGHT = 0.22F;
+	private static final float LATE_DARK_DIRECTIONAL_LIGHT = 0.14F;
 	private static final float LATE_CLEAR_WATER_BLEND = 0.12F;
 	private static final float LATE_DARK_WATER_BLEND = 0.06F;
 	private static final float LATE_CLEAR_FAR_DESATURATION = 0.0F;
@@ -338,6 +338,13 @@ public final class PauCLodFallbackVisuals {
 				+ "    float sunFacing = clamp(dot(surfaceNormal, normalize(vec3(-0.45, 0.82, -0.35))), 0.0, 1.0);\n"
 				+ "    float sideShade = 1.0 - 0.16 * (1.0 - abs(surfaceNormal.y));\n"
 				+ "    color *= mix(1.0, sideShade + sunFacing * 0.20, clamp(uPaucFallbackDirectionalLight, 0.0, 1.0));\n"
+				+ "    float seamBlendWidth = max(uPaucSeamMorphWidth, 16.0);\n"
+				+ "    float joinShadowStart = max(uPaucSeamClipDistance - seamBlendWidth * 0.5, 0.0);\n"
+				+ "    float joinShadowEnd = uPaucSeamClipDistance + max(seamBlendWidth * 2.5, 128.0);\n"
+				+ "    float joinShadowBand = 1.0 - smoothstep(joinShadowStart, joinShadowEnd, max(abs(vPos.x), abs(vPos.z)));\n"
+				+ "    float joinShadowFacing = pow(1.0 - sunFacing, 1.20);\n"
+				+ "    float joinShadowStrength = clamp((0.05 + 0.16 * joinShadowFacing) * clamp(uPaucFallbackDirectionalLight * 3.0, 0.0, 1.0), 0.0, 0.24);\n"
+				+ "    color *= 1.0 - joinShadowStrength * joinShadowBand;\n"
 				+ "    float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));\n"
 				+ "    color = mix(vec3(luminance), color, uPaucFallbackSaturation);\n"
 				+ "    color = (color - vec3(0.5)) * uPaucFallbackContrast + vec3(0.5);\n"

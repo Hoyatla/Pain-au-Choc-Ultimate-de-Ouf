@@ -66,6 +66,36 @@ public final class PauCLodShaderRuntime {
 		);
 	}
 
+	public static void onShaderPackStateChanged(
+		boolean shaderInUse,
+		PauCLodShaderProfiles.Family family,
+		PauCLodShaderContext.DhShaderMode shaderMode
+	) {
+		if (!shaderInUse) {
+			state = State.off();
+			return;
+		}
+
+		State snapshot = state;
+		PauCLodShaderProfiles.Family resolvedFamily = family == null ? PauCLodShaderProfiles.Family.GENERIC : family;
+		PauCLodShaderContext.DhShaderMode resolvedMode =
+			shaderMode == null ? PauCLodShaderContext.DhShaderMode.PENDING : shaderMode;
+		boolean preservePerformance = snapshot.active() && snapshot.family() == resolvedFamily;
+		state = new State(
+			preservePerformance,
+			resolvedFamily,
+			resolvedMode,
+			preservePerformance ? snapshot.pressure() : Pressure.OFF,
+			preservePerformance ? snapshot.fps() : -1,
+			preservePerformance ? snapshot.targetFps() : -1,
+			preservePerformance ? snapshot.ratio() : 0.0D,
+			preservePerformance ? snapshot.heapPressure() : 0.0D,
+			preservePerformance && snapshot.nvidiaMeshPath(),
+			preservePerformance && snapshot.multiDrawIndirect(),
+			preservePerformance && snapshot.bindlessIndirect()
+		);
+	}
+
 	public static boolean isActive() {
 		return readBoolean(ENABLED_PROPERTY, true) && PauCLodShaderContext.isShaderPackInUse();
 	}
@@ -101,7 +131,7 @@ public final class PauCLodShaderRuntime {
 		}
 
 		if (usesSyntheticShaderShadowFallback()) {
-			return readBoolean(STABLE_SYNTHETIC_SHADOW_PROPERTY, true);
+			return readBoolean(STABLE_SYNTHETIC_SHADOW_PROPERTY, false);
 		}
 		if (blocksSyntheticShaderShadowFallback()) {
 			return false;
@@ -116,7 +146,7 @@ public final class PauCLodShaderRuntime {
 
 		PauCLodShaderProfiles.Family family = currentFamily();
 		if (usesSyntheticShaderShadowFallback()) {
-			return readBoolean(STABLE_SYNTHETIC_SHADOW_PROPERTY, true);
+			return readBoolean(STABLE_SYNTHETIC_SHADOW_PROPERTY, false);
 		}
 		if (blocksSyntheticShaderShadowFallback()) {
 			return false;
@@ -140,7 +170,7 @@ public final class PauCLodShaderRuntime {
 		if (blocksSyntheticShaderShadowFallback()) {
 			return 0;
 		}
-		if (usesSyntheticShaderShadowFallback() && readBoolean(FULL_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, true)) {
+		if (usesSyntheticShaderShadowFallback() && readBoolean(FULL_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, false)) {
 			return Math.max(
 				0,
 				Math.min(
@@ -268,20 +298,14 @@ public final class PauCLodShaderRuntime {
 		if (!PauCLodShaderContext.isShaderPackInUse() || PauCLodShaderContext.hasScannedDhShadowProgram()) {
 			return false;
 		}
-		if (family == PauCLodShaderProfiles.Family.PHOTON) {
-			return true;
-		}
-		if (family == PauCLodShaderProfiles.Family.SOLAS) {
-			return readBoolean(SOLAS_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, false);
-		}
 		return false;
 	}
 
 	private static boolean blocksSyntheticShaderShadowFallback() {
-		return currentFamily() == PauCLodShaderProfiles.Family.SOLAS
+		PauCLodShaderProfiles.Family family = currentFamily();
+		return (family == PauCLodShaderProfiles.Family.SOLAS || family == PauCLodShaderProfiles.Family.PHOTON)
 			&& PauCLodShaderContext.isShaderPackInUse()
-			&& !PauCLodShaderContext.hasScannedDhShadowProgram()
-			&& !readBoolean(SOLAS_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, false);
+			&& !PauCLodShaderContext.hasScannedDhShadowProgram();
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {

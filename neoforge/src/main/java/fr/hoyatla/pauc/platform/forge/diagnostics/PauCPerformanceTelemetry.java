@@ -3,8 +3,11 @@ package fr.hoyatla.pauc.platform.forge.diagnostics;
 import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.PauCIdentity;
 import fr.hoyatla.pauc.lod.PauCLodDiagnostics;
+import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
+import fr.hoyatla.pauc.platform.PauCPortabilityDiagnostics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientChunkRetentionManager;
+import fr.hoyatla.pauc.platform.forge.client.PauCClientGpuPathController;
 import fr.hoyatla.pauc.platform.forge.client.PauCCudaWorker;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientDistanceGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFrameMetrics;
@@ -12,7 +15,9 @@ import fr.hoyatla.pauc.platform.forge.client.PauCClientFpsGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientLodGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientSurfaceLodMode;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientTargetFps;
+import fr.hoyatla.pauc.platform.forge.client.PauCDynamicResolution;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatibilityGuards;
+import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
 import net.minecraft.client.Minecraft;
 import org.slf4j.Logger;
 
@@ -31,6 +36,7 @@ public final class PauCPerformanceTelemetry {
 	private static final String DETAIL_CAPTURE_INTERVAL_MS_PROPERTY = "pauc.telemetry.detailCaptureIntervalMs";
 	private static final long LOG_INTERVAL_MS = 5_000L;
 	private static long sessionStartedAtMs;
+	private static String sessionId = "";
 	private static long lastLogAtMs;
 	private static long lastDetailCaptureAtMs;
 	private static int samples;
@@ -59,7 +65,11 @@ public final class PauCPerformanceTelemetry {
 	private static String lastDistanceGovernorLine = "not-captured";
 	private static String lastSurfaceLodLine = "not-captured";
 	private static String lastCudaLine = "not-captured";
+	private static String lastGpuLine = "not-captured";
+	private static String lastSchedulerLine = "not-captured";
+	private static String lastTerrainLine = "not-captured";
 	private static String lastCompatLine = "not-captured";
+	private static String lastPortabilityLine = "not-captured";
 	private static String lastVillageLine = "not-captured";
 	private static String lastReloadLine = "not-captured";
 	private static boolean active;
@@ -71,7 +81,9 @@ public final class PauCPerformanceTelemetry {
 		reset();
 		active = true;
 		sessionStartedAtMs = System.currentTimeMillis();
+		sessionId = FILE_TIMESTAMP.format(Instant.ofEpochMilli(sessionStartedAtMs));
 		lastLogAtMs = sessionStartedAtMs;
+		PauCTelemetryTimeline.onClientSessionResumed(sessionStartedAtMs, sessionId);
 	}
 
 	public static void onClientTick(Minecraft minecraft) {
@@ -119,6 +131,7 @@ public final class PauCPerformanceTelemetry {
 			captureDetailLines();
 			lastDetailCaptureAtMs = now;
 		}
+		PauCTelemetryTimeline.onClientTick(minecraft, fps, targetFps, lastUsedMemoryBytes, lastMaxMemoryBytes);
 		if (now - lastLogAtMs >= LOG_INTERVAL_MS) {
 			lastLogAtMs = now;
 			LOGGER.info("PauC performance telemetry: {}", describe());
@@ -167,22 +180,35 @@ public final class PauCPerformanceTelemetry {
 			+ mib(maxUsedMemoryBytes)
 			+ "MiB, antiReload="
 			+ lastReloadLine
+			+ ", terrain="
+			+ lastTerrainLine
+			+ ", scheduler="
+			+ lastSchedulerLine
+			+ ", "
+			+ PauCDynamicResolution.describeState()
 			+ "]";
 	}
 
 	private static void writeReport(String reason) {
 		Minecraft minecraft = Minecraft.getInstance();
+		Path reportDir = minecraft != null && minecraft.gameDirectory != null
+			? minecraft.gameDirectory.toPath().resolve("pauc_diagnostics")
+			: null;
+		PauCTelemetryTimeline.TraceSummary timeline = PauCTelemetryTimeline.onClientSessionFinished(reportDir, reason);
 		if (minecraft == null || minecraft.gameDirectory == null || !PauCLodDiagnostics.enabled()) {
 			return;
 		}
 
-		Path reportDir = minecraft.gameDirectory.toPath().resolve("pauc_diagnostics");
-		Path reportPath = reportDir.resolve("performance-" + FILE_TIMESTAMP.format(Instant.now()) + ".json");
+		captureDetailLines();
+		String fileSessionId = sessionId == null || sessionId.isBlank() ? FILE_TIMESTAMP.format(Instant.now()) : sessionId;
+		Path reportPath = reportDir.resolve("performance-" + fileSessionId + ".json");
 		String json = "{\n"
 			+ "  \"buildId\": \"" + json(PauCIdentity.buildId()) + "\",\n"
 			+ "  \"buildVersion\": \"" + json(PauCIdentity.runtimeVersion()) + "\",\n"
 			+ "  \"buildGitHash\": \"" + json(PauCIdentity.buildGitHash()) + "\",\n"
+			+ "  \"sessionId\": \"" + json(fileSessionId) + "\",\n"
 			+ "  \"reason\": \"" + json(reason) + "\",\n"
+			+ "  \"terrainContext\": \"" + json(lastTerrainLine) + "\",\n"
 			+ "  \"durationMs\": " + Math.max(0L, System.currentTimeMillis() - sessionStartedAtMs) + ",\n"
 			+ "  \"samples\": " + samples + ",\n"
 			+ "  \"fpsSamples\": " + fpsSamples + ",\n"
@@ -199,6 +225,7 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"framePacingSleepMs\": " + decimal(PauCClientFrameMetrics.pacingSleepMs()) + ",\n"
 			+ "  \"frameWatchdogSpikes\": " + PauCClientFrameMetrics.watchdogSpikeCount() + ",\n"
 			+ "  \"lastFrameWatchdogMs\": " + decimal(PauCClientFrameMetrics.lastWatchdogFrameMs()) + ",\n"
+			+ "  \"dynamicResolutionScale\": " + decimal(PauCDynamicResolution.scale()) + ",\n"
 			+ "  \"belowTargetPercent\": " + percent(belowTargetSamples, fpsSamples) + ",\n"
 			+ "  \"severeBelowTargetPercent\": " + percent(severeBelowTargetSamples, fpsSamples) + ",\n"
 			+ "  \"criticalFpsPercent\": " + percent(criticalFpsSamples, fpsSamples) + ",\n"
@@ -224,6 +251,15 @@ public final class PauCPerformanceTelemetry {
 			+ "    \"coarseRefreshes\": " + PauCLodReloadDiagnostics.coarseRefreshes() + ",\n"
 			+ "    \"coarseRefreshSkips\": " + PauCLodReloadDiagnostics.coarseRefreshSkips() + "\n"
 			+ "  },\n"
+			+ "  \"timeline\": {\n"
+			+ "    \"available\": " + timeline.available() + ",\n"
+			+ "    \"file\": \"" + json(timeline.fileName()) + "\",\n"
+			+ "    \"heartbeats\": " + timeline.heartbeats() + ",\n"
+			+ "    \"governorTransitions\": " + timeline.governorTransitions() + ",\n"
+			+ "    \"surfaceTransitions\": " + timeline.surfaceTransitions() + ",\n"
+			+ "    \"lodTransitions\": " + timeline.lodTransitions() + ",\n"
+			+ "    \"watchdogTransitions\": " + timeline.watchdogTransitions() + "\n"
+			+ "  },\n"
 			+ "  \"summary\": \"" + json(describe()) + "\",\n"
 			+ "  \"lod\": \"" + json(lastLodLine) + "\",\n"
 			+ "  \"policy\": \"" + json(lastPolicyLine) + "\",\n"
@@ -235,10 +271,14 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"fpsGovernor\": \"" + json(lastFpsGovernorLine) + "\",\n"
 			+ "  \"distanceGovernor\": \"" + json(lastDistanceGovernorLine) + "\",\n"
 			+ "  \"surfaceLod\": \"" + json(lastSurfaceLodLine) + "\",\n"
+			+ "  \"dynamicResolution\": \"" + json(PauCDynamicResolution.describeState()) + "\",\n"
 			+ "  \"cuda\": \"" + json(lastCudaLine) + "\",\n"
+			+ "  \"gpu\": \"" + json(lastGpuLine) + "\",\n"
+			+ "  \"scheduler\": \"" + json(lastSchedulerLine) + "\",\n"
 			+ "  \"village\": \"" + json(lastVillageLine) + "\",\n"
 			+ "  \"antiReloadSummary\": \"" + json(lastReloadLine) + "\",\n"
-			+ "  \"compatGuards\": \"" + json(lastCompatLine) + "\"\n"
+			+ "  \"compatGuards\": \"" + json(lastCompatLine) + "\",\n"
+			+ "  \"portability\": \"" + json(lastPortabilityLine) + "\"\n"
 			+ "}\n";
 
 		try {
@@ -277,10 +317,16 @@ public final class PauCPerformanceTelemetry {
 		lastDistanceGovernorLine = "not-captured";
 		lastSurfaceLodLine = "not-captured";
 		lastCudaLine = "not-captured";
+		lastGpuLine = "not-captured";
+		lastSchedulerLine = "not-captured";
+		lastTerrainLine = "not-captured";
 		lastCompatLine = "not-captured";
+		lastPortabilityLine = "not-captured";
 		lastVillageLine = "not-captured";
 		lastReloadLine = "not-captured";
 		lastDetailCaptureAtMs = 0L;
+		sessionId = "";
+		PauCTelemetryTimeline.reset();
 		PauCClientFrameMetrics.reset();
 		PauCLodReloadDiagnostics.reset();
 		PauCVillagePerformanceDiagnostics.reset();
@@ -298,7 +344,11 @@ public final class PauCPerformanceTelemetry {
 		lastDistanceGovernorLine = PauCClientDistanceGovernor.describeState();
 		lastSurfaceLodLine = PauCClientSurfaceLodMode.describeState();
 		lastCudaLine = PauCCudaWorker.describeMetrics();
+		lastGpuLine = PauCClientGpuPathController.describeState();
+		lastSchedulerLine = PauCScheduler.describeState();
+		lastTerrainLine = PauCTerrainGeneratorDetector.describeCurrentClientContext();
 		lastCompatLine = PauCCompatibilityGuards.describeState();
+		lastPortabilityLine = PauCPortabilityDiagnostics.describeState();
 		lastVillageLine = PauCVillagePerformanceDiagnostics.describeState();
 		lastReloadLine = PauCLodReloadDiagnostics.describeState();
 	}

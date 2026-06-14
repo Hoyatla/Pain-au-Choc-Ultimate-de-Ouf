@@ -20,7 +20,18 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static final String RENDERED_VILLAGE_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureRenderedEntityThreshold";
 	private static final String RENDERED_VILLAGE_BLOCK_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureRenderedBlockEntityThreshold";
 	private static final String TOTAL_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureTotalRenderedBlockEntityThreshold";
+	private static final String TOTAL_RENDERED_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.villagePressureTotalRenderedEntityThreshold";
 	private static final String VILLAGE_PRESSURE_HOLD_TICKS_PROPERTY = "pauc.lod.villagePressureHoldTicks";
+	private static final String VILLAGE_PRESSURE_MIN_RENDER_SHARE_PROPERTY = "pauc.lod.villagePressureMinRenderShare";
+	private static final String VILLAGE_PRESSURE_MIN_RENDER_SIGNALS_PROPERTY = "pauc.lod.villagePressureMinRenderSignals";
+	private static final String HORDE_PRESSURE_ENABLED_PROPERTY = "pauc.lod.hordePressureBudget";
+	private static final String HORDE_TOTAL_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.hordePressureTotalEntityThreshold";
+	private static final String HORDE_RENDERED_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.hordePressureRenderedEntityThreshold";
+	private static final String HORDE_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY = "pauc.lod.hordePressureRenderedBlockEntityThreshold";
+	private static final String HORDE_PRESSURE_HOLD_TICKS_PROPERTY = "pauc.lod.hordePressureHoldTicks";
+	private static final String HORDE_ANIMATION_LOD_ENABLED_PROPERTY = "pauc.lod.hordeAnimationLod";
+	private static final String HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY = "pauc.lod.hordeBlockEntityBudgetSteady";
+	private static final String HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY = "pauc.lod.hordeBlockEntityBudgetSevere";
 	private static final int SAMPLE_INTERVAL_TICKS = 20;
 	private static final Map<EntityType<?>, Boolean> VILLAGE_ENTITY_TYPES = new IdentityHashMap<>();
 	private static final Map<BlockEntityType<?>, Boolean> VILLAGE_BLOCK_ENTITY_TYPES = new IdentityHashMap<>();
@@ -74,6 +85,12 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static int villagePressureTicks;
 	private static long villagePressureActiveTicks;
 	private static long villagePressureActivations;
+	private static volatile boolean hordePressureActive;
+	private static int hordePressureTicks;
+	private static long hordePressureActiveTicks;
+	private static long hordePressureActivations;
+	private static int lastAnimationLodTier;
+	private static int lastBlockEntityFrameBudget;
 
 	private PauCVillagePerformanceDiagnostics() {
 	}
@@ -128,6 +145,12 @@ public final class PauCVillagePerformanceDiagnostics {
 		villagePressureTicks = 0;
 		villagePressureActiveTicks = 0L;
 		villagePressureActivations = 0L;
+		hordePressureActive = false;
+		hordePressureTicks = 0;
+		hordePressureActiveTicks = 0L;
+		hordePressureActivations = 0L;
+		lastAnimationLodTier = 0;
+		lastBlockEntityFrameBudget = 0;
 		diagnosticsEnabled = true;
 	}
 
@@ -136,6 +159,10 @@ public final class PauCVillagePerformanceDiagnostics {
 		if (!diagnosticsEnabled || minecraft == null || minecraft.level == null) {
 			villagePressureActive = false;
 			villagePressureTicks = 0;
+			hordePressureActive = false;
+			hordePressureTicks = 0;
+			lastAnimationLodTier = 0;
+			lastBlockEntityFrameBudget = 0;
 			resetRenderWindow();
 			return;
 		}
@@ -184,6 +211,7 @@ public final class PauCVillagePerformanceDiagnostics {
 		maxCulledVillageBlockEntitiesWindow = Math.max(maxCulledVillageBlockEntitiesWindow, windowCulledVillageBlockEntities);
 		resetRenderWindow();
 		updateVillagePressure(totalEntities, villageEntities, windowEntities, windowVillageEntities, windowBlockEntities, windowVillageBlockEntities);
+		updateHordePressure(totalEntities, windowEntities, windowBlockEntities);
 	}
 
 	public static void recordEntityRender(Entity entity) {
@@ -279,6 +307,47 @@ public final class PauCVillagePerformanceDiagnostics {
 			&& villagePressureActive;
 	}
 
+	public static boolean isHordePressureActive() {
+		return diagnosticsEnabled
+			&& Boolean.parseBoolean(System.getProperty(HORDE_PRESSURE_ENABLED_PROPERTY, "true"))
+			&& hordePressureActive;
+	}
+
+	public static int animationLodTier() {
+		if (!diagnosticsEnabled || !Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true"))) {
+			return 0;
+		}
+		return Math.max(0, Math.min(3, lastAnimationLodTier));
+	}
+
+	public static int blockEntityFrameBudget() {
+		return Math.max(0, lastBlockEntityFrameBudget);
+	}
+
+	public static int lastClientEntityCount() {
+		return lastClientEntityCount;
+	}
+
+	public static int lastClientVillageEntityCount() {
+		return lastClientVillageEntityCount;
+	}
+
+	public static long lastRenderedEntitiesWindow() {
+		return lastRenderedEntitiesWindow;
+	}
+
+	public static long lastRenderedVillageEntitiesWindow() {
+		return lastRenderedVillageEntitiesWindow;
+	}
+
+	public static long lastRenderedBlockEntitiesWindow() {
+		return lastRenderedBlockEntitiesWindow;
+	}
+
+	public static long lastRenderedVillageBlockEntitiesWindow() {
+		return lastRenderedVillageBlockEntitiesWindow;
+	}
+
 	public static boolean isVillageEntity(Entity entity) {
 		return entity != null && isVillageEntityType(entity.getType());
 	}
@@ -294,6 +363,12 @@ public final class PauCVillagePerformanceDiagnostics {
 			+ lastClientVillageEntityCount
 			+ ", pressure="
 			+ (isVillagePressureActive() ? "on" : "off")
+			+ ", horde="
+			+ (isHordePressureActive() ? "on" : "off")
+			+ "/tier="
+			+ animationLodTier()
+			+ "/beBudget="
+			+ blockEntityFrameBudget()
 			+ ", renderedEntities="
 			+ renderedEntities
 			+ "/village="
@@ -387,13 +462,30 @@ public final class PauCVillagePerformanceDiagnostics {
 		int renderedVillageEntityThreshold = readInt(RENDERED_VILLAGE_ENTITY_THRESHOLD_PROPERTY, 96, 1, 4096);
 		int renderedVillageBlockEntityThreshold = readInt(RENDERED_VILLAGE_BLOCK_ENTITY_THRESHOLD_PROPERTY, 96, 1, 4096);
 		int totalRenderedBlockEntityThreshold = readInt(TOTAL_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 512, 16, 8192);
+		int totalRenderedEntityThreshold = readInt(TOTAL_RENDERED_ENTITY_THRESHOLD_PROPERTY, totalThreshold * 4, 16, 8192);
 		int pressureHoldTicks = readInt(VILLAGE_PRESSURE_HOLD_TICKS_PROPERTY, 100, SAMPLE_INTERVAL_TICKS, 600);
-		boolean pressureCandidate = villageEntities >= villageThreshold
-			|| (villageEntities > 0 && totalEntities >= totalThreshold)
+		double minRenderShare = readDouble(VILLAGE_PRESSURE_MIN_RENDER_SHARE_PROPERTY, 0.12D, 0.01D, 1.0D);
+		long minRenderSignals = readInt(VILLAGE_PRESSURE_MIN_RENDER_SIGNALS_PROPERTY, 24, 1, 4096);
+		long totalRenderSignals = Math.max(0L, windowEntities + windowBlockEntities);
+		long villageRenderSignals = Math.max(0L, windowVillageEntities + windowVillageBlockEntities);
+		double villageRenderShare = totalRenderSignals > 0L ? villageRenderSignals / (double) totalRenderSignals : 0.0D;
+		boolean directVillageLoad = villageEntities >= villageThreshold
 			|| windowVillageEntities >= renderedVillageEntityThreshold
-			|| windowVillageBlockEntities >= renderedVillageBlockEntityThreshold
-			|| (windowVillageBlockEntities > 0L && windowBlockEntities >= totalRenderedBlockEntityThreshold)
-			|| (windowVillageEntities > 0L && windowEntities >= totalThreshold);
+			|| windowVillageBlockEntities >= renderedVillageBlockEntityThreshold;
+		boolean mixedVillageEntityLoad = villageEntities > 0
+			&& totalEntities >= totalThreshold
+			&& windowEntities >= totalRenderedEntityThreshold
+			&& villageRenderSignals >= minRenderSignals;
+		boolean mixedVillageBlockEntityLoad = windowVillageBlockEntities >= Math.max(8L, minRenderSignals / 2L)
+			&& windowBlockEntities >= totalRenderedBlockEntityThreshold
+			&& villageRenderShare >= minRenderShare;
+		boolean mixedVillageEntityWindowLoad = windowVillageEntities >= Math.max(8L, minRenderSignals / 3L)
+			&& windowEntities >= totalRenderedEntityThreshold
+			&& villageRenderShare >= Math.max(0.05D, minRenderShare * 0.5D);
+		boolean pressureCandidate = directVillageLoad
+			|| mixedVillageEntityLoad
+			|| mixedVillageBlockEntityLoad
+			|| mixedVillageEntityWindowLoad;
 
 		boolean wasActive = villagePressureActive;
 		if (pressureCandidate) {
@@ -408,6 +500,59 @@ public final class PauCVillagePerformanceDiagnostics {
 				villagePressureActivations++;
 			}
 		}
+	}
+
+	private static void updateHordePressure(int totalEntities, long windowEntities, long windowBlockEntities) {
+		if (!Boolean.parseBoolean(System.getProperty(HORDE_PRESSURE_ENABLED_PROPERTY, "true"))) {
+			hordePressureActive = false;
+			hordePressureTicks = 0;
+			lastAnimationLodTier = 0;
+			lastBlockEntityFrameBudget = 0;
+			return;
+		}
+
+		int totalThreshold = readInt(HORDE_TOTAL_ENTITY_THRESHOLD_PROPERTY, 192, 32, 4096);
+		int renderedEntityThreshold = readInt(HORDE_RENDERED_ENTITY_THRESHOLD_PROPERTY, 4096, 256, 50000);
+		int renderedBlockEntityThreshold = readInt(HORDE_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 1536, 128, 50000);
+		int pressureHoldTicks = readInt(HORDE_PRESSURE_HOLD_TICKS_PROPERTY, 80, SAMPLE_INTERVAL_TICKS, 600);
+		boolean pressureCandidate = totalEntities >= totalThreshold
+			|| windowEntities >= renderedEntityThreshold
+			|| windowBlockEntities >= renderedBlockEntityThreshold;
+
+		boolean wasActive = hordePressureActive;
+		if (pressureCandidate) {
+			hordePressureTicks = Math.max(hordePressureTicks, pressureHoldTicks);
+		} else {
+			hordePressureTicks = Math.max(0, hordePressureTicks - SAMPLE_INTERVAL_TICKS);
+		}
+		hordePressureActive = hordePressureTicks > 0;
+		if (hordePressureActive) {
+			hordePressureActiveTicks += SAMPLE_INTERVAL_TICKS;
+			if (!wasActive) {
+				hordePressureActivations++;
+			}
+		}
+
+		int tier = 0;
+		if (hordePressureActive) {
+			double entityLoad = Math.max(
+				totalEntities / (double) Math.max(1, totalThreshold),
+				windowEntities / (double) Math.max(1, renderedEntityThreshold)
+			);
+			double blockEntityLoad = windowBlockEntities / (double) Math.max(1, renderedBlockEntityThreshold);
+			double load = Math.max(entityLoad, blockEntityLoad);
+			if (load >= 2.5D) {
+				tier = 3;
+			} else if (load >= 1.5D || villagePressureActive) {
+				tier = 2;
+			} else {
+				tier = 1;
+			}
+		}
+		lastAnimationLodTier = Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true")) ? tier : 0;
+		int steadyBudget = readInt(HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY, 1500, 128, 20000);
+		int severeBudget = readInt(HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY, 600, 64, 10000);
+		lastBlockEntityFrameBudget = tier >= 2 || villagePressureActive ? severeBudget : steadyBudget;
 	}
 
 	private static void resetRenderWindow() {
@@ -448,9 +593,6 @@ public final class PauCVillagePerformanceDiagnostics {
 		String path = key != null ? key.getPath() : "";
 		boolean village = path.equals("bell")
 			|| path.equals("bed")
-			|| path.equals("sign")
-			|| path.equals("hanging_sign")
-			|| path.equals("chest")
 			|| path.equals("lectern");
 		VILLAGE_BLOCK_ENTITY_TYPES.put(type, village);
 		return village;
@@ -469,6 +611,18 @@ public final class PauCVillagePerformanceDiagnostics {
 			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
 		} catch (NumberFormatException ignored) {
 			return fallback;
+		}
+	}
+
+	private static double readDouble(String key, double fallback, double min, double max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Double.parseDouble(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
 		}
 	}
 }

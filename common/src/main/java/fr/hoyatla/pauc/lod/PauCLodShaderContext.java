@@ -15,7 +15,7 @@ public final class PauCLodShaderContext {
 	private static final String CONSERVATIVE_EMBEDDED_FALLBACK_PROPERTY = "pauc.lod.conservativeEmbeddedShaderFallback";
 	private static final String STICKY_COMPATIBILITY_PROPERTY = "pauc.lod.stickyShaderCompatibility";
 	private static final String HOLD_FRAMES_PROPERTY = "pauc.lod.transitionHoldFrames";
-	private static final int DEFAULT_HOLD_FRAMES = 4;
+	private static final int DEFAULT_HOLD_FRAMES = 10;
 	private static final int MAX_SCAN_FILES = 4096;
 	private static final long MAX_SCAN_FILE_BYTES = 262_144L;
 	private static final Map<String, Boolean> INCOMPATIBLE_SHADER_PACKS = new ConcurrentHashMap<>();
@@ -76,6 +76,7 @@ public final class PauCLodShaderContext {
 		if (changed) {
 			armTransitionHold();
 		}
+		PauCLodShaderRuntime.onShaderPackStateChanged(shaderPackInUse, PauCLodShaderProfiles.familyForKey(shaderPackKey), effectiveDhMode);
 	}
 
 	public static void markDhShaderCompatibility(boolean nativeShaderAvailable, String reason) {
@@ -132,6 +133,7 @@ public final class PauCLodShaderContext {
 		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable || previousMode != effectiveDhMode) {
 			armTransitionHold();
 		}
+		PauCLodShaderRuntime.onShaderPackStateChanged(shaderPackInUse, PauCLodShaderProfiles.familyForKey(shaderPackKey), effectiveDhMode);
 	}
 
 	public static void markDhShaderRuntimeFallback(String reason) {
@@ -157,6 +159,7 @@ public final class PauCLodShaderContext {
 		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable || previousMode != effectiveDhMode) {
 			armTransitionHold();
 		}
+		PauCLodShaderRuntime.onShaderPackStateChanged(shaderPackInUse, PauCLodShaderProfiles.familyForKey(shaderPackKey), effectiveDhMode);
 	}
 
 	public static boolean shouldForceFallbackForCurrentPack() {
@@ -172,7 +175,7 @@ public final class PauCLodShaderContext {
 			return false;
 		}
 		return switch (PauCLodShaderProfiles.currentFamily()) {
-			case BLISS, BSL, COMPLEMENTARY, PHOTON, RETHINKING, SOLAS -> true;
+			case BLISS, BSL, COMPLEMENTARY, RETHINKING -> true;
 			default -> false;
 		};
 	}
@@ -289,7 +292,22 @@ public final class PauCLodShaderContext {
 	}
 
 	private static void armTransitionHold() {
-		transitionHoldFrames = Math.max(transitionHoldFrames, readInt(HOLD_FRAMES_PROPERTY, DEFAULT_HOLD_FRAMES, 0, 60));
+		transitionHoldFrames = Math.max(transitionHoldFrames, readInt(HOLD_FRAMES_PROPERTY, defaultTransitionHoldFrames(), 0, 120));
+	}
+
+	private static int defaultTransitionHoldFrames() {
+		int frames = DEFAULT_HOLD_FRAMES;
+		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
+		if (family == PauCLodShaderProfiles.Family.PHOTON || family == PauCLodShaderProfiles.Family.SOLAS) {
+			frames += 8;
+		}
+		PauCTerrainGeneratorDetector.ModpackClass modpackClass = PauCTerrainGeneratorDetector.currentModpackClass();
+		return switch (modpackClass) {
+			case EXTREME -> frames + 10;
+			case HEAVY -> frames + 6;
+			case MEDIUM -> frames + 2;
+			case LIGHT -> frames;
+		};
 	}
 
 	private static boolean isCurrentPackCachedIncompatible() {

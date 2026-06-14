@@ -102,7 +102,9 @@ public class PipelineManager {
 		});
 
 		pipelinesPerDimension.clear();
-		pipeline = null;
+		// Fall back to the vanilla pipeline immediately so shader-only hooks stop suppressing vanilla behavior
+		// during reload and shader on/off transitions.
+		pipeline = new VanillaRenderingPipeline();
 		versionCounterForSodiumShaderReload++;
 	}
 
