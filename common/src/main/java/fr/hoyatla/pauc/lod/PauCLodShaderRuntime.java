@@ -167,9 +167,13 @@ public final class PauCLodShaderRuntime {
 		if (!isActive()) {
 			return availableChunks;
 		}
-		if (blocksSyntheticShaderShadowFallback()) {
-			return 0;
-		}
+		// NOTE: blocksSyntheticShaderShadowFallback() must NOT gate this budget. That flag suppresses the
+		// synthetic DH *LOD* shadow program for packs like Photon/Solas (correct), but this budget governs
+		// whether the *vanilla terrain* main-camera chunks are restored into the shadow terrain list when
+		// the vanilla shadow-frustum setup comes back empty (the embedded, no-Sodium path). Vanilla terrain
+		// must always be submitted to the shader's shadow.vsh pass, otherwise terrain casts no shadow while
+		// entities still do. Conflating the two zeroed this budget for Photon/Solas and removed all terrain
+		// shadows in the vanilla zone (0.3.0 regression).
 		if (usesSyntheticShaderShadowFallback() && readBoolean(FULL_SYNTHETIC_SHADOW_FALLBACK_PROPERTY, false)) {
 			return Math.max(
 				0,

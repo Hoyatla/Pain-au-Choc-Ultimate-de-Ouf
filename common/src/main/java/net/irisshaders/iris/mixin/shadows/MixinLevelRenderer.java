@@ -52,10 +52,6 @@ public class MixinLevelRenderer implements CullingDataCache {
 		new ObjectArrayList<>(PAUC_STABLE_MAIN_CAMERA_SHADOW_CACHE_LIMIT);
 
 	@Unique
-	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$lastLocalVanillaShadowChunks =
-		new ObjectArrayList<>(256);
-
-	@Unique
 	private ClientLevel pauc$shadowCacheLevel;
 
 	@Unique
@@ -77,15 +73,6 @@ public class MixinLevelRenderer implements CullingDataCache {
 	private int pauc$stableMainCameraShadowRadiusChunks = -1;
 
 	@Unique
-	private double pauc$lastLocalVanillaShadowCameraX = Double.NaN;
-
-	@Unique
-	private double pauc$lastLocalVanillaShadowCameraZ = Double.NaN;
-
-	@Unique
-	private int pauc$lastLocalVanillaShadowRadiusChunks = -1;
-
-	@Unique
 	private static boolean pauc$reportedShadowCullingSwap;
 
 	@Unique
@@ -96,12 +83,6 @@ public class MixinLevelRenderer implements CullingDataCache {
 
 	@Unique
 	private static boolean pauc$reportedMainCameraShadowFallback;
-
-	@Unique
-	private static PauCLodShaderProfiles.Family pauc$reportedLocalVanillaShadowRecoveryFamily;
-
-	@Unique
-	private static boolean pauc$reportedLocalVanillaShadowCacheReuse;
 
 	@Override
 	public void saveState() {
@@ -126,55 +107,38 @@ public class MixinLevelRenderer implements CullingDataCache {
 	@Override
 	public void useMainCameraChunksIfShadowSetupFailed() {
 		if (pauc$mainRenderChunksSnapshot.isEmpty()) {
-			return;
-		}
-
-		int availableChunks = pauc$mainRenderChunksSnapshot.size();
-		int shadowSetupChunks = renderChunksInFrustum.size();
-		if (pauc$shouldRecoverLocalVanillaShadowTerrain(availableChunks, shadowSetupChunks)) {
-			ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = pauc$buildLocalVanillaShadowRecovery(
-				availableChunks
-			);
-			if (!selectedChunks.isEmpty()) {
-				renderChunksInFrustum = selectedChunks;
-				pauc$rememberShadowChunks(renderChunksInFrustum, renderChunksInFrustum.size());
-				PauCLodShaderProfiles.Family currentFamily = PauCLodShaderProfiles.currentFamily();
-				if (pauc$reportedLocalVanillaShadowRecoveryFamily != currentFamily) {
-					pauc$reportedLocalVanillaShadowRecoveryFamily = currentFamily;
-					Iris.logger.info(
-						"PauC recovered {} local vanilla shadow chunks for {} after shader shadow terrain setup became {}; shadowSetup={}, radius={} chunks, {}",
-						renderChunksInFrustum.size(),
-						currentFamily.name().toLowerCase(),
-						shadowSetupChunks == 0 ? "empty" : "too sparse",
-						shadowSetupChunks,
-						pauc$localVanillaShadowRecoveryRadiusChunks(),
-						PauCLodShaderRuntime.describe()
-					);
-				}
-				return;
+			// Warmup / transition frame: the main camera has not produced its visible-chunk list yet.
+			// If the shader shadow setup is also empty but we still hold a recent stable shadow set, keep
+			// using it so terrain shadows do not blink off for these few frames while the world settles.
+			if (renderChunksInFrustum.isEmpty() && !pauc$lastStableShadowChunks.isEmpty()) {
+				renderChunksInFrustum = new ObjectArrayList<>(pauc$lastStableShadowChunks);
 			}
-		}
-		if (pauc$shouldLimitShadowFallbackToLocalVanillaRecovery()) {
-			pauc$rememberShadowChunks(renderChunksInFrustum, shadowSetupChunks);
 			return;
 		}
 
-		int budget = PauCLodShaderRuntime.shadowFallbackChunkBudget(availableChunks);
-		if (budget <= 0) {
-			pauc$rememberShadowChunks(renderChunksInFrustum, shadowSetupChunks);
-			return;
-		}
-		if (!pauc$shouldRecoverShadowTerrainSetup(availableChunks)) {
-			pauc$rememberShadowChunks(renderChunksInFrustum, shadowSetupChunks);
+		// Opt-out: if the pack drives its own shadow terrain and explicitly disables PauC's fallback,
+		// leave whatever the shadow setup produced untouched.
+		int availableChunks = pauc$mainRenderChunksSnapshot.size();
+		if (PauCLodShaderRuntime.shadowFallbackChunkBudget(availableChunks) <= 0) {
 			return;
 		}
 
-		if (shadowSetupChunks >= budget) {
-			pauc$rememberShadowChunks(renderChunksInFrustum, shadowSetupChunks);
-			return;
-		}
+		// STABILITY: build the same deterministic shadow terrain set EVERY frame, instead of keeping the
+		// shader's own shadow-frustum set when it is non-empty. The embedded (no-Sodium) shadow setup is
+		// intermittent — empty on most frames, non-empty on a fraction — so deferring to it makes the
+		// shadow region alternate between two different sets and flicker. We also use a pressure-INDEPENDENT
+		// budget (the vanilla render distance + junction margin) so the set size does not swing frame to
+		// frame with the family pressure budget (the measured 640<->1152 swing that lit up a thin unstable
+		// ring). A constant set size + a snapshot-first radial build = a stable shadow region that simply
+		// follows the player.
+		int budget = pauc$vanillaShadowZoneBudget();
+		// Retention headroom: keep the previous frame's shadowed chunks for a frame or two beyond the live
+		// zone so that a chunk briefly dropping out of the snapshot during movement (a leading-edge rebuild
+		// or a partial main-render list on a heavy frame) does not blink its shadow off. Bounded at 1.5x so
+		// the extra depth-only near draws stay cheap.
+		int retentionBudget = budget + (budget / 2);
 
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = pauc$buildStableShadowFallback(budget);
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = pauc$buildStableShadowFallback(budget, retentionBudget);
 		if (selectedChunks.isEmpty()) {
 			return;
 		}
@@ -184,11 +148,9 @@ public class MixinLevelRenderer implements CullingDataCache {
 		if (!pauc$reportedShadowCullingFallback) {
 			pauc$reportedShadowCullingFallback = true;
 			Iris.logger.info(
-				"PauC restored {} shadow chunks from {} main-camera chunks after shader shadow terrain setup became {}; shadowSetup={}, {}",
+				"PauC rebuilt {} shadow terrain chunks from {} stable main-camera chunks after shader shadow terrain setup returned empty; {}",
 				renderChunksInFrustum.size(),
 				availableChunks,
-				shadowSetupChunks == 0 ? "empty" : "too sparse",
-				shadowSetupChunks,
 				PauCLodShaderRuntime.describe()
 			);
 		}
@@ -204,13 +166,9 @@ public class MixinLevelRenderer implements CullingDataCache {
 		pauc$shadowCacheLevel = currentLevel;
 		pauc$lastStableShadowChunks.clear();
 		pauc$stableMainCameraShadowCandidates.clear();
-		pauc$lastLocalVanillaShadowChunks.clear();
 		pauc$stableMainCameraShadowCameraX = Double.NaN;
 		pauc$stableMainCameraShadowCameraZ = Double.NaN;
 		pauc$stableMainCameraShadowRadiusChunks = -1;
-		pauc$lastLocalVanillaShadowCameraX = Double.NaN;
-		pauc$lastLocalVanillaShadowCameraZ = Double.NaN;
-		pauc$lastLocalVanillaShadowRadiusChunks = -1;
 		pauc$savedTicks = Integer.MIN_VALUE;
 	}
 
@@ -232,62 +190,6 @@ public class MixinLevelRenderer implements CullingDataCache {
 
 		accessor.setTicks(pauc$savedTicks);
 		pauc$savedTicks = Integer.MIN_VALUE;
-	}
-
-	@Unique
-	private boolean pauc$shouldRecoverShadowTerrainSetup(int availableChunks) {
-		if (renderChunksInFrustum.isEmpty()) {
-			return true;
-		}
-		if (!PauCLodShaderContext.isShaderPackInUse()
-			|| PauCLodShaderContext.hasScannedDhShadowProgram()
-			|| availableChunks < 256) {
-			return false;
-		}
-
-		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
-		int sparseThreshold = switch (family) {
-			case SOLAS -> Math.max(96, (int) Math.round(availableChunks * 0.12D));
-			case PHOTON -> Math.max(64, (int) Math.round(availableChunks * 0.08D));
-			default -> 0;
-		};
-		return sparseThreshold > 0 && renderChunksInFrustum.size() < sparseThreshold;
-	}
-
-	@Unique
-	private boolean pauc$shouldRecoverLocalVanillaShadowTerrain(int availableChunks, int shadowSetupChunks) {
-		if (availableChunks < 64
-			|| !pauc$usesLocalVanillaShadowRecoveryMode()) {
-			return false;
-		}
-
-		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
-		int localBudget = pauc$localVanillaShadowRecoveryBudget(availableChunks);
-		if (localBudget <= 0) {
-			return false;
-		}
-
-		int sparseThreshold = switch (family) {
-			case SOLAS -> Math.max(48, localBudget - 16);
-			case PHOTON -> Math.max(40, localBudget - 24);
-			default -> Math.max(32, localBudget / 3);
-		};
-		return shadowSetupChunks < sparseThreshold;
-	}
-
-	@Unique
-	private boolean pauc$usesLocalVanillaShadowRecoveryMode() {
-		if (!PauCLodShaderContext.isShaderPackInUse() || PauCLodShaderContext.hasScannedDhShadowProgram()) {
-			return false;
-		}
-
-		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
-		return family == PauCLodShaderProfiles.Family.SOLAS || family == PauCLodShaderProfiles.Family.PHOTON;
-	}
-
-	@Unique
-	private boolean pauc$shouldLimitShadowFallbackToLocalVanillaRecovery() {
-		return pauc$usesLocalVanillaShadowRecoveryMode();
 	}
 
 	@Unique
@@ -320,100 +222,47 @@ public class MixinLevelRenderer implements CullingDataCache {
 	}
 
 	@Unique
-	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildStableShadowFallback(int budget) {
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = new ObjectArrayList<>(budget);
-		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(16, budget * 2));
-		pauc$appendClosestShadowChunks(selectedChunks, seenOrigins, renderChunksInFrustum, budget);
-		boolean usedLastStableShadow = pauc$appendClosestShadowChunks(
-			selectedChunks,
-			seenOrigins,
-			pauc$lastStableShadowChunks,
-			budget
-		);
-		boolean usedMainCameraCache = pauc$appendClosestShadowChunks(
-			selectedChunks,
-			seenOrigins,
-			pauc$stableMainCameraShadowCandidates,
-			budget
-		);
+	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildStableShadowFallback(int budget, int retentionBudget) {
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = new ObjectArrayList<>(retentionBudget);
+		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(16, retentionBudget * 2));
+
+		// Priority order matters for STABLE + SMOOTH shadows. The fresh main-camera snapshot follows the
+		// player every frame and is the same set frame to frame when stationary, so it fills the primary
+		// budget FIRST — this both follows movement smoothly and keeps the near zone identical each frame.
+		// The previous frame's set is then retained (up to the retention budget) so a chunk briefly dropping
+		// out during movement keeps its shadow instead of blinking. The radial candidate cache adds coverage
+		// the current view frustum excludes, and the shader's own intermittent shadow-frustum set is appended
+		// LAST as a pure bonus — it must never push the stable near chunks out, otherwise its frame-to-frame
+		// on/off presence makes the region flicker.
 		boolean usedMainCameraSnapshot = pauc$appendClosestShadowChunks(
 			selectedChunks,
 			seenOrigins,
 			pauc$mainRenderChunksSnapshot,
 			budget
 		);
-
-		if (usedLastStableShadow && !pauc$reportedStableShadowFallback) {
-			pauc$reportedStableShadowFallback = true;
-			Iris.logger.info("PauC shadow fallback reused the last stable shadow terrain set instead of the player camera frustum.");
-		}
-		if ((usedMainCameraCache || usedMainCameraSnapshot) && !pauc$reportedMainCameraShadowFallback) {
-			pauc$reportedMainCameraShadowFallback = true;
-			Iris.logger.info("PauC shadow fallback rebuilt a radial shadow terrain set from stable main-camera chunks around the player.");
-		}
-
-		return selectedChunks;
-	}
-
-	@Unique
-	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildLocalVanillaShadowRecovery(int availableChunks) {
-		int budget = pauc$localVanillaShadowRecoveryBudget(availableChunks);
-		if (budget <= 0) {
-			return new ObjectArrayList<>(0);
-		}
-
-		int radiusChunks = pauc$localVanillaShadowRecoveryRadiusChunks();
-		double maxDistanceBlocks = radiusChunks * 16.0D;
-		int minimumUsefulChunks = Math.max(24, budget / 3);
-
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = new ObjectArrayList<>(budget);
-		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(16, budget * 2));
-		boolean reusedLocalRecovery = pauc$canReuseLocalVanillaShadowRecovery(budget, radiusChunks);
-		boolean usedLocalRecoveryCache = reusedLocalRecovery && pauc$appendClosestShadowChunksWithinDistance(
-			selectedChunks,
-			seenOrigins,
-			pauc$lastLocalVanillaShadowChunks,
-			budget,
-			maxDistanceBlocks
-		);
-		pauc$appendUniqueShadowChunks(selectedChunks, seenOrigins, renderChunksInFrustum, budget);
-		pauc$appendClosestShadowChunksWithinDistance(
+		boolean usedLastStableShadow = pauc$appendClosestShadowChunks(
 			selectedChunks,
 			seenOrigins,
 			pauc$lastStableShadowChunks,
-			budget,
-			maxDistanceBlocks
+			retentionBudget
 		);
-		pauc$appendClosestShadowChunksWithinDistance(
+		boolean usedMainCameraCache = pauc$appendClosestShadowChunks(
 			selectedChunks,
 			seenOrigins,
 			pauc$stableMainCameraShadowCandidates,
-			budget,
-			maxDistanceBlocks
+			retentionBudget
 		);
-		if (!reusedLocalRecovery || selectedChunks.size() < minimumUsefulChunks) {
-			pauc$appendClosestShadowChunksWithinDistance(
-				selectedChunks,
-				seenOrigins,
-				pauc$mainRenderChunksSnapshot,
-				budget,
-				maxDistanceBlocks
-			);
+		pauc$appendClosestShadowChunks(selectedChunks, seenOrigins, renderChunksInFrustum, retentionBudget);
+
+		if (usedMainCameraSnapshot && !pauc$reportedMainCameraShadowFallback) {
+			pauc$reportedMainCameraShadowFallback = true;
+			Iris.logger.info("PauC shadow fallback rebuilt a radial shadow terrain set from the live main-camera chunks around the player.");
 		}
-		if (!reusedLocalRecovery) {
-			pauc$appendClosestShadowChunksWithinDistance(
-				selectedChunks,
-				seenOrigins,
-				pauc$lastLocalVanillaShadowChunks,
-				budget,
-				maxDistanceBlocks
-			);
+		if ((usedLastStableShadow || usedMainCameraCache) && !pauc$reportedStableShadowFallback) {
+			pauc$reportedStableShadowFallback = true;
+			Iris.logger.info("PauC shadow fallback backfilled the shadow terrain set from the stable cache during a transient main-camera shrink.");
 		}
-		if (usedLocalRecoveryCache && !pauc$reportedLocalVanillaShadowCacheReuse) {
-			pauc$reportedLocalVanillaShadowCacheReuse = true;
-			Iris.logger.info("PauC reused the stable local vanilla shadow cache before current player-camera visibility to avoid pitch-dependent shadow loss.");
-		}
-		pauc$rememberLocalVanillaShadowRecovery(selectedChunks, radiusChunks, minimumUsefulChunks);
+
 		return selectedChunks;
 	}
 
@@ -431,23 +280,6 @@ public class MixinLevelRenderer implements CullingDataCache {
 		ObjectArrayList<LevelRenderer.RenderChunkInfo> sortedChunks = new ObjectArrayList<>(source);
 		sortedChunks.sort(Comparator.comparingDouble(this::pauc$shadowFallbackDistanceScore));
 		return pauc$appendUniqueShadowChunks(target, seenOrigins, sortedChunks, budget);
-	}
-
-	@Unique
-	private boolean pauc$appendClosestShadowChunksWithinDistance(
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> target,
-		LongOpenHashSet seenOrigins,
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> source,
-		int budget,
-		double maxDistanceBlocks
-	) {
-		if (source == null || source.isEmpty() || target.size() >= budget) {
-			return false;
-		}
-
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> sortedChunks = new ObjectArrayList<>(source);
-		sortedChunks.sort(Comparator.comparingDouble(this::pauc$shadowFallbackDistanceScore));
-		return pauc$appendUniqueShadowChunksWithinDistance(target, seenOrigins, sortedChunks, budget, maxDistanceBlocks);
 	}
 
 	@Unique
@@ -479,74 +311,6 @@ public class MixinLevelRenderer implements CullingDataCache {
 			}
 		}
 		return appended;
-	}
-
-	@Unique
-	private boolean pauc$appendUniqueShadowChunksWithinDistance(
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> target,
-		LongOpenHashSet seenOrigins,
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> source,
-		int budget,
-		double maxDistanceBlocks
-	) {
-		if (source == null || source.isEmpty() || target.size() >= budget) {
-			return false;
-		}
-
-		boolean appended = false;
-		for (LevelRenderer.RenderChunkInfo chunkInfo : source) {
-			if (chunkInfo == null || chunkInfo.chunk == null || !pauc$isShadowChunkWithinDistance(chunkInfo, maxDistanceBlocks)) {
-				continue;
-			}
-
-			BlockPos origin = chunkInfo.chunk.getOrigin();
-			if (origin == null || !seenOrigins.add(origin.asLong())) {
-				continue;
-			}
-
-			target.add(chunkInfo);
-			appended = true;
-			if (target.size() >= budget) {
-				break;
-			}
-		}
-		return appended;
-	}
-
-	@Unique
-	private boolean pauc$isShadowChunkWithinDistance(LevelRenderer.RenderChunkInfo chunkInfo, double maxDistanceBlocks) {
-		return pauc$shadowFallbackDistanceScore(chunkInfo) <= maxDistanceBlocks;
-	}
-
-	@Unique
-	private int pauc$localVanillaShadowRecoveryBudget(int availableChunks) {
-		if (availableChunks <= 0) {
-			return 0;
-		}
-
-		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
-		int pressureBudget = switch (family) {
-			case SOLAS -> switch (PauCLodShaderRuntime.pressure()) {
-				case RELIEF -> 112;
-				case BALANCED -> 144;
-				case HEADROOM -> 192;
-				default -> 144;
-			};
-			case PHOTON -> switch (PauCLodShaderRuntime.pressure()) {
-				case RELIEF -> 80;
-				case BALANCED -> 112;
-				case HEADROOM -> 144;
-				default -> 112;
-			};
-			default -> 0;
-		};
-		if (pressureBudget <= 0) {
-			return 0;
-		}
-
-		int radiusChunks = pauc$localVanillaShadowRecoveryRadiusChunks();
-		int estimatedVisibleChunks = Math.max(48, radiusChunks * radiusChunks);
-		return Math.max(24, Math.min(availableChunks, Math.min(pressureBudget, estimatedVisibleChunks)));
 	}
 
 	@Unique
@@ -610,42 +374,18 @@ public class MixinLevelRenderer implements CullingDataCache {
 		pauc$stableMainCameraShadowRadiusChunks = recoveryRadiusChunks;
 	}
 
+	// Stable upper bound on the number of near chunks needed to shadow the entire vanilla render
+	// distance plus a one-chunk junction margin. Derived from the render distance (not the momentary
+	// snapshot size), so it does not shrink during a pitch swing — keeping coverage stable there too.
 	@Unique
-	private boolean pauc$canReuseLocalVanillaShadowRecovery(int budget, int radiusChunks) {
-		if (pauc$lastLocalVanillaShadowChunks.isEmpty()
-			|| radiusChunks != pauc$lastLocalVanillaShadowRadiusChunks
-			|| pauc$lastLocalVanillaShadowChunks.size() < Math.max(24, budget / 3)) {
-			return false;
-		}
-
-		if (!Double.isFinite(pauc$lastLocalVanillaShadowCameraX) || !Double.isFinite(pauc$lastLocalVanillaShadowCameraZ)) {
-			return false;
-		}
-
-		Vec3 cameraPosition = pauc$mainCameraPosition();
-		double reuseDistanceBlocks = Math.max(8.0D, radiusChunks * 8.0D);
-		double cameraDriftBlocks = Math.max(
-			Math.abs(cameraPosition.x - pauc$lastLocalVanillaShadowCameraX),
-			Math.abs(cameraPosition.z - pauc$lastLocalVanillaShadowCameraZ)
-		);
-		return cameraDriftBlocks < reuseDistanceBlocks;
-	}
-
-	@Unique
-	private void pauc$rememberLocalVanillaShadowRecovery(
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> chunks,
-		int radiusChunks,
-		int minimumUsefulChunks
-	) {
-		if (chunks == null || chunks.size() < minimumUsefulChunks) {
-			return;
-		}
-
-		pauc$lastLocalVanillaShadowChunks = new ObjectArrayList<>(chunks);
-		Vec3 cameraPosition = pauc$mainCameraPosition();
-		pauc$lastLocalVanillaShadowCameraX = cameraPosition.x;
-		pauc$lastLocalVanillaShadowCameraZ = cameraPosition.z;
-		pauc$lastLocalVanillaShadowRadiusChunks = radiusChunks;
+	private int pauc$vanillaShadowZoneBudget() {
+		Minecraft minecraft = Minecraft.getInstance();
+		int renderDistanceChunks = minecraft != null && minecraft.options != null
+			? minecraft.options.getEffectiveRenderDistance()
+			: 8;
+		int radiusChunks = Math.max(2, renderDistanceChunks) + 1;
+		int squareEstimate = (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
+		return Math.min(1536, squareEstimate);
 	}
 
 	@Unique
