@@ -140,6 +140,16 @@ public final class PauCLodRenderCulling {
 		return horizontalDistanceSqr(entity.getX(), entity.getZ(), camera.x, camera.z) > maxDistance * maxDistance;
 	}
 
+	/** Base horizontal max render distance (blocks) used for entity culling; consumers derive far-band thresholds from it. */
+	public static double entityRenderMaxDistanceBlocks() {
+		return distanceFromVanillaChunks(DEFAULT_ENTITY_EXTRA_CHUNKS, ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
+	}
+
+	/** Base horizontal max render distance (blocks) used for block-entity culling; consumers derive far-band thresholds. */
+	public static double blockEntityRenderMaxDistanceBlocks() {
+		return distanceFromVanillaChunks(DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS, BLOCK_ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
+	}
+
 	public static boolean shouldCullBlockEntity(BlockEntity blockEntity) {
 		if (!active() || blockEntity == null) {
 			return false;
@@ -179,6 +189,13 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PARTICLE_DISTANCE_BLOCKS, 32, 384);
+		// Default OFF (known-good visual baseline): pulling the particle horizon in is a visible change. Opt-in only.
+		if (readBoolean("pauc.lod.cull.particleAbsorbDistance", false) && PauCFrameSpikeAbsorber.isAbsorbing()) {
+			// Pull the particle render horizon in while absorbing a spike so per-frame iteration cost stays bounded.
+			// Never below a near floor so close-range gameplay feedback is preserved.
+			double minParticleDistance = readInt("pauc.lod.cull.particleAbsorbMinDistanceBlocks", 24, 8, 128);
+			maxDistance = Math.max(minParticleDistance, maxDistance * PauCFrameSpikeAbsorber.workScale());
+		}
 		Vec3 camera = cameraPosition(minecraft);
 		double dx = x - camera.x;
 		double dy = y - camera.y;

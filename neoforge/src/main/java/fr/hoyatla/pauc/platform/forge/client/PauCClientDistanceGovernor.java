@@ -27,23 +27,10 @@ public final class PauCClientDistanceGovernor {
 		);
 		boolean autoReduce = PauCLodClientSettings.autoReduceVanillaDistance();
 		boolean aboveRecommendation = vanillaDistance > recommendedDistance;
-		boolean changed = false;
-
-		if (autoReduce && aboveRecommendation) {
-			try {
-				minecraft.options.renderDistance().set(recommendedDistance);
-				vanillaDistance = minecraft.options.getEffectiveRenderDistance();
-				aboveRecommendation = vanillaDistance > recommendedDistance;
-				changed = true;
-			} catch (RuntimeException | LinkageError exception) {
-				LOGGER.debug("PauC could not reduce the runtime render distance.", exception);
-			}
-		}
-
 		DistanceState previous = lastState;
 		DistanceState state = new DistanceState(true, vanillaDistance, recommendedDistance, autoReduce, aboveRecommendation);
 		lastState = state;
-		if (changed || !state.equals(previous) || ticksUntilNextLog-- <= 0) {
+		if (!state.equals(previous) || ticksUntilNextLog-- <= 0) {
 			ticksUntilNextLog = LOG_THROTTLE_TICKS;
 			LOGGER.info("PauC distance governor: {}", state.describe());
 		}
@@ -82,6 +69,7 @@ public final class PauCClientDistanceGovernor {
 				+ autoReduce
 				+ ", aboveRecommendation="
 				+ aboveRecommendation
+				+ ", action=advisory-only"
 				+ "]";
 		}
 	}

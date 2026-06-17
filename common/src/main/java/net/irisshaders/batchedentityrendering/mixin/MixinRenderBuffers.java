@@ -91,6 +91,7 @@ public class MixinRenderBuffers implements RenderBuffersExt, MemoryTrackingRende
 		begins -= 1;
 
 		if (begins == 0) {
+			buffered.onFrameComplete();
 			buffered.assertWrapStackEmpty();
 		}
 	}

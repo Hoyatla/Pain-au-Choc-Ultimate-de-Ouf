@@ -267,6 +267,11 @@ public class ShadowRenderer {
 	}
 
 	private FrustumHolder createShadowFrustum(float renderMultiplier, FrustumHolder holder) {
+		// PauC shader GPU floor: when fps is below the pack's floor (GPU-bound), pull the shadow render distance in to
+		// recover GPU time. renderMultiplier < 0 is a "use user shadow distance" sentinel and is left untouched.
+		if (renderMultiplier > 0.0f) {
+			renderMultiplier *= (float) fr.hoyatla.pauc.lod.PauCShaderShadowBudget.shadowDistanceScale();
+		}
 		// TODO: Cull entities / block entities with Advanced Frustum Culling even if voxelization is detected.
 		String distanceInfo;
 		String cullingInfo;

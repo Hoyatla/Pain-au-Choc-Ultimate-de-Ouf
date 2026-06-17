@@ -10,7 +10,9 @@ public final class PauCMobAiThrottler {
 	}
 
 	public static boolean shouldSkipServerAiStep(Mob mob) {
-		if (!PauCRuntimeSwitches.enabled("mobAiThrottle.enabled", true) || mob == null || !(mob.level() instanceof ServerLevel level)) {
+		if (!PauCServerOptimizationProfile.enabled("mobAiThrottle.enabled", PauCServerOptimizationProfile.Feature.MOB_AI_THROTTLE)
+			|| mob == null
+			|| !(mob.level() instanceof ServerLevel level)) {
 			return false;
 		}
 		if (mob.getTarget() != null || mob.hasCustomName() || mob.isPassenger() || mob.isVehicle()) {
@@ -38,7 +40,10 @@ public final class PauCMobAiThrottler {
 	}
 
 	private static boolean shouldUseSurfaceUndergroundThrottle(ServerLevel level, Mob mob, double nearestPlayerDistanceSqr) {
-		if (!PauCRuntimeSwitches.enabled("mobAiThrottle.surfaceUnderground.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled(
+			"mobAiThrottle.surfaceUnderground.enabled",
+			PauCServerOptimizationProfile.Feature.SURFACE_UNDERGROUND_AI_THROTTLE
+		)) {
 			return false;
 		}
 		if (!allPlayersSafelyOnSurface(level)) {

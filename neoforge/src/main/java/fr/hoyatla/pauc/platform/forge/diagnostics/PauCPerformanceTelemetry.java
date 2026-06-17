@@ -10,11 +10,15 @@ import fr.hoyatla.pauc.platform.forge.client.PauCClientChunkRetentionManager;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientGpuPathController;
 import fr.hoyatla.pauc.platform.forge.client.PauCCudaWorker;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientDistanceGovernor;
+import fr.hoyatla.pauc.platform.forge.client.PauCEmbeddedDhBridge;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFrameMetrics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFpsGovernor;
+import fr.hoyatla.pauc.platform.forge.client.PauCClientFrontierWarmupManager;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientLodGovernor;
+import fr.hoyatla.pauc.platform.forge.client.PauCPlayerVideoSettings;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientSurfaceLodMode;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientTargetFps;
+import fr.hoyatla.pauc.platform.forge.client.PauCClientUploadBudgetController;
 import fr.hoyatla.pauc.platform.forge.client.PauCDynamicResolution;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatibilityGuards;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
@@ -62,6 +66,7 @@ public final class PauCPerformanceTelemetry {
 	private static String lastValidationLine = "not-captured";
 	private static String lastCullingLine = "not-captured";
 	private static String lastFpsGovernorLine = "not-captured";
+	private static String lastPlayerVideoLine = "not-captured";
 	private static String lastDistanceGovernorLine = "not-captured";
 	private static String lastSurfaceLodLine = "not-captured";
 	private static String lastCudaLine = "not-captured";
@@ -72,6 +77,10 @@ public final class PauCPerformanceTelemetry {
 	private static String lastPortabilityLine = "not-captured";
 	private static String lastVillageLine = "not-captured";
 	private static String lastReloadLine = "not-captured";
+	private static String lastGovernorActuationLine = "not-captured";
+	private static String lastEmbeddedDhActuationLine = "not-captured";
+	private static String lastFrontierActuationLine = "not-captured";
+	private static String lastUploadBudgetLine = "not-captured";
 	private static boolean active;
 
 	private PauCPerformanceTelemetry() {
@@ -91,22 +100,28 @@ public final class PauCPerformanceTelemetry {
 			return;
 		}
 
-		samples++;
+		// Only sample ACTIVE gameplay: a paused game or any open menu/inventory screen renders the world trivially (or
+		// not at all), so its fps is meaningless and was inflating the in-game averages. screen==null = real play.
+		boolean activeGameplay = minecraft.level != null && minecraft.player != null && minecraft.screen == null;
 		int fps = queryFps(minecraft);
 		int targetFps = PauCClientTargetFps.effectiveTargetFps(minecraft);
-		if (fps > 0) {
+		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
+		int telemetryTargetFps = playerVideo.fpsUnlimited() && fps > 0 ? Math.max(30, fps) : targetFps;
+		lastPlayerVideoLine = playerVideo.describe();
+		if (activeGameplay && fps > 0) {
+			samples++;
 			fpsSamples++;
 			fpsTotal += fps;
 			minFps = minFps <= 0 ? fps : Math.min(minFps, fps);
 			maxFps = Math.max(maxFps, fps);
-			if (fps < targetFps) {
+			if (fps < telemetryTargetFps) {
 				belowTargetSamples++;
 				currentBelowTargetStreak++;
 				longestBelowTargetStreak = Math.max(longestBelowTargetStreak, currentBelowTargetStreak);
 			} else {
 				currentBelowTargetStreak = 0;
 			}
-			if (fps < targetFps * 0.65D) {
+			if (fps < telemetryTargetFps * 0.65D) {
 				severeBelowTargetSamples++;
 				currentSevereBelowTargetStreak++;
 				longestSevereBelowTargetStreak = Math.max(longestSevereBelowTargetStreak, currentSevereBelowTargetStreak);
@@ -116,7 +131,7 @@ public final class PauCPerformanceTelemetry {
 			if (fps <= 10) {
 				criticalFpsSamples++;
 			}
-			worstFpsTargetGap = Math.max(worstFpsTargetGap, Math.max(0, targetFps - fps));
+			worstFpsTargetGap = Math.max(worstFpsTargetGap, Math.max(0, telemetryTargetFps - fps));
 		}
 
 		Runtime runtime = Runtime.getRuntime();
@@ -131,7 +146,7 @@ public final class PauCPerformanceTelemetry {
 			captureDetailLines();
 			lastDetailCaptureAtMs = now;
 		}
-		PauCTelemetryTimeline.onClientTick(minecraft, fps, targetFps, lastUsedMemoryBytes, lastMaxMemoryBytes);
+		PauCTelemetryTimeline.onClientTick(minecraft, fps, telemetryTargetFps, lastUsedMemoryBytes, lastMaxMemoryBytes);
 		if (now - lastLogAtMs >= LOG_INTERVAL_MS) {
 			lastLogAtMs = now;
 			LOGGER.info("PauC performance telemetry: {}", describe());
@@ -158,8 +173,13 @@ public final class PauCPerformanceTelemetry {
 			+ PauCClientFrameMetrics.describeFrameTimes()
 			+ ", build="
 			+ PauCIdentity.buildId()
-			+ ", target="
+			+ ", referenceFps="
 			+ PauCClientTargetFps.effectiveTargetFps()
+			+ ", referenceMode="
+			+ PauCClientTargetFps.referenceMode(Minecraft.getInstance())
+			+ ", player="
+			+ lastPlayerVideoLine
+			+ ", paucFpsCap=none, pacing=off"
 			+ ", below="
 			+ percent(belowTargetSamples, fpsSamples)
 			+ "%, severe="
@@ -214,6 +234,10 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"fpsSamples\": " + fpsSamples + ",\n"
 			+ "  \"frameSamples\": " + PauCClientFrameMetrics.frameSampleCount() + ",\n"
 			+ "  \"targetFps\": " + PauCClientTargetFps.effectiveTargetFps() + ",\n"
+			+ "  \"fpsReferenceMode\": \"" + json(PauCClientTargetFps.referenceMode(minecraft)) + "\",\n"
+			+ "  \"playerVideo\": \"" + json(lastPlayerVideoLine) + "\",\n"
+			+ "  \"paucFpsCap\": \"none\",\n"
+			+ "  \"pacing\": \"off\",\n"
 			+ "  \"averageFps\": " + averageFps() + ",\n"
 			+ "  \"minFps\": " + minFps + ",\n"
 			+ "  \"maxFps\": " + maxFps + ",\n"
@@ -271,6 +295,10 @@ public final class PauCPerformanceTelemetry {
 			+ "  \"fpsGovernor\": \"" + json(lastFpsGovernorLine) + "\",\n"
 			+ "  \"distanceGovernor\": \"" + json(lastDistanceGovernorLine) + "\",\n"
 			+ "  \"surfaceLod\": \"" + json(lastSurfaceLodLine) + "\",\n"
+			+ "  \"governorActuation\": \"" + json(lastGovernorActuationLine) + "\",\n"
+			+ "  \"embeddedDhActuation\": \"" + json(lastEmbeddedDhActuationLine) + "\",\n"
+			+ "  \"frontierActuation\": \"" + json(lastFrontierActuationLine) + "\",\n"
+			+ "  \"uploadBudget\": \"" + json(lastUploadBudgetLine) + "\",\n"
 			+ "  \"dynamicResolution\": \"" + json(PauCDynamicResolution.describeState()) + "\",\n"
 			+ "  \"cuda\": \"" + json(lastCudaLine) + "\",\n"
 			+ "  \"gpu\": \"" + json(lastGpuLine) + "\",\n"
@@ -314,6 +342,7 @@ public final class PauCPerformanceTelemetry {
 		lastValidationLine = "not-captured";
 		lastCullingLine = "not-captured";
 		lastFpsGovernorLine = "not-captured";
+		lastPlayerVideoLine = "not-captured";
 		lastDistanceGovernorLine = "not-captured";
 		lastSurfaceLodLine = "not-captured";
 		lastCudaLine = "not-captured";
@@ -324,6 +353,10 @@ public final class PauCPerformanceTelemetry {
 		lastPortabilityLine = "not-captured";
 		lastVillageLine = "not-captured";
 		lastReloadLine = "not-captured";
+		lastGovernorActuationLine = "not-captured";
+		lastEmbeddedDhActuationLine = "not-captured";
+		lastFrontierActuationLine = "not-captured";
+		lastUploadBudgetLine = "not-captured";
 		lastDetailCaptureAtMs = 0L;
 		sessionId = "";
 		PauCTelemetryTimeline.reset();
@@ -341,6 +374,7 @@ public final class PauCPerformanceTelemetry {
 		lastValidationLine = PauCLodDiagnostics.validationLine();
 		lastCullingLine = PauCLodDiagnostics.cullingLine();
 		lastFpsGovernorLine = PauCClientFpsGovernor.describeState();
+		lastPlayerVideoLine = PauCPlayerVideoSettings.capture(Minecraft.getInstance()).describe();
 		lastDistanceGovernorLine = PauCClientDistanceGovernor.describeState();
 		lastSurfaceLodLine = PauCClientSurfaceLodMode.describeState();
 		lastCudaLine = PauCCudaWorker.describeMetrics();
@@ -351,6 +385,10 @@ public final class PauCPerformanceTelemetry {
 		lastPortabilityLine = PauCPortabilityDiagnostics.describeState();
 		lastVillageLine = PauCVillagePerformanceDiagnostics.describeState();
 		lastReloadLine = PauCLodReloadDiagnostics.describeState();
+		lastGovernorActuationLine = PauCClientFpsGovernor.describeActuationState();
+		lastEmbeddedDhActuationLine = PauCEmbeddedDhBridge.describeActuationState();
+		lastFrontierActuationLine = PauCClientFrontierWarmupManager.describeActuationState();
+		lastUploadBudgetLine = PauCClientUploadBudgetController.describeState();
 	}
 
 	private static int queryFps(Minecraft minecraft) {

@@ -7,7 +7,9 @@ public final class PauCServerRuntimeDashboard {
 	}
 
 	public static String describe(MinecraftServer server) {
-		return PauCTickDebtController.describeState(server)
+		return PauCServerOptimizationProfile.describeState()
+			+ ", "
+			+ PauCTickDebtController.describeState(server)
 			+ ", "
 			+ PauCServerPhaseBudgetController.describeState(server)
 			+ ", "
@@ -17,6 +19,10 @@ public final class PauCServerRuntimeDashboard {
 			+ ", "
 			+ PauCPoiQueryDiagnostics.describeState()
 			+ ", "
-			+ PauCStructureCheckCircuitBreaker.describeState();
+			+ PauCStructureCheckCircuitBreaker.describeState()
+			+ ", "
+			+ PauCSpawnThrottler.describeState(server)
+			+ ", "
+			+ PauCAsyncPathfinder.describeState();
 	}
 }

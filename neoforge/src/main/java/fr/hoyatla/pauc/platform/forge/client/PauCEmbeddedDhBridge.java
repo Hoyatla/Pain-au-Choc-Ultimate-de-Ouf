@@ -102,6 +102,7 @@ public final class PauCEmbeddedDhBridge {
 	private static final String DH_GENERIC_RENDERING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$GenericRendering";
 	private static final String DH_GRAPHICS_EXPERIMENTAL_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Client$Advanced$Graphics$Experimental";
 	private static final String DH_WORLD_GENERATOR_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Common$WorldGenerator";
+	private static final String DH_WARNING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Common$Logging$Warning";
 	private static final String DH_MULTI_THREADING_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Common$MultiThreading";
 	private static final String DH_SERVER_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Server";
 	private static final String DH_SERVER_EXPERIMENTAL_CONFIG_CLASS = "com.seibel.distanthorizons.core.config.Config$Server$Experimental";
@@ -130,6 +131,8 @@ public final class PauCEmbeddedDhBridge {
 	private static final String DH_ENABLE_GENERIC_RENDERING_FIELD = "enableGenericRendering";
 	private static final String DH_ENABLE_DISTANT_GENERATION_FIELD = "enableDistantGeneration";
 	private static final String DH_DISTANT_GENERATOR_MODE_FIELD = "distantGeneratorMode";
+	private static final String DH_SHOW_UPDATE_QUEUE_OVERLOADED_CHAT_WARNING_FIELD = "showUpdateQueueOverloadedChatWarning";
+	private static final String DH_SHOW_SLOW_WORLDGEN_SETTING_WARNINGS_FIELD = "showSlowWorldGenSettingWarnings";
 	private static final String DH_GENERATION_REQUEST_RATE_LIMIT_FIELD = "generationRequestRateLimit";
 	private static final String DH_MAX_GENERATION_REQUEST_DISTANCE_FIELD = "maxGenerationRequestDistance";
 	private static final String DH_ENABLE_N_SIZE_GENERATION_FIELD = "enableNSizedGeneration";
@@ -192,7 +195,7 @@ public final class PauCEmbeddedDhBridge {
 			boolean shaderPackInUse = isShaderPackRuntimeInUse();
 			boolean nativeShaderFog = shaderPackInUse && !PauCLodShaderContext.isFallbackActive();
 			boolean dhDistanceFog = shouldUseDhDistanceFog(nativeShaderFog);
-			configureCoreRuntimeSettings(targetDistance, runtimeSettings);
+			GenerationFillPolicyState fillPolicyState = configureCoreRuntimeSettings(targetDistance, runtimeSettings);
 			clearApiValueIfSet(configs.graphics().fog().drawMode());
 			setApiValueIfChanged(configs.graphics().fog().enableDhFog(), dhDistanceFog);
 			setApiValueIfChanged(configs.graphics().fog().enableVanillaFog(), !nativeShaderFog);
@@ -225,7 +228,18 @@ public final class PauCEmbeddedDhBridge {
 				LOGGER.info("PauC embedded DH bridge forced DH LOD side shading to {} for shader shadow continuity.", runtimeSettings.lodShading());
 				lastConfiguredTarget = targetDistance;
 			}
-			state = new BridgeState(true, "configured", targetDistance);
+			state = new BridgeState(
+				true,
+				"configured",
+				targetDistance,
+				fillPolicyState.activeFillRadiusChunks(),
+				fillPolicyState.requestedFillRadiusChunks(),
+				fillPolicyState.backgroundFillRadiusChunks(),
+				fillPolicyState.requestDistanceBlocks(),
+				fillPolicyState.requestRateLimit(),
+				fillPolicyState.coarseFillCatchup(),
+				fillPolicyState.shaderFallback()
+			);
 		} catch (Throwable throwable) {
 			state = BridgeState.unavailable("configure-error:" + throwable.getClass().getSimpleName());
 			LOGGER.debug("PauC embedded DH bridge failed to configure Distant Horizons.", throwable);
@@ -265,6 +279,18 @@ public final class PauCEmbeddedDhBridge {
 			+ state.status()
 			+ ", target="
 			+ state.targetDistanceChunks()
+			+ ", requestRate="
+			+ state.requestRateLimit()
+			+ ", requestDistanceBlocks="
+			+ state.requestDistanceBlocks()
+			+ ", fill="
+			+ state.activeFillRadiusChunks()
+			+ "/"
+			+ state.requestedFillRadiusChunks()
+			+ "/"
+			+ state.backgroundFillRadiusChunks()
+			+ ", catchup="
+			+ state.coarseFillCatchup()
 			+ ", coarseFill="
 			+ PauCClientFrontierWarmupManager.shouldPreferCoarseFill()
 			+ ", coarseRefreshes="
@@ -273,6 +299,28 @@ public final class PauCEmbeddedDhBridge {
 			+ describeGpuUploadState()
 			+ ", "
 			+ PauCLodSwapGuard.describeState()
+			+ "]";
+	}
+
+	public static String describeActuationState() {
+		return "embeddedDhAct[status="
+			+ state.status()
+			+ ", target="
+			+ state.targetDistanceChunks()
+			+ ", requestRate="
+			+ state.requestRateLimit()
+			+ ", requestDistanceBlocks="
+			+ state.requestDistanceBlocks()
+			+ ", activeFill="
+			+ state.activeFillRadiusChunks()
+			+ ", requestedFill="
+			+ state.requestedFillRadiusChunks()
+			+ ", backgroundFill="
+			+ state.backgroundFillRadiusChunks()
+			+ ", coarseCatchup="
+			+ state.coarseFillCatchup()
+			+ ", shaderFallback="
+			+ state.shaderFallback()
 			+ "]";
 	}
 
@@ -366,9 +414,11 @@ public final class PauCEmbeddedDhBridge {
 		state = BridgeState.unavailable(status);
 	}
 
-	private static void configureCoreRuntimeSettings(int targetDistance, RuntimeLodSettings runtimeSettings) {
+	private static GenerationFillPolicyState configureCoreRuntimeSettings(int targetDistance, RuntimeLodSettings runtimeSettings) {
 		configureDirectGpuRendererPath("runtime");
 		setDhCoreConfigValueWithoutSaving(DH_DEBUGGING_CONFIG_CLASS, DH_RENDERER_MODE_FIELD, EDhApiRendererMode.DEFAULT);
+		setDhCoreConfigValueWithoutSaving(DH_WARNING_CONFIG_CLASS, DH_SHOW_UPDATE_QUEUE_OVERLOADED_CHAT_WARNING_FIELD, Boolean.FALSE);
+		setDhCoreConfigValueWithoutSaving(DH_WARNING_CONFIG_CLASS, DH_SHOW_SLOW_WORLDGEN_SETTING_WARNINGS_FIELD, Boolean.FALSE);
 		setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_LOD_CHUNK_RENDER_DISTANCE_FIELD, targetDistance);
 		setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_MAX_HORIZONTAL_RESOLUTION_FIELD, runtimeSettings.maxHorizontalResolution());
 		setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_HORIZONTAL_QUALITY_FIELD, runtimeSettings.horizontalQuality());
@@ -381,10 +431,11 @@ public final class PauCEmbeddedDhBridge {
 		configureDistantCloudRendering();
 		setDhCoreConfigValueWithoutSaving(DH_WORLD_GENERATOR_CONFIG_CLASS, DH_ENABLE_DISTANT_GENERATION_FIELD, Boolean.TRUE);
 		setDhCoreConfigValueWithoutSaving(DH_WORLD_GENERATOR_CONFIG_CLASS, DH_DISTANT_GENERATOR_MODE_FIELD, runtimeSettings.generatorMode());
-		configureGenerationFillPolicy(targetDistance);
+		GenerationFillPolicyState fillPolicyState = configureGenerationFillPolicy(targetDistance);
 		setDhCoreConfigValueWithoutSaving(DH_MULTI_THREADING_CONFIG_CLASS, DH_NUMBER_OF_THREADS_FIELD, runtimeSettings.threadCount());
 		setDhCoreConfigValueWithoutSaving(DH_MULTI_THREADING_CONFIG_CLASS, DH_THREAD_RUN_TIME_RATIO_FIELD, runtimeSettings.threadRuntimeRatio());
 		clearRenderCacheIfGeometryChanged(runtimeSettings);
+		return fillPolicyState;
 	}
 
 	private static void configureDirectGpuRendererPath(String phase) {
@@ -537,28 +588,63 @@ public final class PauCEmbeddedDhBridge {
 		);
 	}
 
-	private static void configureGenerationFillPolicy(int targetDistance) {
+	private static GenerationFillPolicyState configureGenerationFillPolicy(int targetDistance) {
 		int requestRateLimit = PauCLodClientSettings.generationRequestRateLimit();
+		boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(targetDistance);
+		boolean activeTravelFill = PauCClientFrontierWarmupManager.isActiveTravelFill();
+		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
 		boolean shaderRuntime = isShaderPackRuntimeInUse();
 		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
 		boolean coarseFillCatchup = shaderFallback
+			|| directFill
 			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
 			|| PauCClientFrontierWarmupManager.shouldPreferCoarseFill();
-		int preloadExtraChunks = readInt(FOG_PRELOAD_EXTRA_CHUNKS_PROPERTY, coarseFillCatchup ? 32 : 12, 0, 96);
-		int maxRequestBlocks = readInt(MAX_GENERATION_REQUEST_BLOCKS_PROPERTY, 8192, 4096, 16384);
+		int preloadExtraChunks = readInt(
+			FOG_PRELOAD_EXTRA_CHUNKS_PROPERTY,
+			directFill
+				? fpsFirstVanilla
+					? (activeTravelFill ? 56 : 40)
+					: (activeTravelFill ? 48 : 36)
+				: coarseFillCatchup ? 32 : 12,
+			0,
+			128
+		);
+		int maxRequestBlocks = readInt(
+			MAX_GENERATION_REQUEST_BLOCKS_PROPERTY,
+			directFill
+				? fpsFirstVanilla
+					? 16384
+					: 14336
+				: 8192,
+			4096,
+			32768
+		);
 		int activeFillRadius = PauCClientFrontierWarmupManager.activeFillRadiusChunks(targetDistance);
 		int requestedFillRadius = PauCClientFrontierWarmupManager.requestedFillRadiusChunks(targetDistance);
 		int backgroundFillRadius = PauCClientFrontierWarmupManager.backgroundFillRadiusChunks(targetDistance);
-		int requestRadiusChunks = Math.min(targetDistance, Math.max(requestedFillRadius, PauCLodHorizonState.currentRange().lodStartChunk()));
+		int requestRadiusChunks = directFill
+			? targetDistance
+			: Math.min(targetDistance, Math.max(requestedFillRadius, PauCLodHorizonState.currentRange().lodStartChunk()));
 		int requestDistanceBlocks = clampInt((requestRadiusChunks + preloadExtraChunks) * 16, 256, maxRequestBlocks);
 		if (coarseFillCatchup) {
-			int coarseFillDefault = shaderFallback ? 768 : shaderRuntime ? 512 : 768;
-			int coarseFillCeiling = shaderFallback ? 1024 : shaderRuntime ? 768 : 1024;
+			int coarseFillDefault = shaderFallback ? 768 : shaderRuntime ? 512 : fpsFirstVanilla ? 1024 : 768;
+			int coarseFillCeiling = shaderFallback ? 1024 : shaderRuntime ? 768 : fpsFirstVanilla ? 1536 : 1024;
 			if (PauCLodShaderRuntime.pressure() == PauCLodShaderRuntime.Pressure.RELIEF) {
-				coarseFillCeiling = Math.min(coarseFillCeiling, shaderFallback ? 768 : shaderRuntime ? 512 : 768);
+				coarseFillCeiling = Math.min(coarseFillCeiling, shaderFallback ? 768 : shaderRuntime ? 512 : fpsFirstVanilla ? 1024 : 768);
 			}
-			int coarseFillRate = readInt(COARSE_FILL_REQUEST_RATE_PROPERTY, coarseFillDefault, 20, 2048);
+			int coarseFillRate = readInt(COARSE_FILL_REQUEST_RATE_PROPERTY, coarseFillDefault, 20, 4096);
 			requestRateLimit = Math.max(requestRateLimit, Math.min(coarseFillRate, coarseFillCeiling));
+		}
+		if (directFill) {
+			int directFillRate = readInt(
+				"pauc.lod.directHorizonGenerationRequestRate",
+				fpsFirstVanilla
+					? (activeTravelFill ? 1536 : 1024)
+					: (activeTravelFill ? 1152 : 768),
+				20,
+				4096
+			);
+			requestRateLimit = Math.max(requestRateLimit, directFillRate);
 		}
 		boolean coarseFirstFill = readBoolean(COARSE_FIRST_FILL_PROPERTY, true);
 		boolean fillHoles = PauCLodClientSettings.fillLodHoles();
@@ -581,7 +667,9 @@ public final class PauCEmbeddedDhBridge {
 			+ ":"
 			+ shaderFallback
 			+ ":"
-			+ coarseFillCatchup;
+			+ coarseFillCatchup
+			+ ":"
+			+ directFill;
 		if (!loggedRoundHorizonGenerationPolicy || !generationPolicySignature.equals(lastLoggedGenerationPolicy)) {
 			loggedRoundHorizonGenerationPolicy = true;
 			lastLoggedGenerationPolicy = generationPolicySignature;
@@ -597,14 +685,24 @@ public final class PauCEmbeddedDhBridge {
 				coarseFirstFill
 			);
 			LOGGER.info(
-				"PauC embedded DH bridge fill expansion: requestedRadius={} chunks, backgroundRadius={} chunks, shaderFallback={}, catchup={}.",
+				"PauC embedded DH bridge fill expansion: requestedRadius={} chunks, backgroundRadius={} chunks, shaderFallback={}, catchup={}, directFill={}.",
 				requestRadiusChunks,
 				backgroundFillRadius,
 				shaderFallback,
-				coarseFillCatchup
+				coarseFillCatchup,
+				directFill
 			);
 		}
 		configureReliefCompression();
+		return new GenerationFillPolicyState(
+			activeFillRadius,
+			requestRadiusChunks,
+			backgroundFillRadius,
+			requestDistanceBlocks,
+			requestRateLimit,
+			coarseFillCatchup,
+			shaderFallback
+		);
 	}
 
 	private static void configureDistantCloudRendering() {
@@ -1034,10 +1132,32 @@ public final class PauCEmbeddedDhBridge {
 		return Math.max(min, Math.min(max, value));
 	}
 
-	private record BridgeState(boolean available, String status, int targetDistanceChunks) {
+	private record BridgeState(
+		boolean available,
+		String status,
+		int targetDistanceChunks,
+		int activeFillRadiusChunks,
+		int requestedFillRadiusChunks,
+		int backgroundFillRadiusChunks,
+		int requestDistanceBlocks,
+		int requestRateLimit,
+		boolean coarseFillCatchup,
+		boolean shaderFallback
+	) {
 		private static BridgeState unavailable(String status) {
-			return new BridgeState(false, status, -1);
+			return new BridgeState(false, status, -1, -1, -1, -1, -1, -1, false, false);
 		}
+	}
+
+	private record GenerationFillPolicyState(
+		int activeFillRadiusChunks,
+		int requestedFillRadiusChunks,
+		int backgroundFillRadiusChunks,
+		int requestDistanceBlocks,
+		int requestRateLimit,
+		boolean coarseFillCatchup,
+		boolean shaderFallback
+	) {
 	}
 
 	private record DhGpuUploadState(
@@ -1089,6 +1209,8 @@ public final class PauCEmbeddedDhBridge {
 			PauCTerrainGeneratorDetector.ModpackClass modpackClass = PauCTerrainGeneratorDetector.currentModpackClass();
 			int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
 			boolean coarseFill = PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive();
+			boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(PauCLodClientSettings.targetDistanceChunks());
+			boolean aggressiveFill = coarseFill || directFill;
 			boolean shaderRuntime = isShaderPackRuntimeInUse();
 			boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
 			int modpackThreadBoost = switch (modpackClass) {
@@ -1107,10 +1229,16 @@ public final class PauCEmbeddedDhBridge {
 			double defaultThreadShare = clampDouble((coarseFill
 				? (shaderRuntime ? 0.76D : fpsFirstVanilla ? 0.58D : 0.92D)
 				: (shaderRuntime ? 0.54D : fpsFirstVanilla ? 0.46D : 0.68D)) + modpackShareBoost, 0.25D, 0.92D);
+			if (directFill) {
+				defaultThreadShare = Math.max(defaultThreadShare, shaderRuntime ? 0.68D : fpsFirstVanilla ? 0.58D : 0.76D);
+			}
 			int defaultThreads = clampInt((int) Math.ceil(processors * defaultThreadShare), 2, threadCeiling);
-			double defaultRuntimeRatio = clampDouble((coarseFill
+			double defaultRuntimeRatio = clampDouble((aggressiveFill
 				? (shaderRuntime ? 0.72D : fpsFirstVanilla ? 0.56D : 0.90D)
 				: (shaderRuntime ? 0.52D : fpsFirstVanilla ? 0.42D : 0.68D)) + modpackShareBoost * 0.50D, 0.05D, 0.92D);
+			if (directFill) {
+				defaultRuntimeRatio = Math.max(defaultRuntimeRatio, shaderRuntime ? 0.66D : fpsFirstVanilla ? 0.56D : 0.90D);
+			}
 			return new RuntimeLodSettings(
 				defaultMaxHorizontalResolution(),
 				defaultHorizontalQuality(),
@@ -1173,7 +1301,7 @@ public final class PauCEmbeddedDhBridge {
 			boolean heavyModpack = modpackClass == PauCTerrainGeneratorDetector.ModpackClass.HEAVY
 				|| modpackClass == PauCTerrainGeneratorDetector.ModpackClass.EXTREME;
 			return switch (terrainGenerator) {
-				case TECTONIC, STRATOSPHERIC, WILDER_WILDS -> raiseVerticalQuality(
+				case TECTONIC, STRATOSPHERIC, WILDER_WILDS, JJTHUNDER -> raiseVerticalQuality(
 					requestedQuality,
 					(shaderRuntime || heavyModpack) ? EDhApiVerticalQuality.MEDIUM : EDhApiVerticalQuality.HIGH
 				);
@@ -1240,7 +1368,8 @@ public final class PauCEmbeddedDhBridge {
 		}
 
 		private static EDhApiDistantGeneratorMode defaultRuntimeGeneratorMode() {
-			EDhApiDistantGeneratorMode fallback = (PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive())
+			boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(PauCLodClientSettings.targetDistanceChunks());
+			EDhApiDistantGeneratorMode fallback = (directFill || PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive())
 				? readEnum(FILL_GENERATOR_MODE_PROPERTY, EDhApiDistantGeneratorMode.class, defaultGeneratorMode())
 				: defaultGeneratorMode();
 			EDhApiDistantGeneratorMode configured = readEnum(FAST_GENERATOR_MODE_PROPERTY, EDhApiDistantGeneratorMode.class, fallback);

@@ -17,9 +17,14 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class PauCCudaWorker {
@@ -28,6 +33,7 @@ public final class PauCCudaWorker {
 	private static final String TERRAIN_ENABLED_PROPERTY = "pauc.client.cuda.terrainSeamAveraging";
 	private static final String TERRAIN_INTERVAL_MS_PROPERTY = "pauc.client.cuda.terrainSeamMinIntervalMs";
 	private static final String TERRAIN_VALIDATION_EPSILON_PROPERTY = "pauc.client.cuda.terrainValidationEpsilon";
+	private static final String TERRAIN_ASYNC_ENABLED_PROPERTY = "pauc.client.cuda.terrainAsyncQueue";
 	private static final String TERRAIN_MIN_USEFUL_BATCH_PROPERTY = "pauc.client.cuda.terrainMinUsefulBatch";
 	private static final String TERRAIN_PROFIT_SAMPLES_PROPERTY = "pauc.client.cuda.terrainProfitSamples";
 	private static final String TERRAIN_PROFIT_MAX_RATIO_PROPERTY = "pauc.client.cuda.terrainProfitMaxRatio";
@@ -62,6 +68,9 @@ public final class PauCCudaWorker {
 	private static final AtomicLong CUDA_MISMATCHES = new AtomicLong();
 	private static final AtomicLong CUDA_BUFFER_ALLOCS = new AtomicLong();
 	private static final AtomicLong CUDA_AUTO_DISABLED_CALLS = new AtomicLong();
+	private static final AtomicLong CUDA_TERRAIN_ASYNC_SUBMITTED = new AtomicLong();
+	private static final AtomicLong CUDA_TERRAIN_ASYNC_HITS = new AtomicLong();
+	private static final AtomicLong CUDA_TERRAIN_ASYNC_DROPS = new AtomicLong();
 	private static final AtomicLong TERRAIN_CPU_ROUTES = new AtomicLong();
 	private static final AtomicLong TERRAIN_CUDA_ROUTES = new AtomicLong();
 	private static final AtomicLong TERRAIN_VANILLA_CPU_ROUTES = new AtomicLong();
@@ -72,6 +81,9 @@ public final class PauCCudaWorker {
 	private static final AtomicLong TERRAIN_CUDA_COST_MICROS = new AtomicLong();
 	private static final AtomicLong TERRAIN_CPU_COST_MICROS = new AtomicLong();
 	private static final AtomicLong WORLD_CACHE_COALESCED_BATCHES = new AtomicLong();
+	private static final AtomicBoolean TERRAIN_ASYNC_IN_FLIGHT = new AtomicBoolean();
+	private static final ExecutorService TERRAIN_ASYNC_EXECUTOR = Executors.newSingleThreadExecutor(new DaemonThreadFactory("PauC-CUDA-Terrain"));
+	private static final TerrainAsyncScratch TERRAIN_ASYNC_SCRATCH = new TerrainAsyncScratch();
 	private static volatile WorkerState lastState = WorkerState.unavailable("not-run");
 	private static volatile CudaRuntime runtime;
 	private static volatile boolean selfTestAttempted;
@@ -81,6 +93,7 @@ public final class PauCCudaWorker {
 	private static volatile String lastTerrainProfile = "unknown";
 	private static volatile int lastTerrainBatchSize;
 	private static volatile String lastAccelerationPlan = "cudaPlan[not-run]";
+	private static volatile TerrainAsyncResult lastTerrainAsyncResult;
 
 	private static final String CUDA_KERNELS_PTX = """
 		.version 6.0
@@ -313,6 +326,24 @@ public final class PauCCudaWorker {
 			return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
 		}
 
+		if (readBoolean(TERRAIN_ASYNC_ENABLED_PROPERTY, true)) {
+			long signature = terrainSignature(sums, counts, samplesPerFeature);
+			PauCLodCudaBridge.Result cachedResult = cachedTerrainAsyncResult(signature, cpuFallback.length, profile);
+			if (cachedResult != null) {
+				return cachedResult;
+			}
+
+			long minIntervalNs = Math.max(0L, profile.minIntervalMillis()) * 1_000_000L;
+			long now = System.nanoTime();
+			if (minIntervalNs > 0L && lastTerrainLaunchNs > 0L && now - lastTerrainLaunchNs < minIntervalNs) {
+				CUDA_THROTTLES.incrementAndGet();
+				recordTerrainCpuRoute(profile);
+				lastTerrainStatus = "terrain-throttled:" + profile.id();
+				return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
+			}
+			return queueTerrainSeamAverage(signature, sums, counts, samplesPerFeature, cpuFallback, Math.max(1L, cpuMicros), profile, now);
+		}
+
 		long minIntervalNs = Math.max(0L, profile.minIntervalMillis()) * 1_000_000L;
 		long now = System.nanoTime();
 		if (minIntervalNs > 0L && lastTerrainLaunchNs > 0L && now - lastTerrainLaunchNs < minIntervalNs) {
@@ -356,6 +387,14 @@ public final class PauCCudaWorker {
 			+ CUDA_BUFFER_ALLOCS.get()
 			+ ", autoDisabled="
 			+ CUDA_AUTO_DISABLED_CALLS.get()
+			+ ", asyncSubmitted="
+			+ CUDA_TERRAIN_ASYNC_SUBMITTED.get()
+			+ ", asyncHits="
+			+ CUDA_TERRAIN_ASYNC_HITS.get()
+			+ ", asyncDrops="
+			+ CUDA_TERRAIN_ASYNC_DROPS.get()
+			+ ", asyncInFlight="
+			+ TERRAIN_ASYNC_IN_FLIGHT.get()
 			+ ", runtimeProfile="
 			+ runtimeProfile.id()
 			+ ", runtimeShader="
@@ -453,6 +492,9 @@ public final class PauCCudaWorker {
 		CUDA_MISMATCHES.set(0L);
 		CUDA_BUFFER_ALLOCS.set(0L);
 		CUDA_AUTO_DISABLED_CALLS.set(0L);
+		CUDA_TERRAIN_ASYNC_SUBMITTED.set(0L);
+		CUDA_TERRAIN_ASYNC_HITS.set(0L);
+		CUDA_TERRAIN_ASYNC_DROPS.set(0L);
 		TERRAIN_CPU_ROUTES.set(0L);
 		TERRAIN_CUDA_ROUTES.set(0L);
 		TERRAIN_VANILLA_CPU_ROUTES.set(0L);
@@ -469,6 +511,80 @@ public final class PauCCudaWorker {
 		lastTerrainProfile = "unknown";
 		lastTerrainBatchSize = 0;
 		lastAccelerationPlan = "cudaPlan[not-run]";
+		lastTerrainAsyncResult = null;
+	}
+
+	private static PauCLodCudaBridge.Result cachedTerrainAsyncResult(long signature, int featureCount, TerrainProfile profile) {
+		TerrainAsyncResult cached = lastTerrainAsyncResult;
+		if (cached == null || cached.signature() != signature || cached.heights().length != featureCount) {
+			return null;
+		}
+		long ttlMs = readLong("pauc.client.cuda.terrainAsyncCacheTtlMs", 350L, 20L, 5_000L);
+		if (System.currentTimeMillis() - cached.completedAtMillis() > ttlMs) {
+			return null;
+		}
+		CUDA_TERRAIN_ASYNC_HITS.incrementAndGet();
+		lastTerrainStatus = "terrain-async-hit:" + profile.id() + "/" + cached.sampleCount() + "->" + featureCount + "/" + cached.elapsedMicros() + "us";
+		return PauCLodCudaBridge.Result.available(lastTerrainStatus, Arrays.copyOf(cached.heights(), cached.heights().length));
+	}
+
+	private static PauCLodCudaBridge.Result queueTerrainSeamAverage(
+		long signature,
+		int[] sums,
+		int[] counts,
+		int samplesPerFeature,
+		float[] cpuFallback,
+		long cpuMicros,
+		TerrainProfile profile,
+		long nowNs
+	) {
+		if (!TERRAIN_ASYNC_IN_FLIGHT.compareAndSet(false, true)) {
+			CUDA_TERRAIN_ASYNC_DROPS.incrementAndGet();
+			recordTerrainCpuRoute(profile);
+			lastTerrainStatus = "terrain-async-busy:" + profile.id();
+			return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
+		}
+
+		TerrainAsyncPayload payload = TERRAIN_ASYNC_SCRATCH.capture(sums, counts, cpuFallback);
+		lastTerrainLaunchNs = nowNs;
+		CUDA_TERRAIN_ASYNC_SUBMITTED.incrementAndGet();
+		try {
+			TERRAIN_ASYNC_EXECUTOR.execute(() -> {
+				try {
+					PauCLodCudaBridge.Result result = runTerrainSeamAverage(payload.sums(), payload.counts(), samplesPerFeature, payload.cpuFallback(), cpuMicros, profile);
+					if (result.available() && result.heights() != null && result.heights().length == payload.cpuFallback().length) {
+						lastTerrainAsyncResult = new TerrainAsyncResult(
+							signature,
+							result.heights(),
+							payload.sums().length,
+							Math.max(1L, average(TERRAIN_CUDA_COST_MICROS.get(), TERRAIN_COST_SAMPLES.get())),
+							System.currentTimeMillis()
+						);
+					}
+				} catch (Throwable throwable) {
+					terrainUnavailable("terrain-async-error:" + throwable.getClass().getSimpleName(), payload.cpuFallback(), true);
+				} finally {
+					TERRAIN_ASYNC_IN_FLIGHT.set(false);
+				}
+			});
+		} catch (RuntimeException exception) {
+			TERRAIN_ASYNC_IN_FLIGHT.set(false);
+			return terrainUnavailable("terrain-async-submit-error:" + exception.getClass().getSimpleName(), cpuFallback, true);
+		}
+
+		recordTerrainCpuRoute(profile);
+		lastTerrainStatus = "terrain-async-queued:" + profile.id() + "/" + sums.length + "->" + cpuFallback.length;
+		return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
+	}
+
+	private static long terrainSignature(int[] sums, int[] counts, int samplesPerFeature) {
+		long hash = 0x9E3779B97F4A7C15L;
+		hash = (hash * 31L) + samplesPerFeature;
+		hash = (hash * 31L) + sums.length;
+		hash = (hash * 31L) + counts.length;
+		hash = (hash * 31L) + Arrays.hashCode(sums);
+		hash = (hash * 31L) + Arrays.hashCode(counts);
+		return hash;
 	}
 
 	private static PauCLodCudaBridge.Result runTerrainSeamAverage(int[] sums, int[] counts, int samplesPerFeature, float[] cpuFallback, long cpuMicros, TerrainProfile profile) {
@@ -477,38 +593,40 @@ public final class PauCCudaWorker {
 		int featureCount = cpuFallback.length;
 		long intBytes = (long) count * Integer.BYTES;
 		long floatBytes = (long) featureCount * Float.BYTES;
-		Memory hostSums = new Memory(intBytes);
-		Memory hostCounts = new Memory(intBytes);
-		Memory hostOut = new Memory(floatBytes);
-		for (int index = 0; index < count; index++) {
-			long offset = (long) index * Integer.BYTES;
-			hostSums.setInt(offset, sums[index]);
-			hostCounts.setInt(offset, counts[index]);
-		}
 
 		long started = System.nanoTime();
 		long transferNs = 0L;
 		CudaDriver cuda = cudaRuntime.cuda();
-		synchronized (RUNTIME_LOCK) {
-			check(cuda, cuda.cuCtxSetCurrent(cudaRuntime.context()), "cuCtxSetCurrent");
-			TerrainBuffers buffers = cudaRuntime.terrainBuffers();
-			buffers.ensureCapacity(cuda, count);
+		float[] cudaHeights = new float[featureCount];
+		check(cuda, cuda.cuCtxSetCurrent(cudaRuntime.context()), "cuCtxSetCurrent");
+		TerrainBuffers buffers = cudaRuntime.terrainBuffers();
+		buffers.ensureCapacity(cuda, count);
+		long deviceSums = buffers.deviceInput();
+		long deviceCounts = buffers.deviceInput() + intBytes;
+		Pointer pinnedInput = buffers.pinnedInput();
+		Pointer pinnedOut = buffers.pinnedOut();
+		// One pinned, contiguous host buffer laid out as [sums | counts]; bulk-written, single DMA upload.
+		pinnedInput.write(0L, sums, 0, count);
+		pinnedInput.write(intBytes, counts, 0, count);
 
-			long transferStarted = System.nanoTime();
-			check(cuda, cuda.cuMemcpyHtoD_v2(buffers.deviceSums(), hostSums, intBytes), "cuMemcpyHtoD(sums)");
-			check(cuda, cuda.cuMemcpyHtoD_v2(buffers.deviceCounts(), hostCounts, intBytes), "cuMemcpyHtoD(counts)");
-			transferNs += System.nanoTime() - transferStarted;
+		// Queued on the dedicated CUDA terrain worker: the render thread never waits here. The stream sync remains
+		// inside the worker task only, after H2D, kernel and D2H have been enqueued on the stream.
+		Pointer stream = cudaRuntime.stream();
+		long transferStarted = System.nanoTime();
+		check(cuda, cuda.cuMemcpyHtoDAsync_v2(deviceSums, pinnedInput, 2L * intBytes, stream), "cuMemcpyHtoDAsync(input)");
+		transferNs += System.nanoTime() - transferStarted;
 
-			FeatureKernelArgs params = featureKernelParams(buffers.deviceSums(), buffers.deviceCounts(), buffers.deviceOut(), samplesPerFeature, featureCount);
-			int blockSize = 32;
-			int gridSize = Math.max(1, (featureCount + blockSize - 1) / blockSize);
-			check(cuda, cuda.cuLaunchKernel(cudaRuntime.seamFeatureAverageFunction(), gridSize, 1, 1, blockSize, 1, 1, 0, Pointer.NULL, params.params(), Pointer.NULL), "cuLaunchKernel(seam-feature)");
-			check(cuda, cuda.cuCtxSynchronize(), "cuCtxSynchronize(seam)");
+		FeatureKernelArgs params = featureKernelParams(deviceSums, deviceCounts, buffers.deviceOut(), samplesPerFeature, featureCount);
+		int blockSize = 32;
+		int gridSize = Math.max(1, (featureCount + blockSize - 1) / blockSize);
+		check(cuda, cuda.cuLaunchKernel(cudaRuntime.seamFeatureAverageFunction(), gridSize, 1, 1, blockSize, 1, 1, 0, stream, params.params(), Pointer.NULL), "cuLaunchKernel(seam-feature)");
 
-			transferStarted = System.nanoTime();
-			check(cuda, cuda.cuMemcpyDtoH_v2(hostOut, buffers.deviceOut(), floatBytes), "cuMemcpyDtoH(seam)");
-			transferNs += System.nanoTime() - transferStarted;
-		}
+		transferStarted = System.nanoTime();
+		check(cuda, cuda.cuMemcpyDtoHAsync_v2(pinnedOut, buffers.deviceOut(), floatBytes, stream), "cuMemcpyDtoHAsync(seam)");
+		check(cuda, cuda.cuStreamSynchronize(stream), "cuStreamSynchronize(seam)");
+		transferNs += System.nanoTime() - transferStarted;
+		// Bulk native->heap read of the result.
+		pinnedOut.read(0L, cudaHeights, 0, featureCount);
 
 		long elapsedMicros = Math.max(1L, (System.nanoTime() - started) / 1_000L);
 		long transferMicros = Math.max(0L, transferNs / 1_000L);
@@ -518,11 +636,9 @@ public final class PauCCudaWorker {
 		if (featureCount > 1) {
 			CUDA_TERRAIN_FEATURE_BATCHES.incrementAndGet();
 		}
-		float[] cudaHeights = new float[featureCount];
 		float maxError = 0.0F;
 		for (int index = 0; index < featureCount; index++) {
-			float actual = hostOut.getFloat((long) index * Float.BYTES);
-			cudaHeights[index] = actual;
+			float actual = cudaHeights[index];
 			float expected = cpuFallback[index];
 			if (!Float.isFinite(actual)) {
 				maxError = Float.POSITIVE_INFINITY;
@@ -661,7 +777,10 @@ public final class PauCCudaWorker {
 				PointerByReference seamFeatureFunctionRef = new PointerByReference();
 				check(cuda, cuda.cuModuleGetFunction(seamFeatureFunctionRef, module, "pauc_seam_feature_average"), "cuModuleGetFunction(seam-feature)");
 
-				CudaRuntime created = new CudaRuntime(cuda, context, module, vectorFunctionRef.getValue(), seamFunctionRef.getValue(), seamFeatureFunctionRef.getValue(), new TerrainBuffers());
+				PointerByReference streamRef = new PointerByReference();
+				check(cuda, cuda.cuStreamCreate(streamRef, 0), "cuStreamCreate(runtime)");
+
+				CudaRuntime created = new CudaRuntime(cuda, context, module, vectorFunctionRef.getValue(), seamFunctionRef.getValue(), seamFeatureFunctionRef.getValue(), streamRef.getValue(), new TerrainBuffers());
 				runtime = created;
 				return created;
 			} catch (Throwable throwable) {
@@ -917,6 +1036,10 @@ public final class PauCCudaWorker {
 		boolean queueResolved = PauCClientFpsGovernor.isBacklogResolved();
 		boolean catchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
 		boolean hordePressure = PauCVillagePerformanceDiagnostics.isHordePressureActive();
+		boolean aggressiveVanillaPrefill = !profile.shaderActive()
+			&& PauCClientChunkPriorityScorer.isFpsFirstVanillaMode()
+			&& PauCClientFrontierWarmupManager.isDirectHorizonFillActive()
+			&& (PauCClientFrontierWarmupManager.isActiveTravelFill() || catchup);
 		boolean fillCritical = PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
 			|| catchup
 			|| PauCClientFrontierWarmupManager.isHotRestoreActive()
@@ -938,6 +1061,10 @@ public final class PauCCudaWorker {
 			floor = Math.min(floor, profile.shaderActive()
 				? readInt("pauc.cuda.shaderTerrainHordeFloor", 12, 8, 512)
 				: readInt("pauc.cuda.vanillaTerrainHordeFloor", 16, 8, 512));
+		}
+		if (aggressiveVanillaPrefill) {
+			scale = Math.min(scale, readFloat("pauc.cuda.vanillaTerrainPrefillThresholdScale", 0.20F, 0.10F, 1.0F));
+			floor = Math.min(floor, readInt("pauc.cuda.vanillaTerrainPrefillFloor", 10, 8, 512));
 		}
 		long cpuRoutes = terrainCpuRoutes(profile);
 		long cudaRoutes = terrainCudaRoutes(profile);
@@ -1048,6 +1175,15 @@ public final class PauCCudaWorker {
 		if (cuda != null && devicePointer != 0L) {
 			try {
 				cuda.cuMemFree_v2(devicePointer);
+			} catch (Throwable ignored) {
+			}
+		}
+	}
+
+	private static void tryFreeHost(CudaDriver cuda, Pointer hostPointer) {
+		if (cuda != null && hostPointer != null) {
+			try {
+				cuda.cuMemFreeHost(hostPointer);
 			} catch (Throwable ignored) {
 			}
 		}
@@ -1214,9 +1350,23 @@ public final class PauCCudaWorker {
 
 		int cuMemFree_v2(long devicePointer);
 
+		int cuMemHostAlloc(PointerByReference hostPointer, long bytes, int flags);
+
+		int cuMemFreeHost(Pointer hostPointer);
+
 		int cuMemcpyHtoD_v2(long devicePointer, Pointer hostPointer, long bytes);
 
 		int cuMemcpyDtoH_v2(Pointer hostPointer, long devicePointer, long bytes);
+
+		int cuMemcpyHtoDAsync_v2(long devicePointer, Pointer hostPointer, long bytes, Pointer stream);
+
+		int cuMemcpyDtoHAsync_v2(Pointer hostPointer, long devicePointer, long bytes, Pointer stream);
+
+		int cuStreamCreate(PointerByReference stream, int flags);
+
+		int cuStreamSynchronize(Pointer stream);
+
+		int cuStreamDestroy_v2(Pointer stream);
 
 		int cuLaunchKernel(Pointer function, int gridDimX, int gridDimY, int gridDimZ, int blockDimX, int blockDimY, int blockDimZ, int sharedMemBytes, Pointer stream, Pointer kernelParams, Pointer extra);
 
@@ -1230,80 +1380,145 @@ public final class PauCCudaWorker {
 	private record TerrainProfile(String id, boolean shaderActive, int minUsefulBatch, long minIntervalMillis, boolean routeSmallBatchToCpu) {
 	}
 
+	private record TerrainAsyncResult(long signature, float[] heights, int sampleCount, long elapsedMicros, long completedAtMillis) {
+	}
+
+	private record TerrainAsyncPayload(int[] sums, int[] counts, float[] cpuFallback) {
+	}
+
+	private static final class TerrainAsyncScratch {
+		private int[] sums = new int[0];
+		private int[] counts = new int[0];
+		private float[] cpuFallback = new float[0];
+
+		private synchronized TerrainAsyncPayload capture(int[] sourceSums, int[] sourceCounts, float[] sourceFallback) {
+			if (sums.length != sourceSums.length) {
+				sums = new int[sourceSums.length];
+			}
+			if (counts.length != sourceCounts.length) {
+				counts = new int[sourceCounts.length];
+			}
+			if (cpuFallback.length != sourceFallback.length) {
+				cpuFallback = new float[sourceFallback.length];
+			}
+
+			System.arraycopy(sourceSums, 0, sums, 0, sourceSums.length);
+			System.arraycopy(sourceCounts, 0, counts, 0, sourceCounts.length);
+			System.arraycopy(sourceFallback, 0, cpuFallback, 0, sourceFallback.length);
+			return new TerrainAsyncPayload(sums, counts, cpuFallback);
+		}
+	}
+
 	private static final class TerrainBuffers {
 		private int capacity;
-		private long deviceSums;
-		private long deviceCounts;
+		// Single contiguous device input buffer laid out as [sums(count) | counts(count)] so the whole input
+		// uploads in ONE cuMemcpyHtoD instead of two. The kernel reads sums at the base and counts at base+count.
+		private long deviceInput;
 		private long deviceOut;
+		// Pinned (page-locked) host staging: cuMemHostAlloc memory gives much faster H2D/D2H DMA transfers than
+		// pageable memory, and is reused across jobs (grown with capacity) to avoid per-call allocation.
+		private Pointer pinnedInput;
+		private Pointer pinnedOut;
 
 		private void ensureCapacity(CudaDriver cuda, int count) {
-			if (count <= capacity && deviceSums != 0L && deviceCounts != 0L && deviceOut != 0L) {
+			if (count <= capacity && deviceInput != 0L && deviceOut != 0L
+				&& pinnedInput != null && pinnedOut != null) {
 				return;
 			}
 
 			release(cuda);
-			long intBytes = (long) count * Integer.BYTES;
+			long inputBytes = 2L * count * Integer.BYTES;
 			long floatBytes = (long) count * Float.BYTES;
-			long newSums = 0L;
-			long newCounts = 0L;
+			long newInput = 0L;
 			long newOut = 0L;
+			Pointer newPinnedInput = null;
+			Pointer newPinnedOut = null;
 			try {
-				LongByReference sumsRef = new LongByReference();
-				LongByReference countsRef = new LongByReference();
+				LongByReference inputRef = new LongByReference();
 				LongByReference outRef = new LongByReference();
-				check(cuda, cuda.cuMemAlloc_v2(sumsRef, intBytes), "cuMemAlloc(sums-buffer)");
-				check(cuda, cuda.cuMemAlloc_v2(countsRef, intBytes), "cuMemAlloc(counts-buffer)");
+				check(cuda, cuda.cuMemAlloc_v2(inputRef, inputBytes), "cuMemAlloc(input-buffer)");
 				check(cuda, cuda.cuMemAlloc_v2(outRef, floatBytes), "cuMemAlloc(out-buffer)");
-				newSums = sumsRef.getValue();
-				newCounts = countsRef.getValue();
+				newInput = inputRef.getValue();
 				newOut = outRef.getValue();
-				deviceSums = newSums;
-				deviceCounts = newCounts;
+
+				PointerByReference pinnedInputRef = new PointerByReference();
+				PointerByReference pinnedOutRef = new PointerByReference();
+				check(cuda, cuda.cuMemHostAlloc(pinnedInputRef, inputBytes, 0), "cuMemHostAlloc(input-staging)");
+				check(cuda, cuda.cuMemHostAlloc(pinnedOutRef, floatBytes, 0), "cuMemHostAlloc(out-staging)");
+				newPinnedInput = pinnedInputRef.getValue();
+				newPinnedOut = pinnedOutRef.getValue();
+
+				deviceInput = newInput;
 				deviceOut = newOut;
+				pinnedInput = newPinnedInput;
+				pinnedOut = newPinnedOut;
 				capacity = count;
 				CUDA_BUFFER_ALLOCS.incrementAndGet();
 			} catch (RuntimeException | Error error) {
-				tryFree(cuda, newSums);
-				tryFree(cuda, newCounts);
+				tryFree(cuda, newInput);
 				tryFree(cuda, newOut);
+				tryFreeHost(cuda, newPinnedInput);
+				tryFreeHost(cuda, newPinnedOut);
 				capacity = 0;
-				deviceSums = 0L;
-				deviceCounts = 0L;
+				deviceInput = 0L;
 				deviceOut = 0L;
+				pinnedInput = null;
+				pinnedOut = null;
 				throw error;
 			}
 		}
 
 		private void release(CudaDriver cuda) {
-			tryFree(cuda, deviceSums);
-			tryFree(cuda, deviceCounts);
+			tryFree(cuda, deviceInput);
 			tryFree(cuda, deviceOut);
+			tryFreeHost(cuda, pinnedInput);
+			tryFreeHost(cuda, pinnedOut);
 			capacity = 0;
-			deviceSums = 0L;
-			deviceCounts = 0L;
+			deviceInput = 0L;
 			deviceOut = 0L;
+			pinnedInput = null;
+			pinnedOut = null;
 		}
 
-		private long deviceSums() {
-			return deviceSums;
-		}
-
-		private long deviceCounts() {
-			return deviceCounts;
+		private long deviceInput() {
+			return deviceInput;
 		}
 
 		private long deviceOut() {
 			return deviceOut;
 		}
+
+		private Pointer pinnedInput() {
+			return pinnedInput;
+		}
+
+		private Pointer pinnedOut() {
+			return pinnedOut;
+		}
 	}
 
-	private record CudaRuntime(CudaDriver cuda, Pointer context, Pointer module, Pointer vectorAddFunction, Pointer seamAverageFunction, Pointer seamFeatureAverageFunction, TerrainBuffers terrainBuffers) {
+	private record CudaRuntime(CudaDriver cuda, Pointer context, Pointer module, Pointer vectorAddFunction, Pointer seamAverageFunction, Pointer seamFeatureAverageFunction, Pointer stream, TerrainBuffers terrainBuffers) {
 	}
 
 	private record KernelArgs(Memory params, Memory argA, Memory argB, Memory argOut, Memory argCount) {
 	}
 
 	private record FeatureKernelArgs(Memory params, Memory argSums, Memory argCounts, Memory argOut, Memory argSamplesPerFeature, Memory argFeatureCount) {
+	}
+
+	private static final class DaemonThreadFactory implements ThreadFactory {
+		private final String name;
+
+		private DaemonThreadFactory(String name) {
+			this.name = name;
+		}
+
+		@Override
+		public Thread newThread(Runnable runnable) {
+			Thread thread = new Thread(runnable, name);
+			thread.setDaemon(true);
+			return thread;
+		}
 	}
 
 	private static final class CudaException extends RuntimeException {

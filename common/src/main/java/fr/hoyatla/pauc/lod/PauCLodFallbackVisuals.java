@@ -210,6 +210,16 @@ public final class PauCLodFallbackVisuals {
 			defaultEmissiveBoost = UNDERWATER_EMISSIVE_BOOST;
 		}
 
+		// The vanilla-fog toggle also governs PauC's own distant LOD fog veil AND the far-distance haze
+		// (far desaturation) it applies to the embedded LOD terrain. When the player turns vanilla fog off
+		// they expect a fully clear distance, so we drop both — otherwise the far desaturation washes out
+		// distant LOD colours just above the horizon and reads as a residual "false fog". Underwater is kept.
+		if (!underwater && !PauCLodClientSettings.isVanillaFogEnabled()) {
+			defaultFogIntensity = 0.0F;
+			defaultFogFloor = 0.0F;
+			defaultFarDesaturation = 0.0F;
+		}
+
 		float seamClipDistance = PauCLodNearClipOverride.currentBoundaryClipBlocks(range.lodStartChunk() * 16.0F);
 		float seamMorphWidth = readFloat(SEAM_MORPH_WIDTH_PROPERTY, STANDARD_SEAM_MORPH_WIDTH_BLOCKS, 0.0F, 256.0F);
 		float configuredSeamMorphStrength = configuredShaderOffSeamMorphStrength();

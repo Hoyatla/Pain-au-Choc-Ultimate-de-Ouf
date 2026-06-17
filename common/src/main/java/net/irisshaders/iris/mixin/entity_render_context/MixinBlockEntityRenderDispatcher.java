@@ -2,9 +2,13 @@ package net.irisshaders.iris.mixin.entity_render_context;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import fr.hoyatla.pauc.lod.PauCBlockEntityOcclusionCulling;
+import fr.hoyatla.pauc.lod.PauCBlockEntityRenderBudget;
 import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
+import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
+import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import net.irisshaders.batchedentityrendering.impl.Groupable;
 import net.irisshaders.batchedentityrendering.impl.wrappers.TaggingRenderTypeWrapper;
 import net.irisshaders.iris.Iris;
@@ -26,9 +30,6 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.HashMap;
-import java.util.Map;
-
 /**
  * Wraps block entity rendering functions in order to create additional render layers
  * that provide context to shaders about what block entity is currently being
@@ -39,9 +40,13 @@ public class MixinBlockEntityRenderDispatcher {
 	private static final String RUN_REPORTED =
 		"Lnet/minecraft/client/renderer/blockentity/BlockEntityRenderDispatcher;tryRender(Lnet/minecraft/world/level/block/entity/BlockEntity;Ljava/lang/Runnable;)V";
 	@Unique
-	private static final Map<BlockState, Integer> PAUC_BLOCK_ENTITY_STATE_ID_CACHE = new HashMap<>();
+	private static final Reference2IntOpenHashMap<BlockState> PAUC_BLOCK_ENTITY_STATE_ID_CACHE = new Reference2IntOpenHashMap<>();
 	@Unique
 	private static Object2IntMap<BlockState> pauc$lastBlockStateIds;
+
+	static {
+		PAUC_BLOCK_ENTITY_STATE_ID_CACHE.defaultReturnValue(Integer.MIN_VALUE);
+	}
 
 	@Inject(method = "render", at = @At("HEAD"), cancellable = true)
 	private void pauc$cullFarBlockEntity(BlockEntity blockEntity, float tickDelta, PoseStack matrix,
@@ -51,7 +56,30 @@ public class MixinBlockEntityRenderDispatcher {
 			ci.cancel();
 			return;
 		}
+		boolean rendersOffScreen = pauc$rendersOffScreen(blockEntity);
+		if (!rendersOffScreen && PauCBlockEntityOcclusionCulling.shouldCull(blockEntity)) {
+			PauCVillagePerformanceDiagnostics.recordBlockEntityCull(blockEntity);
+			ci.cancel();
+			return;
+		}
+		if (PauCBlockEntityRenderBudget.shouldDeferRender(blockEntity) && !rendersOffScreen) {
+			// Spike absorber: dephase tiny far block entities during a measured frame spike (no steady-state effect).
+			// Beam/off-screen block entities (beacons, end gateways) are excluded above so they never flicker.
+			ci.cancel();
+			return;
+		}
 		PauCVillagePerformanceDiagnostics.recordBlockEntityRender(blockEntity);
+	}
+
+	@Unique
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private boolean pauc$rendersOffScreen(BlockEntity blockEntity) {
+		try {
+			BlockEntityRenderer renderer = ((BlockEntityRenderDispatcher) (Object) this).getRenderer(blockEntity);
+			return renderer != null && renderer.shouldRenderOffScreen(blockEntity);
+		} catch (RuntimeException ignored) {
+			return true;
+		}
 	}
 
 	// I inject here in the method so that:
@@ -95,8 +123,8 @@ public class MixinBlockEntityRenderDispatcher {
 			pauc$lastBlockStateIds = blockStateIds;
 		}
 
-		Integer cached = PAUC_BLOCK_ENTITY_STATE_ID_CACHE.get(state);
-		if (cached != null) {
+		int cached = PAUC_BLOCK_ENTITY_STATE_ID_CACHE.getInt(state);
+		if (cached != Integer.MIN_VALUE) {
 			PauCVillagePerformanceDiagnostics.recordBlockEntityIdCache(true);
 			return cached;
 		}

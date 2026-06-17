@@ -1,5 +1,6 @@
 package fr.hoyatla.pauc.lod;
 
+import it.unimi.dsi.fastutil.objects.Reference2ByteOpenHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
@@ -8,9 +9,7 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 
-import java.util.IdentityHashMap;
 import java.util.Locale;
-import java.util.Map;
 
 public final class PauCVillagePerformanceDiagnostics {
 	private static final String ENABLED_PROPERTY = "pauc.lod.villageDiagnostics";
@@ -33,8 +32,8 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static final String HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY = "pauc.lod.hordeBlockEntityBudgetSteady";
 	private static final String HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY = "pauc.lod.hordeBlockEntityBudgetSevere";
 	private static final int SAMPLE_INTERVAL_TICKS = 20;
-	private static final Map<EntityType<?>, Boolean> VILLAGE_ENTITY_TYPES = new IdentityHashMap<>();
-	private static final Map<BlockEntityType<?>, Boolean> VILLAGE_BLOCK_ENTITY_TYPES = new IdentityHashMap<>();
+	private static final Reference2ByteOpenHashMap<EntityType<?>> VILLAGE_ENTITY_TYPES = new Reference2ByteOpenHashMap<>();
+	private static final Reference2ByteOpenHashMap<BlockEntityType<?>> VILLAGE_BLOCK_ENTITY_TYPES = new Reference2ByteOpenHashMap<>();
 	private static volatile boolean diagnosticsEnabled = true;
 	private static int sampleTicks;
 	private static int lastClientEntityCount;
@@ -91,6 +90,11 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static long hordePressureActivations;
 	private static int lastAnimationLodTier;
 	private static int lastBlockEntityFrameBudget;
+
+	static {
+		VILLAGE_ENTITY_TYPES.defaultReturnValue((byte) -1);
+		VILLAGE_BLOCK_ENTITY_TYPES.defaultReturnValue((byte) -1);
+	}
 
 	private PauCVillagePerformanceDiagnostics() {
 	}
@@ -567,9 +571,9 @@ public final class PauCVillagePerformanceDiagnostics {
 	}
 
 	private static boolean isVillageEntityType(EntityType<?> type) {
-		Boolean cached = VILLAGE_ENTITY_TYPES.get(type);
-		if (cached != null) {
-			return cached;
+		byte cached = VILLAGE_ENTITY_TYPES.getByte(type);
+		if (cached >= 0) {
+			return cached != 0;
 		}
 
 		ResourceLocation key = BuiltInRegistries.ENTITY_TYPE.getKey(type);
@@ -579,14 +583,14 @@ public final class PauCVillagePerformanceDiagnostics {
 			|| path.equals("cat")
 			|| path.equals("wandering_trader")
 			|| path.equals("trader_llama");
-		VILLAGE_ENTITY_TYPES.put(type, village);
+		VILLAGE_ENTITY_TYPES.put(type, village ? (byte) 1 : (byte) 0);
 		return village;
 	}
 
 	private static boolean isVillageBlockEntityType(BlockEntityType<?> type) {
-		Boolean cached = VILLAGE_BLOCK_ENTITY_TYPES.get(type);
-		if (cached != null) {
-			return cached;
+		byte cached = VILLAGE_BLOCK_ENTITY_TYPES.getByte(type);
+		if (cached >= 0) {
+			return cached != 0;
 		}
 
 		ResourceLocation key = BuiltInRegistries.BLOCK_ENTITY_TYPE.getKey(type);
@@ -594,7 +598,7 @@ public final class PauCVillagePerformanceDiagnostics {
 		boolean village = path.equals("bell")
 			|| path.equals("bed")
 			|| path.equals("lectern");
-		VILLAGE_BLOCK_ENTITY_TYPES.put(type, village);
+		VILLAGE_BLOCK_ENTITY_TYPES.put(type, village ? (byte) 1 : (byte) 0);
 		return village;
 	}
 

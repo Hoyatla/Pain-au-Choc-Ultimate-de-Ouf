@@ -13,6 +13,8 @@ import fr.hoyatla.pauc.platform.forge.diagnostics.PauCPerformanceTelemetry;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCServerPhaseBudgetController;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCPathfindingCircuitBreaker;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCPoiQueryDiagnostics;
+import fr.hoyatla.pauc.platform.forge.runtime.PauCAsyncPathfinder;
+import fr.hoyatla.pauc.platform.forge.runtime.PauCSpawnThrottler;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCStallGovernor;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCStructureCheckCircuitBreaker;
 import fr.hoyatla.pauc.platform.forge.runtime.PauCTickDebtController;
@@ -62,6 +64,8 @@ public final class PauCCompatEventBridge {
 		PauCPathfindingCircuitBreaker.onServerStopped();
 		PauCPoiQueryDiagnostics.onServerStopped();
 		PauCStructureCheckCircuitBreaker.onServerStopped();
+		PauCSpawnThrottler.reset();
+		PauCAsyncPathfinder.reset();
 	}
 
 	@SubscribeEvent

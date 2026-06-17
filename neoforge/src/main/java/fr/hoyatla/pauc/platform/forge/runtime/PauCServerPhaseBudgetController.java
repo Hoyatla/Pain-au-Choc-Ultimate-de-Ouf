@@ -26,7 +26,7 @@ public final class PauCServerPhaseBudgetController {
 	}
 
 	public static void onServerTickStart(MinecraftServer server) {
-		if (!PauCRuntimeSwitches.enabled("phaseBudget.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("phaseBudget.enabled", PauCServerOptimizationProfile.Feature.PHASE_BUDGET)) {
 			return;
 		}
 
@@ -49,7 +49,7 @@ public final class PauCServerPhaseBudgetController {
 	}
 
 	public static boolean tryConsume(MinecraftServer server, PauCServerPhase phase, double cost) {
-		if (!PauCRuntimeSwitches.enabled("phaseBudget.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("phaseBudget.enabled", PauCServerOptimizationProfile.Feature.PHASE_BUDGET)) {
 			return true;
 		}
 
@@ -64,7 +64,7 @@ public final class PauCServerPhaseBudgetController {
 	}
 
 	public static int scaledBudget(MinecraftServer server, PauCServerPhase phase, int baseBudget, int minBudget) {
-		if (!PauCRuntimeSwitches.enabled("phaseBudget.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("phaseBudget.enabled", PauCServerOptimizationProfile.Feature.PHASE_BUDGET)) {
 			return baseBudget;
 		}
 

@@ -13,6 +13,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -132,6 +133,22 @@ public class MixinLevelRenderer implements CullingDataCache {
 		// ring). A constant set size + a snapshot-first radial build = a stable shadow region that simply
 		// follows the player.
 		int budget = pauc$vanillaShadowZoneBudget();
+
+		// Reuse the previous result while the camera stays in the same chunk and the inputs are stable. The
+		// set is nearly identical across those frames, so this skips the per-frame copy+sort entirely.
+		Vec3 fallbackCamera = pauc$mainCameraPosition();
+		int camChunkX = Mth.floor(fallbackCamera.x) >> 4;
+		int camChunkZ = Mth.floor(fallbackCamera.z) >> 4;
+		if (pauc$cachedFallbackResult != null
+			&& !pauc$cachedFallbackResult.isEmpty()
+			&& camChunkX == pauc$cachedFallbackCamChunkX
+			&& camChunkZ == pauc$cachedFallbackCamChunkZ
+			&& budget == pauc$cachedFallbackBudget
+			&& Math.abs(availableChunks - pauc$cachedFallbackSnapshotSize) <= 8) {
+			renderChunksInFrustum = pauc$cachedFallbackResult;
+			return;
+		}
+
 		// Retention headroom: keep the previous frame's shadowed chunks for a frame or two beyond the live
 		// zone so that a chunk briefly dropping out of the snapshot during movement (a leading-edge rebuild
 		// or a partial main-render list on a heavy frame) does not blink its shadow off. Bounded at 1.5x so
@@ -144,6 +161,11 @@ public class MixinLevelRenderer implements CullingDataCache {
 		}
 
 		renderChunksInFrustum = selectedChunks;
+		pauc$cachedFallbackResult = selectedChunks;
+		pauc$cachedFallbackCamChunkX = camChunkX;
+		pauc$cachedFallbackCamChunkZ = camChunkZ;
+		pauc$cachedFallbackBudget = budget;
+		pauc$cachedFallbackSnapshotSize = availableChunks;
 		pauc$rememberShadowChunks(renderChunksInFrustum, renderChunksInFrustum.size());
 		if (!pauc$reportedShadowCullingFallback) {
 			pauc$reportedShadowCullingFallback = true;
@@ -169,6 +191,11 @@ public class MixinLevelRenderer implements CullingDataCache {
 		pauc$stableMainCameraShadowCameraX = Double.NaN;
 		pauc$stableMainCameraShadowCameraZ = Double.NaN;
 		pauc$stableMainCameraShadowRadiusChunks = -1;
+		pauc$cachedFallbackResult = null;
+		pauc$cachedFallbackCamChunkX = Integer.MIN_VALUE;
+		pauc$cachedFallbackCamChunkZ = Integer.MIN_VALUE;
+		pauc$cachedFallbackBudget = -1;
+		pauc$cachedFallbackSnapshotSize = -1;
 		pauc$savedTicks = Integer.MIN_VALUE;
 	}
 
@@ -206,6 +233,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 			return;
 		}
 
+		pauc$refreshSortCamera();
 		ObjectArrayList<LevelRenderer.RenderChunkInfo> merged =
 			new ObjectArrayList<>(source.size() + pauc$stableMainCameraShadowCandidates.size());
 		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(
@@ -223,6 +251,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 
 	@Unique
 	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildStableShadowFallback(int budget, int retentionBudget) {
+		pauc$refreshSortCamera();
 		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = new ObjectArrayList<>(retentionBudget);
 		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(16, retentionBudget * 2));
 
@@ -383,9 +412,11 @@ public class MixinLevelRenderer implements CullingDataCache {
 		int renderDistanceChunks = minecraft != null && minecraft.options != null
 			? minecraft.options.getEffectiveRenderDistance()
 			: 8;
-		int radiusChunks = Math.max(2, renderDistanceChunks) + 1;
+		// Render distance plus a two-chunk junction margin: the outer vanilla ring that meets the LOD horizon
+		// is where coverage gaps appeared, so the shadow zone reaches a little past the vanilla edge.
+		int radiusChunks = Math.max(2, renderDistanceChunks) + 2;
 		int squareEstimate = (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
-		return Math.min(1536, squareEstimate);
+		return Math.min(2048, squareEstimate);
 	}
 
 	@Unique
@@ -396,20 +427,52 @@ public class MixinLevelRenderer implements CullingDataCache {
 			: Vec3.ZERO;
 	}
 
+	// Camera X/Z captured once per shadow-terrain rebuild. The distance score is evaluated O(n log n) times by
+	// the sort comparator, so it must NOT re-resolve Minecraft.getInstance().getMainCamera().getPosition() per
+	// comparison (that was tens of thousands of lookups per shadow frame).
+	@Unique
+	private double pauc$sortCameraX = Double.NaN;
+	@Unique
+	private double pauc$sortCameraZ = Double.NaN;
+
+	// Result cache for the empty-setup fallback. The rebuilt set is nearly identical frame to frame (same
+	// snapshot, same camera chunk), so we only re-copy/re-sort when the camera crosses a chunk, the budget
+	// changes, or the snapshot size shifts meaningfully — turning a per-frame O(n log n) cost into per-move.
+	@Unique
+	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$cachedFallbackResult;
+	@Unique
+	private int pauc$cachedFallbackCamChunkX = Integer.MIN_VALUE;
+	@Unique
+	private int pauc$cachedFallbackCamChunkZ = Integer.MIN_VALUE;
+	@Unique
+	private int pauc$cachedFallbackBudget = -1;
+	@Unique
+	private int pauc$cachedFallbackSnapshotSize = -1;
+
+	@Unique
+	private void pauc$refreshSortCamera() {
+		Vec3 cameraPosition = pauc$mainCameraPosition();
+		pauc$sortCameraX = cameraPosition.x;
+		pauc$sortCameraZ = cameraPosition.z;
+	}
+
 	@Unique
 	private double pauc$shadowFallbackDistanceScore(LevelRenderer.RenderChunkInfo chunkInfo) {
 		if (chunkInfo == null || chunkInfo.chunk == null) {
 			return Double.MAX_VALUE;
 		}
 
-		Minecraft minecraft = Minecraft.getInstance();
-		Vec3 cameraPosition = minecraft != null && minecraft.gameRenderer != null
-			? minecraft.gameRenderer.getMainCamera().getPosition()
-			: Vec3.ZERO;
+		double cameraX = pauc$sortCameraX;
+		double cameraZ = pauc$sortCameraZ;
+		if (Double.isNaN(cameraX) || Double.isNaN(cameraZ)) {
+			Vec3 cameraPosition = pauc$mainCameraPosition();
+			cameraX = cameraPosition.x;
+			cameraZ = cameraPosition.z;
+		}
 		BlockPos origin = chunkInfo.chunk.getOrigin();
 		double centerX = origin.getX() + 8.0D;
 		double centerZ = origin.getZ() + 8.0D;
-		return Math.max(Math.abs(centerX - cameraPosition.x), Math.abs(centerZ - cameraPosition.z));
+		return Math.max(Math.abs(centerX - cameraX), Math.abs(centerZ - cameraZ));
 	}
 
 	@Unique

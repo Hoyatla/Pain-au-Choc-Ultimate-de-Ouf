@@ -15,11 +15,6 @@ import org.spongepowered.asm.mixin.injection.Slice;
 @Mixin(Options.class)
 public abstract class MixinMaxFpsCrashFix {
 	private void iris$resetFramerateLimit(Options.FieldAccess instance, String name, OptionInstance<Integer> option) {
-		if (option.get() == 0) {
-			// Return the default value of framerateLimit
-			option.set(120);
-		}
-
 		instance.process(name, option);
 	}
 }

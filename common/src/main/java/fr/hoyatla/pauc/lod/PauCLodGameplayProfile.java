@@ -37,7 +37,7 @@ public final class PauCLodGameplayProfile {
 			+ profile.autoReduceVanillaDistance
 			+ ", minGeneration="
 			+ profile.minimumGenerationRequestRate
-			+ ", targetFps="
+			+ ", advisoryFps="
 			+ profile.defaultTargetFps
 			+ ", qualityScale="
 			+ String.format(Locale.ROOT, "%.2f", profile.qualityScale)
@@ -88,7 +88,7 @@ public final class PauCLodGameplayProfile {
 
 	public static int defaultGenerationRequestRateLimit(int hardwareDefault) {
 		Profile profile = current();
-		int clampedHardwareDefault = Math.max(20, Math.min(384, hardwareDefault));
+		int clampedHardwareDefault = Math.max(20, Math.min(768, hardwareDefault));
 		return switch (profile) {
 			case SHOOTER -> Math.max(profile.minimumGenerationRequestRate, clampedHardwareDefault);
 			case COMPETITIVE -> Math.max(profile.minimumGenerationRequestRate, clampedHardwareDefault);

@@ -1,18 +1,15 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
-import fr.hoyatla.pauc.lod.PauCLodGameplayProfile;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.minecraft.client.Minecraft;
 
 public final class PauCClientTargetFps {
 	private static final String TARGET_FPS_PROPERTY = "pauc.client.targetFps";
-	private static final int UNLIMITED_VANILLA_FRAMERATE_VALUE = 260;
-	private static final int DEFAULT_SHADER_ADAPTIVE_TARGET_FPS = 90;
-	private static final int DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS = 144;
-	private static final int MIN_SHADER_ADAPTIVE_TARGET_FPS = 72;
-	private static final int MAX_SHADER_ADAPTIVE_TARGET_FPS = 144;
-	private static final int MIN_VANILLA_ADAPTIVE_TARGET_FPS = 120;
-	private static final int MAX_VANILLA_ADAPTIVE_TARGET_FPS = 240;
+	private static final String VANILLA_UNLIMITED_REFERENCE_FPS_PROPERTY = "pauc.client.unlimitedVanillaReferenceFps";
+	private static final String SHADER_UNLIMITED_REFERENCE_FPS_PROPERTY = "pauc.client.unlimitedShaderReferenceFps";
+	private static final String UNLIMITED_OBSERVED_HEADROOM_FPS_PROPERTY = "pauc.client.unlimitedObservedHeadroomFps";
+	private static final int DEFAULT_VANILLA_UNLIMITED_REFERENCE_FPS = 360;
+	private static final int DEFAULT_SHADER_UNLIMITED_REFERENCE_FPS = 144;
 	private static volatile double shaderObservedFps = -1.0D;
 	private static volatile double vanillaObservedFps = -1.0D;
 
@@ -27,25 +24,36 @@ public final class PauCClientTargetFps {
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		String override = System.getProperty(TARGET_FPS_PROPERTY);
 		if (override != null) {
-			return parseTarget(override, adaptiveUnlimitedTarget(minecraft, shaderActive));
-		}
-		if (minecraft == null || minecraft.options == null) {
-			return adaptiveUnlimitedTarget(minecraft, shaderActive);
+			return parseTarget(override, unlimitedReferenceFps(minecraft, shaderActive));
 		}
 
-		try {
-			int framerateLimit = minecraft.options.framerateLimit().get();
-			if (framerateLimit <= 0 || framerateLimit >= UNLIMITED_VANILLA_FRAMERATE_VALUE) {
-				return adaptiveUnlimitedTarget(minecraft, shaderActive);
-			}
-			return sanitize(framerateLimit);
-		} catch (RuntimeException | LinkageError ignored) {
-			return adaptiveUnlimitedTarget(minecraft, shaderActive);
+		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
+		if (playerVideo.available() && !playerVideo.fpsUnlimited()) {
+			return sanitize(playerVideo.fpsLimit());
 		}
+		return unlimitedReferenceFps(minecraft, shaderActive);
 	}
 
-	private static int adaptiveUnlimitedTarget(Minecraft minecraft, boolean shaderActive) {
-		PauCLodGameplayProfile.Profile profile = PauCLodGameplayProfile.current();
+	public static boolean hasExplicitTargetFps() {
+		return System.getProperty(TARGET_FPS_PROPERTY) != null;
+	}
+
+	public static boolean isPlayerFpsUnlimited(Minecraft minecraft) {
+		return PauCPlayerVideoSettings.capture(minecraft).fpsUnlimited();
+	}
+
+	public static String referenceMode(Minecraft minecraft) {
+		if (hasExplicitTargetFps()) {
+			return "explicit";
+		}
+		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
+		if (playerVideo.available() && !playerVideo.fpsUnlimited()) {
+			return "player-limit";
+		}
+		return "unlimited-high-reference";
+	}
+
+	private static int unlimitedReferenceFps(Minecraft minecraft, boolean shaderActive) {
 		int fps = PauCClientFrameMetrics.queryFps(minecraft);
 		double observed = shaderActive ? shaderObservedFps : vanillaObservedFps;
 		if (fps >= 15) {
@@ -57,20 +65,19 @@ public final class PauCClientTargetFps {
 			}
 		}
 
-		int fallback = shaderActive ? DEFAULT_SHADER_ADAPTIVE_TARGET_FPS : DEFAULT_VANILLA_ADAPTIVE_TARGET_FPS;
-		int min = shaderActive ? MIN_SHADER_ADAPTIVE_TARGET_FPS : MIN_VANILLA_ADAPTIVE_TARGET_FPS;
-		int max = shaderActive ? MAX_SHADER_ADAPTIVE_TARGET_FPS : MAX_VANILLA_ADAPTIVE_TARGET_FPS;
-		if (profile == PauCLodGameplayProfile.Profile.SHOOTER && !shaderActive) {
-			fallback = Math.max(fallback, PauCLodGameplayProfile.defaultTargetFps());
-			min = Math.max(min, Math.min(max, PauCLodGameplayProfile.defaultTargetFps() - 12));
-		}
-		double sourceFps = observed > 0.0D ? Math.max(observed, fallback) : fallback;
-		int target = (int) Math.round(sourceFps * (shaderActive ? 0.92D : 0.90D));
-		return sanitize(Math.max(min, Math.min(max, target)));
+		int floor = readInt(
+			shaderActive ? SHADER_UNLIMITED_REFERENCE_FPS_PROPERTY : VANILLA_UNLIMITED_REFERENCE_FPS_PROPERTY,
+			shaderActive ? DEFAULT_SHADER_UNLIMITED_REFERENCE_FPS : DEFAULT_VANILLA_UNLIMITED_REFERENCE_FPS,
+			30,
+			500
+		);
+		int headroom = readInt(UNLIMITED_OBSERVED_HEADROOM_FPS_PROPERTY, shaderActive ? 12 : 24, 0, 160);
+		int observedReference = observed > 0.0D ? (int) Math.round(observed) + headroom : floor;
+		return sanitize(Math.max(floor, observedReference));
 	}
 
 	private static double smoothObservedFps(double previous, int fps) {
-		double blend = fps >= previous ? 0.20D : 0.05D;
+		double blend = fps >= previous ? 0.20D : 0.35D;
 		return previous * (1.0D - blend) + fps * blend;
 	}
 
@@ -79,6 +86,18 @@ public final class PauCClientTargetFps {
 			return sanitize(Integer.parseInt(rawValue.trim()));
 		} catch (NumberFormatException ignored) {
 			return fallback;
+		}
+	}
+
+	private static int readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null || rawValue.isBlank()) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
 		}
 	}
 

@@ -1,7 +1,9 @@
 package fr.hoyatla.pauc.platform.forge.runtime;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 
 import javax.annotation.Nullable;
@@ -29,7 +31,7 @@ public final class PauCStallGovernor {
 	}
 
 	public static boolean allow(ServerLevel level, PauCServerPhase phase, @Nullable String explicitFamily) {
-		if (!PauCRuntimeSwitches.enabled("stallGovernor.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("stallGovernor.enabled", PauCServerOptimizationProfile.Feature.STALL_GOVERNOR)) {
 			return true;
 		}
 
@@ -40,7 +42,7 @@ public final class PauCStallGovernor {
 		Callsite sample = explicitFamily != null ? new Callsite(explicitFamily, 0) : captureCallsite();
 		pruneIfNeeded();
 		String family = explicitFamily != null ? explicitFamily : classifyFamily(sample.className());
-		CallsiteKey key = new CallsiteKey(level.dimension().location().toString(), phase, family, sample.hash());
+		CallsiteKey key = new CallsiteKey(level.dimension(), phase, family, sample.hash());
 		CallsiteWindow window = WINDOWS.computeIfAbsent(key, ignored -> new CallsiteWindow());
 		long now = System.currentTimeMillis();
 		long windowMs = PauCRuntimeSwitches.readLong("stallGovernor.windowMs", 1_250L, 100L, 30_000L);
@@ -136,7 +138,7 @@ public final class PauCStallGovernor {
 		window.lastLogAtMs = now;
 		LOGGER.debug(
 			"PauC stall governor throttled {} {} family '{}' (quota={}, penalty={}, backoff={}ms, denied={}).",
-			key.dimensionId(),
+			key.dimensionKey().location(),
 			key.phase().id(),
 			key.family(),
 			dynamicQuota,
@@ -201,7 +203,7 @@ public final class PauCStallGovernor {
 	}
 
 	private record CallsiteKey(
-		String dimensionId,
+		ResourceKey<Level> dimensionKey,
 		PauCServerPhase phase,
 		String family,
 		int callsiteHash

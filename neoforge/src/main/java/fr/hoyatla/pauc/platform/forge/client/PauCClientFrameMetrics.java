@@ -2,6 +2,8 @@ package fr.hoyatla.pauc.platform.forge.client;
 
 import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.PauCIdentity;
+import fr.hoyatla.pauc.lod.PauCFrameSpikeAbsorber;
+import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
@@ -61,15 +63,36 @@ public final class PauCClientFrameMetrics {
 		if (stage != RenderLevelStageEvent.Stage.AFTER_TRANSLUCENT_BLOCKS) {
 			return;
 		}
-
-		long now = System.nanoTime();
-		PauCScheduler.onClientFrameStart();
-		if (lastFrameStageAtNanos > 0L) {
-			long frameNanos = now - lastFrameStageAtNanos;
-			recordFrameSample(frameNanos);
-			updateFrameWatchdog(frameNanos);
+		// Under Iris/shaders the render-stage event fires once during the shadow pass AND once during the main pass,
+		// so measuring between consecutive fires yields sub-frame (≈half) intervals — which made the absorber and
+		// watchdog under-read true frame time by ~2x and barely react to real GPU-bound dips. Ignore the shadow-pass
+		// firing so every sample is a true frame boundary.
+		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			return;
 		}
-		lastFrameStageAtNanos = applyFramePacing(now);
+		long now = System.nanoTime();
+		// Functional work (scheduler frame-start) ALWAYS runs — it must never depend on the metrics gate.
+		PauCScheduler.onClientFrameStart();
+
+		// METRICS ONLY are gated to active gameplay: a paused game / open menu renders the world trivially (or behind a
+		// screen), producing meaninglessly high fps that polluted the in-game stats. screen==null = real play. When not
+		// active, reset the timestamp so the first frame after resuming does not record the paused gap as a giant spike.
+		Minecraft minecraft = Minecraft.getInstance();
+		boolean activeGameplay = minecraft != null
+			&& minecraft.level != null
+			&& minecraft.player != null
+			&& minecraft.screen == null;
+		if (activeGameplay) {
+			if (lastFrameStageAtNanos > 0L) {
+				long frameNanos = now - lastFrameStageAtNanos;
+				recordFrameSample(frameNanos);
+				updateFrameWatchdog(frameNanos);
+				updateSpikeAbsorber(frameNanos);
+			}
+			lastFrameStageAtNanos = applyFramePacing(now);
+		} else {
+			lastFrameStageAtNanos = 0L;
+		}
 	}
 
 	public static void reset() {
@@ -86,6 +109,8 @@ public final class PauCClientFrameMetrics {
 		consecutiveWatchdogSpikes = 0;
 		lastWatchdogFrameMs = -1.0D;
 		System.clearProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY);
+		PauCFrameSpikeAbsorber.reset();
+		PauCLodRenderTimer.reset();
 	}
 
 	public static int frameSampleCount() {
@@ -150,7 +175,8 @@ public final class PauCClientFrameMetrics {
 			+ formatMs(pacingSleepMs())
 			+ ", watchdog="
 			+ watchdogSpikeCount()
-			+ "]";
+			+ "] "
+			+ PauCLodRenderTimer.describeState();
 	}
 
 	public static int pacingSleepCount() {
@@ -325,6 +351,11 @@ public final class PauCClientFrameMetrics {
 		System.setProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY, Boolean.toString(consecutiveWatchdogSpikes >= reliefSpikes));
 	}
 
+	private static void updateSpikeAbsorber(long frameNanos) {
+		boolean watchdogSpike = Boolean.parseBoolean(System.getProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY, "false"));
+		PauCFrameSpikeAbsorber.update(nanosToMs(frameNanos), watchdogSpike);
+	}
+
 	private static void scheduleFrameWatchdogDump(double frameMs) {
 		long nowMs = System.currentTimeMillis();
 		long cooldownMs = readLong(FRAME_WATCHDOG_DUMP_COOLDOWN_MS_PROPERTY, 30_000L, 1_000L, 600_000L);
@@ -359,6 +390,14 @@ public final class PauCClientFrameMetrics {
 		builder.append("frameMs=").append(formatMs(frameMs)).append('\n');
 		builder.append("frames=").append(describeFrameTimes()).append('\n');
 		builder.append("fpsGovernor=").append(PauCClientFpsGovernor.describeState()).append('\n');
+		builder.append("spikeAbsorber=").append(PauCFrameSpikeAbsorber.describeState()).append('\n');
+		builder.append("lodRenderPass=").append(PauCLodRenderTimer.describeState()).append('\n');
+		builder.append("shaderShadowBudget=").append(fr.hoyatla.pauc.lod.PauCShaderShadowBudget.describeState()).append('\n');
+		builder.append("particleBudget=").append(fr.hoyatla.pauc.lod.PauCParticleBudget.describeState()).append('\n');
+		builder.append("entityRenderBudget=").append(fr.hoyatla.pauc.lod.PauCEntityRenderBudget.describeState()).append('\n');
+		builder.append("blockEntityRenderBudget=").append(fr.hoyatla.pauc.lod.PauCBlockEntityRenderBudget.describeState()).append('\n');
+		builder.append("entityOcclusion=").append(fr.hoyatla.pauc.lod.PauCEntityOcclusionCulling.describeState()).append('\n');
+		builder.append("blockEntityOcclusion=").append(fr.hoyatla.pauc.lod.PauCBlockEntityOcclusionCulling.describeState()).append('\n');
 		builder.append("lodGovernor=").append(PauCClientLodGovernor.describeState()).append('\n');
 		builder.append("lodRuntime=").append(PauCEmbeddedLodRuntimeDiagnostics.describeState()).append('\n');
 		builder.append("fillPresentation=").append(PauCEmbeddedLodRuntimeDiagnostics.describeFillPresentationState()).append('\n');
@@ -385,49 +424,6 @@ public final class PauCClientFrameMetrics {
 	}
 
 	private static long applyFramePacing(long now) {
-		if (!readBoolean(FRAME_PACING_ENABLED_PROPERTY, true)) {
-			lastPacedFrameAtNanos = now;
-			return now;
-		}
-
-		Minecraft minecraft = Minecraft.getInstance();
-		if (minecraft == null || minecraft.level == null || PauCClientFpsGovernor.isUnderPressure()) {
-			lastPacedFrameAtNanos = now;
-			return now;
-		}
-
-		int targetFps = PauCClientTargetFps.effectiveTargetFps(minecraft);
-		if (targetFps <= 0 || targetFps > 240) {
-			lastPacedFrameAtNanos = now;
-			return now;
-		}
-		if (targetFps < readInt("pauc.client.framePacingMinTargetFps", 100, 60, 240)) {
-			lastPacedFrameAtNanos = now;
-			return now;
-		}
-		try {
-			int framerateLimit = minecraft.options.framerateLimit().get();
-			if (framerateLimit > 0 && framerateLimit < 260) {
-				lastPacedFrameAtNanos = now;
-				return now;
-			}
-		} catch (RuntimeException | LinkageError ignored) {
-			// Keep the fallback pacing logic below.
-		}
-
-		long targetFrameNanos = Math.max(1L, 1_000_000_000L / targetFps);
-		long slackNanos = readLong(FRAME_PACING_SLACK_MS_PROPERTY, 1L, 0L, 8L) * 1_000_000L;
-		long maxSleepNanos = readLong(FRAME_PACING_MAX_SLEEP_MS_PROPERTY, 4L, 0L, 20L) * 1_000_000L;
-		if (lastPacedFrameAtNanos > 0L) {
-			long elapsed = now - lastPacedFrameAtNanos;
-			long sleepNanos = Math.min(maxSleepNanos, targetFrameNanos - elapsed - slackNanos);
-			if (sleepNanos > 0L) {
-				LockSupport.parkNanos(sleepNanos);
-				pacingSleepCount++;
-				pacingSleepTotalNanos += sleepNanos;
-				now = System.nanoTime();
-			}
-		}
 		lastPacedFrameAtNanos = now;
 		return now;
 	}

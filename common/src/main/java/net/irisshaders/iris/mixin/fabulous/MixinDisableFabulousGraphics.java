@@ -35,8 +35,8 @@ public class MixinDisableFabulousGraphics {
 		}
 
 		if (options.graphicsMode().get() == GraphicsStatus.FABULOUS) {
-			// Disable fabulous graphics when shaders are enabled.
-			options.graphicsMode().set(GraphicsStatus.FANCY);
+			// PauC does not override the player's graphics-mode choice. Shader compatibility must be handled
+			// without rewriting Minecraft video settings behind the user's back.
 		}
 	}
 }

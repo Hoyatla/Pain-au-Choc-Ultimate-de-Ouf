@@ -110,7 +110,7 @@ public final class PauCLodNearClipOverride {
 	}
 
 	public static boolean shouldKeepLodsUnderVanilla() {
-		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, true);
+		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, false);
 	}
 
 	public static void setFeatureTransitionMask(boolean active, String reason) {

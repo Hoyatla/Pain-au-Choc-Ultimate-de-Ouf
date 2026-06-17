@@ -38,6 +38,9 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 	private static final String COARSE_FILL_BALANCE_WINDOW_PROPERTY = "pauc.lod.coarseFillBalanceWindow";
 	private static final String FILL_PRESENTATION_MIN_COMPLETED_TASKS_PROPERTY = "pauc.lod.fillPresentationMinCompletedTasks";
 	private static final String FILL_PRESENTATION_BACKLOG_TASKS_PROPERTY = "pauc.lod.fillPresentationBacklogTasks";
+	private static final String COVERAGE_DEBT_PENDING_CHUNKS_PROPERTY = "pauc.lod.coverageDebtPendingChunks";
+	private static final String COVERAGE_DEBT_BACKLOG_TASKS_PROPERTY = "pauc.lod.coverageDebtBacklogTasks";
+	private static final String COVERAGE_DEBT_MIN_COMPLETED_TASKS_PROPERTY = "pauc.lod.coverageDebtMinCompletedTasks";
 	private static volatile int activeQueueIdentity;
 	private static volatile int closingQueueIdentity;
 
@@ -119,9 +122,44 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 				coarseFillReroutedTasks.get(),
 				coarseFillPreservedTasks.get()
 			);
+			pauc$updateCompletionThroughput();
 		} catch (RuntimeException | LinkageError ignored) {
 			lastQueueSnapshot = QueueSnapshot.unavailable();
 		}
+	}
+
+	// Rolling measurement of how fast the embedded LOD runtime actually COMPLETES chunks for this modpack +
+	// hardware (chunks/second), independent of any thread-count assumption. Used to cap the generation request
+	// rate to what is sustainable so heavy worldgen (e.g. Terralith) cannot pile an unbounded backlog.
+	private static volatile double completionsPerSecond;
+	private static long throughputLastNanos;
+	private static long throughputLastCompleted;
+
+	private static void pauc$updateCompletionThroughput() {
+		long nowNanos = System.nanoTime();
+		long completedNow = completedTasks.get();
+		if (throughputLastNanos == 0L) {
+			throughputLastNanos = nowNanos;
+			throughputLastCompleted = completedNow;
+			return;
+		}
+		long dtNanos = nowNanos - throughputLastNanos;
+		if (dtNanos < 200_000_000L) {
+			return;
+		}
+		long deltaCompleted = Math.max(0L, completedNow - throughputLastCompleted);
+		double instantRate = deltaCompleted * 1_000_000_000.0D / dtNanos;
+		double alpha = 0.3D;
+		completionsPerSecond = completionsPerSecond <= 0.0D
+			? instantRate
+			: completionsPerSecond * (1.0D - alpha) + instantRate * alpha;
+		throughputLastNanos = nowNanos;
+		throughputLastCompleted = completedNow;
+	}
+
+	/** Measured chunk-completion throughput (chunks/second), EMA-smoothed. Negative/zero if not yet measured. */
+	public static double completionsPerSecond() {
+		return lastQueueSnapshot.available ? completionsPerSecond : -1.0D;
 	}
 
 	public static boolean markQueueClosing(WorldGenerationQueue queue) {
@@ -218,7 +256,7 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		if (!snapshot.available) {
 			return true;
 		}
-		if (PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()) {
+		if (PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage() && !canReleaseFillPresentationDuringCoverageDebt(snapshot)) {
 			return true;
 		}
 
@@ -228,12 +266,22 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		if (completed < minCompletedTasks && backlog > 0) {
 			return true;
 		}
-		if (snapshot.pendingChunks > 0 || snapshot.pendingTasks > 0) {
+		if ((snapshot.pendingChunks > 0 || snapshot.pendingTasks > 0) && !canReleaseFillPresentationDuringCoverageDebt(snapshot)) {
 			return true;
 		}
 
 		int backlogLimit = readInt(FILL_PRESENTATION_BACKLOG_TASKS_PROPERTY, 256, 16, 8192);
 		return backlog > backlogLimit;
+	}
+
+	public static boolean hasCoverageDebt() {
+		QueueSnapshot snapshot = lastQueueSnapshot;
+		return snapshot.available && isCoverageDebt(snapshot);
+	}
+
+	public static boolean canReleaseFillPresentationDuringCoverageDebt() {
+		QueueSnapshot snapshot = lastQueueSnapshot;
+		return snapshot.available && canReleaseFillPresentationDuringCoverageDebt(snapshot);
 	}
 
 	public static int pendingTasks() {
@@ -276,6 +324,8 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 			+ snapshot.pendingChunks
 			+ ", backlog="
 			+ (snapshot.waitingTasks + snapshot.inProgressTasks)
+			+ ", debt="
+			+ isCoverageDebt(snapshot)
 			+ ", coverageHold="
 			+ PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
 			+ "]";
@@ -345,6 +395,21 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 		);
 	}
 
+	private static boolean isCoverageDebt(QueueSnapshot snapshot) {
+		int backlog = snapshot.waitingTasks + snapshot.inProgressTasks;
+		int pendingChunksThreshold = readInt(COVERAGE_DEBT_PENDING_CHUNKS_PROPERTY, 2048, 256, 32768);
+		int backlogThreshold = readInt(COVERAGE_DEBT_BACKLOG_TASKS_PROPERTY, 64, 8, 4096);
+		return snapshot.pendingChunks >= pendingChunksThreshold || backlog >= backlogThreshold;
+	}
+
+	private static boolean canReleaseFillPresentationDuringCoverageDebt(QueueSnapshot snapshot) {
+		if (!isCoverageDebt(snapshot)) {
+			return false;
+		}
+		int minCompleted = readInt(COVERAGE_DEBT_MIN_COMPLETED_TASKS_PROPERTY, 24, 4, 1024);
+		return completedTasks.get() >= minCompleted;
+	}
+
 	private static int pendingTaskCount(WorldGenerationQueue queue) {
 		try {
 			return captureQueueNumbers(queue).pendingTasks();
@@ -380,6 +445,9 @@ public final class PauCEmbeddedLodRuntimeDiagnostics {
 			startedByDetail.set(i, 0L);
 			completedByDetail.set(i, 0L);
 		}
+		completionsPerSecond = 0.0D;
+		throughputLastNanos = 0L;
+		throughputLastCompleted = 0L;
 		lastQueueSnapshot = QueueSnapshot.unavailable();
 	}
 

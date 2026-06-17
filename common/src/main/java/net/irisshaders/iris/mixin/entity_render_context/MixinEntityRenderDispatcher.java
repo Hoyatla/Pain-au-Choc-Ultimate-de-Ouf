@@ -1,9 +1,12 @@
 package net.irisshaders.iris.mixin.entity_render_context;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import fr.hoyatla.pauc.lod.PauCEntityOcclusionCulling;
+import fr.hoyatla.pauc.lod.PauCEntityRenderBudget;
 import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
+import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
 import net.irisshaders.batchedentityrendering.impl.Groupable;
 import net.irisshaders.iris.layer.BlockEntityRenderStateShard;
 import net.irisshaders.iris.layer.BufferSourceWrapper;
@@ -26,9 +29,6 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.util.IdentityHashMap;
-import java.util.Map;
-
 /**
  * Wraps entity rendering functions in order to create additional render layers
  * that provide context to shaders about what entity is currently being
@@ -37,11 +37,15 @@ import java.util.Map;
 @Mixin(EntityRenderDispatcher.class)
 public class MixinEntityRenderDispatcher {
 	@Unique
-	private static final Map<EntityType<?>, Integer> PAUC_ENTITY_ID_CACHE = new IdentityHashMap<>();
+	private static final Reference2IntOpenHashMap<EntityType<?>> PAUC_ENTITY_ID_CACHE = new Reference2IntOpenHashMap<>();
 	@Unique
 	private static Object2IntFunction<NamespacedId> pauc$lastEntityIds;
 	@Unique
 	private static int pauc$zombieVillagerConvertingId = Integer.MIN_VALUE;
+
+	static {
+		PAUC_ENTITY_ID_CACHE.defaultReturnValue(Integer.MIN_VALUE);
+	}
 
 	@Inject(method = "render", at = @At("HEAD"), cancellable = true)
 	private void pauc$cullFarEntity(Entity entity, double x, double y, double z, float yaw, float tickDelta,
@@ -49,6 +53,17 @@ public class MixinEntityRenderDispatcher {
 									CallbackInfo ci) {
 		if (PauCLodRenderCulling.shouldCullEntity(entity)) {
 			PauCVillagePerformanceDiagnostics.recordEntityCull(entity);
+			ci.cancel();
+			return;
+		}
+		if (PauCEntityOcclusionCulling.shouldCull(entity)) {
+			// Hidden behind opaque terrain (caves/walls): not visible, so skip render + animation entirely.
+			PauCVillagePerformanceDiagnostics.recordEntityCull(entity);
+			ci.cancel();
+			return;
+		}
+		if (PauCEntityRenderBudget.shouldDeferEntityRender(entity)) {
+			// Animation-LOD: dephase tiny far entities during a measured frame spike (no steady-state effect).
 			ci.cancel();
 			return;
 		}
@@ -91,8 +106,8 @@ public class MixinEntityRenderDispatcher {
 		}
 
 		EntityType<?> type = entity.getType();
-		Integer cached = PAUC_ENTITY_ID_CACHE.get(type);
-		if (cached != null) {
+		int cached = PAUC_ENTITY_ID_CACHE.getInt(type);
+		if (cached != Integer.MIN_VALUE) {
 			PauCVillagePerformanceDiagnostics.recordEntityIdCache(true);
 			return cached;
 		}

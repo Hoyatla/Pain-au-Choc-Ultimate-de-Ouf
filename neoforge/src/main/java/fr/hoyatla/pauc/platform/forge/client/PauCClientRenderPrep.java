@@ -82,6 +82,7 @@ public final class PauCClientRenderPrep {
 			priorityFrame.snapMode(),
 			priorityFrame.fastTravel(),
 			priorityFrame.movementCatchup(),
+			PauCClientFrontierWarmupManager.hasNearCoverageDebt(),
 			budgetSnapshot.maxQueuedMeshSections(),
 			budgetSnapshot.maxHotMeshSections(),
 			budgetSnapshot.maxVramMeshSections(),
@@ -141,19 +142,37 @@ public final class PauCClientRenderPrep {
 		}
 
 		PreparedFrame preparedFrame = lastPreparedFrame;
+		boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive();
 		if (!preparedFrame.available()) {
+			if (directFill) {
+				return Math.min(requestedSections, snapMode ? 12 : 8);
+			}
 			return requestedSections;
 		}
 
 		int hint = preparedFrame.warmupSectionHint();
+		boolean nearCoverageDebt = PauCClientFrontierWarmupManager.hasNearCoverageDebt();
 		if (hint <= 0) {
+			if (nearCoverageDebt) {
+				return Math.min(requestedSections, snapMode ? 6 : 4);
+			}
+			if (directFill) {
+				return Math.min(requestedSections, snapMode ? 12 : 8);
+			}
 			return Math.min(requestedSections, snapMode ? 2 : 1);
 		}
 		if (PauCClientFpsGovernor.isBacklogResolved() && !PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()) {
 			hint = Math.min(requestedSections, hint + (snapMode ? 4 : 2));
 		}
+		if (nearCoverageDebt) {
+			int nearFloor = readInt("pauc.lod.nearCoverageWarmupSectionFloor", snapMode ? 8 : 5, 1, 32);
+			hint = Math.max(hint, Math.min(requestedSections, nearFloor));
+		}
 		if (snapMode) {
 			hint = Math.max(hint, Math.min(requestedSections, hint + 2));
+		}
+		if (directFill) {
+			hint = Math.max(hint, Math.min(requestedSections, snapMode ? 18 : 12));
 		}
 		return Math.min(requestedSections, Math.max(1, (int) Math.floor(hint * PauCLodShaderRuntime.uploadBudgetScale())));
 	}
@@ -235,16 +254,26 @@ public final class PauCClientRenderPrep {
 		double busyScale = Math.max(0.45D, 1.0D - Math.min(0.55D, busyPressure * 0.45D));
 		int meshHeadroom = Math.max(0, Math.min(snapshot.maxQueuedMeshSections(), Math.min(snapshot.maxHotMeshSections(), snapshot.maxVramMeshSections())) - snapshot.scheduledJobs());
 		boolean acceleratedWarmup = snapshot.snapMode() || snapshot.movementCatchup();
-		int warmupHint = clamp((int) Math.floor((meshHeadroom / 10.0D) * fastScale * backlogScale * busyScale * PauCLodShaderRuntime.uploadBudgetScale()), acceleratedWarmup ? 3 : 1, snapshot.snapMode() ? 28 : (snapshot.movementCatchup() ? 24 : 16));
+		boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(snapshot.warmRadiusChunks());
+		int warmupHintCap = directFill
+			? (snapshot.snapMode() ? 40 : (snapshot.movementCatchup() ? 32 : 24))
+			: (snapshot.snapMode() ? 28 : (snapshot.movementCatchup() ? 24 : 16));
+		int warmupHint = clamp((int) Math.floor((meshHeadroom / 10.0D) * fastScale * backlogScale * busyScale * PauCLodShaderRuntime.uploadBudgetScale()), acceleratedWarmup ? 3 : 1, warmupHintCap);
 		if (backlogResolved && meshHeadroom > 0) {
-			warmupHint = clamp(warmupHint + (snapshot.snapMode() ? 4 : (snapshot.movementCatchup() ? 3 : 2)), acceleratedWarmup ? 3 : 1, snapshot.snapMode() ? 28 : (snapshot.movementCatchup() ? 24 : 16));
+			warmupHint = clamp(warmupHint + (snapshot.snapMode() ? 4 : (snapshot.movementCatchup() ? 3 : 2)), acceleratedWarmup ? 3 : 1, warmupHintCap);
 		}
-		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(snapshot.targetFps())) {
-			double fpsFirstScale = acceleratedWarmup ? 0.82D : 0.68D;
-			warmupHint = clamp((int) Math.floor(warmupHint * fpsFirstScale), acceleratedWarmup ? 2 : 1, snapshot.snapMode() ? 18 : 10);
+		if (PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(snapshot.targetFps()) && !directFill) {
+			double fpsFirstScale = snapshot.nearCoverageDebt()
+				? readDouble("pauc.lod.nearCoverageRenderPrepScale", acceleratedWarmup ? 1.08D : 1.00D, 0.50D, 1.50D)
+				: acceleratedWarmup ? 0.82D : 0.68D;
+			int cap = snapshot.nearCoverageDebt() ? (snapshot.snapMode() ? 24 : 16) : (snapshot.snapMode() ? 18 : 10);
+			warmupHint = clamp((int) Math.floor(warmupHint * fpsFirstScale), acceleratedWarmup ? 2 : 1, cap);
+		} else if (directFill) {
+			double directFillScale = readDouble("pauc.lod.directHorizonRenderPrepScale", acceleratedWarmup ? 1.28D : 1.14D, 0.50D, 2.0D);
+			warmupHint = clamp((int) Math.floor(warmupHint * directFillScale), acceleratedWarmup ? 4 : 2, warmupHintCap);
 		}
 		if (!snapshot.builderAvailable()) {
-			warmupHint = Math.min(warmupHint, 2);
+			warmupHint = Math.min(warmupHint, directFill ? (snapshot.nearCoverageDebt() ? 6 : 4) : (snapshot.nearCoverageDebt() ? 3 : 2));
 		}
 
 		List<PreparedStage> stages = new ArrayList<>(RenderPrepStage.values().length);
@@ -273,6 +302,30 @@ public final class PauCClientRenderPrep {
 
 	private static int clamp(int value, int min, int max) {
 		return Math.max(min, Math.min(max, value));
+	}
+
+	private static int readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+	}
+
+	private static double readDouble(String key, double fallback, double min, double max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Double.parseDouble(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
 	}
 
 	private enum RenderPrepStage {
@@ -304,6 +357,7 @@ public final class PauCClientRenderPrep {
 		boolean snapMode,
 		boolean fastTravel,
 		boolean movementCatchup,
+		boolean nearCoverageDebt,
 		int maxQueuedMeshSections,
 		int maxHotMeshSections,
 		int maxVramMeshSections,

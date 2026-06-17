@@ -12,7 +12,9 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
+import org.lwjgl.system.MemoryUtil;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,6 +23,8 @@ import java.util.concurrent.ConcurrentHashMap;
 
 public final class PauCCudaLodProxyRenderer {
 	private static final String ENABLED_PROPERTY = "pauc.lod.cuda.proxyTerrainRenderer";
+	private static final String INDIRECT_ENABLED_PROPERTY = "pauc.lod.cuda.proxyIndirectRenderer";
+	private static final String FORCE_RENDER_PROPERTY = "pauc.lod.cuda.proxyForceRender";
 	private static final String SHADER_ENABLED_PROPERTY = "pauc.lod.cuda.proxyTerrainShaderFallback";
 	private static final String SHADERLESS_ENABLED_PROPERTY = "pauc.lod.cuda.proxyTerrainShaderlessCoarseFill";
 	private static final String MAX_CELLS_PROPERTY = "pauc.lod.cuda.proxyTerrainMaxCells";
@@ -41,6 +45,10 @@ public final class PauCCudaLodProxyRenderer {
 	private static volatile String lastMode = "not-run";
 	private static volatile String lastReason = "-";
 	private static volatile long lastLogAtMillis;
+	private static List<PauCClientFrontierWarmupManager.ProxyRenderCell> lastUploadedCellsRef;
+	private static double indirectAnchorX;
+	private static double indirectAnchorZ;
+	private static int indirectUploadedCells;
 
 	private PauCCudaLodProxyRenderer() {
 	}
@@ -71,6 +79,14 @@ public final class PauCCudaLodProxyRenderer {
 		double cameraZ = camera.getPosition().z;
 		boolean shaderFallback = PauCLodShaderContext.isShaderPackInUse() && PauCLodShaderContext.isFallbackActive();
 		Matrix4f matrix = poseStack.last().pose();
+
+		// GPU-driven MDI path (opt-in). Falls through to the BufferBuilder path on any failure.
+		if (readBoolean(INDIRECT_ENABLED_PROPERTY, false)
+			&& PauCGpuLodIndirectRenderer.ensureInitialized()
+			&& renderIndirect(cells, cameraX, cameraY, cameraZ, shaderFallback, matrix)) {
+			return;
+		}
+
 		BufferBuilder builder = Tesselator.getInstance().getBuilder();
 
 		RenderSystem.setShader(GameRenderer::getPositionColorShader);
@@ -122,6 +138,100 @@ public final class PauCCudaLodProxyRenderer {
 		logIfNeeded();
 	}
 
+	/**
+	 * GPU-driven path: pack the cells into the indirect renderer's instance buffer (only when the cell set
+	 * changes) and issue a single glMultiDrawElementsIndirect each frame. Positions are stored relative to an
+	 * anchor chosen at pack time; the per-frame camera offset turns them camera-relative without re-uploading.
+	 * Returns false on any failure so the caller falls back to the BufferBuilder path.
+	 */
+	private static boolean renderIndirect(
+		List<PauCClientFrontierWarmupManager.ProxyRenderCell> cells,
+		double cameraX,
+		double cameraY,
+		double cameraZ,
+		boolean shaderFallback,
+		Matrix4f poseMatrix
+	) {
+		if (cells != lastUploadedCellsRef) {
+			double anchorX = Math.floor(cameraX);
+			double anchorZ = Math.floor(cameraZ);
+			ByteBuffer buffer = MemoryUtil.memAlloc(cells.size() * PauCGpuLodIndirectRenderer.cellStrideBytes());
+			int packed = 0;
+			int skipped = 0;
+			try {
+				for (PauCClientFrontierWarmupManager.ProxyRenderCell cell : cells) {
+					if (cell.hasFluid() && !shouldRenderFluidCells(shaderFallback)) {
+						skipped++;
+						continue;
+					}
+					if (!Float.isFinite(cell.terrainSectionY())) {
+						skipped++;
+						continue;
+					}
+					if (!shaderFallback && shouldSkipShaderlessSeaLevelPlate(cell)) {
+						skipped++;
+						continue;
+					}
+					float worldY = cell.terrainSectionY() * 16.0F + 8.0F + yBiasBlocks() - fluidDropBlocks(cell);
+					float relYToCamera = worldY - (float) cameraY;
+					if (relYToCamera < -512.0F || relYToCamera > 512.0F) {
+						skipped++;
+						continue;
+					}
+					float relX = (float) (cell.chunkX() * 16.0D - anchorX);
+					float relZ = (float) (cell.chunkZ() * 16.0D - anchorZ);
+					int[] color = colorFor(cell, shaderFallback);
+					int rgba = (color[0] << 24) | (color[1] << 16) | (color[2] << 8) | (color[3] & 0xFF);
+					buffer.putFloat(relX).putFloat(worldY).putFloat(relZ).putInt(rgba);
+					packed++;
+				}
+				buffer.flip();
+				if (!PauCGpuLodIndirectRenderer.uploadCells(buffer, packed)) {
+					lastReason = "indirect-upload-failed";
+					return false;
+				}
+			} finally {
+				MemoryUtil.memFree(buffer);
+			}
+			lastUploadedCellsRef = cells;
+			indirectAnchorX = anchorX;
+			indirectAnchorZ = anchorZ;
+			indirectUploadedCells = packed;
+			lastSkippedCells = skipped;
+		}
+
+		if (indirectUploadedCells <= 0) {
+			lastDrawnCells = 0;
+			lastReason = "indirect-empty-after-filter";
+			logIfNeeded();
+			return true;
+		}
+
+		Matrix4f modelView = new Matrix4f(RenderSystem.getModelViewMatrix()).mul(poseMatrix);
+		Matrix4f projection = RenderSystem.getProjectionMatrix();
+
+		RenderSystem.enableDepthTest();
+		RenderSystem.depthMask(true);
+		RenderSystem.disableBlend();
+		RenderSystem.disableCull();
+		boolean drew = PauCGpuLodIndirectRenderer.draw(
+			projection,
+			modelView,
+			(float) (indirectAnchorX - cameraX),
+			(float) (0.0D - cameraY),
+			(float) (indirectAnchorZ - cameraZ)
+		);
+		RenderSystem.enableCull();
+		if (!drew) {
+			lastReason = "indirect-draw-failed";
+			return false;
+		}
+		lastDrawnCells = indirectUploadedCells;
+		lastReason = "indirect-mdi";
+		logIfNeeded();
+		return true;
+	}
+
 	public static String describeState() {
 		return "cudaProxyRender[mode="
 			+ lastMode
@@ -149,6 +259,13 @@ public final class PauCCudaLodProxyRenderer {
 			lastMode = "range-off";
 			lastReason = "range-off";
 			return false;
+		}
+		// Dev/test override: force the proxy to render regardless of coarse-fill/PL-visible state, so the
+		// GPU MDI path can be observed and measured even while DH is covering. Default off.
+		if (readBoolean(FORCE_RENDER_PROPERTY, false)) {
+			lastMode = "forced:" + passName;
+			lastReason = "forced-test";
+			return true;
 		}
 		boolean shaderFallback = PauCLodShaderContext.isShaderPackInUse() && PauCLodShaderContext.isFallbackActive();
 		if (shaderFallback) {

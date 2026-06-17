@@ -1,6 +1,7 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
 import com.mojang.logging.LogUtils;
+import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
@@ -29,10 +30,6 @@ public final class PauCClientFluidityState {
 	private static final String RECOVERY_GENERATION_SCALE_PROPERTY = "pauc.fluidity.recoveryGenerationScale";
 	private static final String RECOVERY_WARMUP_SCALE_PROPERTY = "pauc.fluidity.recoveryWarmupScale";
 	private static final String RECOVERY_MESH_SCALE_PROPERTY = "pauc.fluidity.recoveryMeshScale";
-	private static final String DRAINED_QUEUE_STABLE_TICKS_PROPERTY = "pauc.lod.drainedQueueStableTicks";
-	private static final String DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY = "pauc.lod.drainedQueueResolvedMaxHeapRatio";
-	private static final String DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY = "pauc.lod.drainedQueueResolvedMinDeliveryRatio";
-	private static final String IDLE_QUEUE_RESOLVED_STABLE_TICKS_PROPERTY = "pauc.lod.idleQueueResolvedStableTicks";
 	private static final String BAND_STABLE_TICKS_PROPERTY = "pauc.fluidity.bandStableTicks";
 	private static final String BAND_HOLD_MS_PROPERTY = "pauc.fluidity.bandHoldMs";
 	private static final int CONFIG_RELOAD_TICKS = 100;
@@ -49,7 +46,6 @@ public final class PauCClientFluidityState {
 	private static int modCountRetryTicks;
 	private static int shaderTransitionTicks;
 	private static int logTicks;
-	private static int drainedQueueStableTicks;
 
 	private PauCClientFluidityState() {
 	}
@@ -64,7 +60,8 @@ public final class PauCClientFluidityState {
 		double heapPressure,
 		boolean shaderActive,
 		PauCLodShaderProfiles.Family shaderFamily,
-		PauCLodShaderContext.DhShaderMode dhMode
+		PauCLodShaderContext.DhShaderMode dhMode,
+		PauCWorkloadState.Snapshot workloadSnapshot
 	) {
 		Config currentConfig = currentConfig();
 		if (!currentConfig.enabled) {
@@ -86,60 +83,23 @@ public final class PauCClientFluidityState {
 			shaderTransitionTicks--;
 		}
 
-		boolean queueAvailable = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable();
-		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
-		int pendingTasks = PauCEmbeddedLodRuntimeDiagnostics.pendingTasks();
-		int backlogTasks = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks();
-		double avgChunkMs = PauCEmbeddedLodRuntimeDiagnostics.rollingAverageChunkMs();
-		boolean frameWatchdogSpike = readBoolean("pauc.runtime.frameWatchdogSpike", false);
-		boolean queueDrained = queueAvailable
-			&& pendingChunks <= readInt("pauc.lod.drainedQueuePendingChunks", 0, 0, 256)
-			&& backlogTasks <= readInt("pauc.lod.drainedQueueBacklogTasks", 0, 0, 64)
-			&& queuePressure <= readDouble("pauc.lod.drainedQueuePressure", 0.03D, 0.0D, 0.20D);
-		boolean queueNearlyDrained = queueAvailable
-			&& pendingChunks <= readInt("pauc.lod.nearlyDrainedQueuePendingChunks", 96, 0, 512)
-			&& backlogTasks <= readInt("pauc.lod.nearlyDrainedQueueBacklogTasks", 8, 0, 96)
-			&& queuePressure <= readDouble("pauc.lod.nearlyDrainedQueuePressure", 0.08D, 0.0D, 0.30D);
-		boolean queueFullyDrained = queueDrained && pendingTasks <= 0 && backlogTasks <= 0 && pendingChunks <= 0;
-		boolean coverageTelemetry = PauCClientFrontierWarmupManager.hasCoverageTelemetry();
-		boolean stableCoverage = PauCClientFrontierWarmupManager.hasStablePresentationCoverage();
-		boolean coverageHoldActive = PauCClientFrontierWarmupManager.isPresentationHoldActive();
-		if (queueFullyDrained) {
-			drainedQueueStableTicks = Math.min(600, drainedQueueStableTicks + 2);
-		} else if (queueDrained) {
-			drainedQueueStableTicks = Math.min(600, drainedQueueStableTicks + 1);
-		} else if (queueNearlyDrained) {
-			drainedQueueStableTicks = Math.max(0, drainedQueueStableTicks - 1);
-		} else {
-			drainedQueueStableTicks = 0;
-		}
-		boolean queueIdleResolved = isQueueIdleResolved(queueFullyDrained, frameWatchdogSpike, heapPressure);
-		boolean queueResolved = queueIdleResolved
-			|| (queueDrained
-				&& drainedQueueStableTicks >= Math.max(4, readInt(DRAINED_QUEUE_STABLE_TICKS_PROPERTY, 10, 1, 200) / 2)
-				&& !frameWatchdogSpike
-				&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D));
-		boolean backlogResolved = (
-			drainedQueueStableTicks >= readInt(DRAINED_QUEUE_STABLE_TICKS_PROPERTY, 10, 1, 200)
-				|| (queueFullyDrained && stableCoverage && !coverageHoldActive)
-				|| queueResolved
-			)
-			&& !frameWatchdogSpike
-			&& (!PauCVillagePerformanceDiagnostics.isVillagePressureActive() || queueResolved)
-			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D);
-		boolean workloadRecovered = queueResolved
-			|| (!frameWatchdogSpike
-				&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D)
-				&& !PauCVillagePerformanceDiagnostics.isVillagePressureActive()
-				&& ((coverageTelemetry && queueFullyDrained && stableCoverage && !coverageHoldActive) || backlogResolved));
+		int pendingChunks = workloadSnapshot.pendingChunks();
+		int backlogTasks = workloadSnapshot.backlogTasks();
+		double avgChunkMs = workloadSnapshot.averageChunkMs();
+		boolean frameWatchdogSpike = workloadSnapshot.frameWatchdogSpike();
+		boolean queueDrained = workloadSnapshot.queueDrained();
+		boolean queueNearlyDrained = workloadSnapshot.queueNearlyDrained();
+		boolean queueFullyDrained = workloadSnapshot.queueFullyDrained();
+		boolean backlogResolved = workloadSnapshot.backlogResolved();
+		boolean workloadRecovered = workloadSnapshot.workloadRecovered();
 		RuntimeProfile runtimeProfile = classifyRuntimeProfile(currentConfig, modCount, maxHeapMiB, shaderActive, heapPressure);
 		boolean hugePack = runtimeProfile.tier() == PackTier.HUGE;
 		boolean heavyPack = runtimeProfile.tier().atLeast(PackTier.HEAVY);
 		boolean mediumPack = runtimeProfile.tier().atLeast(PackTier.MEDIUM);
-		boolean paucResolved = queueResolved
-			|| backlogResolved
-			|| workloadRecovered
-			|| (queueDrained && queueFullyDrained && stableCoverage && !coverageHoldActive);
+		boolean fpsFirstVanilla = !shaderActive && PauCClientChunkPriorityScorer.isFpsFirstVanillaMode(targetFps);
+		boolean coverageDebt = PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt();
+		boolean paucResolved = workloadSnapshot.paucResolved();
+		boolean externalFpsDip = workloadSnapshot.externalFpsDip();
 		double fpsPressure = deliveryRatio > 0.0D ? clamp01((0.98D - deliveryRatio) / 0.48D) : 0.30D;
 		double rawFpsPressure = targetFps > 0 ? clamp01((targetFps - rawFps) / (double) Math.max(1, targetFps)) : 0.0D;
 		double queueLoad = clamp01(queuePressure * 1.85D);
@@ -156,10 +116,6 @@ public final class PauCClientFluidityState {
 		fpsPressure *= fpsPressureScale;
 		rawFpsPressure *= paucResolved ? 0.08D : workloadRecovered ? 0.12D : backlogResolved ? 0.16D : queueDrained ? 0.34D : queueNearlyDrained ? 0.74D : 1.0D;
 		double pressure = clamp01(Math.max(Math.max(fpsPressure, rawFpsPressure * 0.8D), Math.max(queueLoad, heapLoad)) + packLoad + heapClassLoad + transitionLoad);
-		boolean externalFpsDip = queueResolved
-			&& queuePressure <= readDouble("pauc.lod.externalReliefMaxQueuePressure", 0.08D, 0.0D, 0.30D)
-			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D)
-			&& deliveryRatio >= readDouble(DRAINED_QUEUE_RESOLVED_MIN_DELIVERY_RATIO_PROPERTY, 0.46D, 0.10D, 1.10D);
 		boolean recoveryCandidate = targetFps > 0
 			&& steadyFps >= targetFps * readDouble(RECOVERY_MIN_FPS_RATIO_PROPERTY, 0.76D, 0.40D, 1.50D)
 			&& heapPressure <= readDouble(RECOVERY_MAX_HEAP_RATIO_PROPERTY, 0.72D, 0.20D, 0.95D)
@@ -208,10 +164,10 @@ public final class PauCClientFluidityState {
 			meshScale = Math.max(meshScale, readDouble(RECOVERY_MESH_SCALE_PROPERTY, 1.16D, 1.0D, 2.0D));
 		}
 
-		int targetCeiling = targetDistanceCeiling(band, shaderActive, hugePack, heavyPack, constrainedHeap, heapPressure);
+		int targetCeiling = targetDistanceCeiling(band, shaderActive, hugePack, heavyPack, constrainedHeap, heapPressure, fpsFirstVanilla);
 		int retentionCeiling = retentionCeiling(band, shaderActive, hugePack, heavyPack, heapPressure);
-		int visibleFillFloorCeiling = visibleFillFloorCeiling(band, shaderActive, hugePack, heavyPack, heapPressure);
-		int emergencyGenerationCap = emergencyGenerationCap(band, shaderActive, hugePack, heavyPack, heapPressure);
+		int visibleFillFloorCeiling = visibleFillFloorCeiling(band, shaderActive, hugePack, heavyPack, heapPressure, fpsFirstVanilla, coverageDebt);
+		int emergencyGenerationCap = emergencyGenerationCap(band, shaderActive, hugePack, heavyPack, heapPressure, fpsFirstVanilla, coverageDebt);
 		String reason = reason(
 			band,
 			modCount,
@@ -262,7 +218,6 @@ public final class PauCClientFluidityState {
 		configReloadTicks = 0;
 		shaderTransitionTicks = 0;
 		logTicks = 0;
-		drainedQueueStableTicks = 0;
 	}
 
 	public static String describeState() {
@@ -270,6 +225,15 @@ public final class PauCClientFluidityState {
 	}
 
 	public static int adjustTargetDistance(int configuredTargetDistance, int policyTargetDistance) {
+		int noClampDistance = readInt(
+			"pauc.lod.noClampTargetDistanceChunks",
+			16,
+			PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS,
+			PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS
+		);
+		if (configuredTargetDistance <= noClampDistance) {
+			return configuredTargetDistance;
+		}
 		Snapshot snapshot = lastSnapshot;
 		if (!snapshot.active || snapshot.targetDistanceCeiling <= 0) {
 			return policyTargetDistance;
@@ -295,18 +259,67 @@ public final class PauCClientFluidityState {
 			return generationRequestRateLimit;
 		}
 		int scaled = (int) Math.round(generationRequestRateLimit * snapshot.generationScale);
-		if (snapshot.emergencyGenerationCap > 0 && !movementCatchup) {
+		boolean coverageDebt = PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt();
+		boolean nearCoverageDebt = PauCClientFrontierWarmupManager.hasNearCoverageDebt();
+		boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(PauCLodClientSettings.targetDistanceChunks());
+		// Resilient sustainable-rate cap (measured, no per-pack constant): while a real backlog exists, never
+		// request meaningfully more chunks/s than the embedded LOD runtime is actually COMPLETING on this
+		// modpack + hardware. Heavy worldgen (slow per-chunk gen, e.g. Terralith) self-limits instead of
+		// piling an unbounded backlog - the root cause of map-load stutter and 1% low dips - while light packs
+		// stay uncapped and push far. movementCatchup is exempt so the player can briefly burst to fill ahead.
+		if (!directFill && !movementCatchup && !coverageDebt) {
+			double throughput = PauCEmbeddedLodRuntimeDiagnostics.completionsPerSecond();
+			int backlog = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() + PauCEmbeddedLodRuntimeDiagnostics.pendingTasks();
+			int backlogThreshold = readInt("pauc.lod.sustainableRateBacklogTasks", 96, 8, 8192);
+			if (throughput > 0.5D && backlog > backlogThreshold) {
+				double headroom = readDouble("pauc.lod.sustainableRateHeadroom", 1.5D, 1.0D, 4.0D);
+				int floor = readInt("pauc.lod.sustainableRateFloor", 24, 8, 128);
+				int sustainable = (int) Math.ceil(throughput * headroom);
+				scaled = Math.min(scaled, Math.max(floor, sustainable));
+			}
+		}
+		if (coverageDebt || nearCoverageDebt) {
+			boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
+			int configuredTarget = PauCLodClientSettings.targetDistanceChunks();
+			boolean shortTarget = configuredTarget <= readInt("pauc.lod.shortTargetDistanceChunks", 16, 2, 32);
+			int coverageFloor = readInt(
+				nearCoverageDebt ? "pauc.lod.nearCoverageDebtGenerationFloor" : "pauc.lod.coverageDebtGenerationFloor",
+				nearCoverageDebt && fpsFirstVanilla && shortTarget
+					? 320
+					: nearCoverageDebt && fpsFirstVanilla
+						? 256
+						: fpsFirstVanilla
+					? (snapshot.band == Band.RELIEF ? 160 : 192)
+					: (snapshot.band == Band.RELIEF ? 112 : 144),
+				32,
+				512
+			);
+			int cap = nearCoverageDebt && shortTarget
+				? readInt("pauc.lod.nearCoverageDebtGenerationBurstCap", 512, 64, 768)
+				: generationRequestRateLimit;
+			scaled = Math.max(scaled, Math.min(cap, coverageFloor));
+		}
+		if (snapshot.emergencyGenerationCap > 0 && !movementCatchup && !coverageDebt) {
 			scaled = Math.min(scaled, snapshot.emergencyGenerationCap);
 		}
 		if (movementCatchup) {
 			int recoveryFloor = switch (snapshot.band) {
-				case RELIEF -> 72;
-				case RECOVERY -> 160;
-				case BALANCED, HEADROOM -> 96;
+				case RELIEF -> 144;
+				case RECOVERY -> 320;
+				case BALANCED, HEADROOM -> 192;
 			};
 			scaled = Math.max(scaled, Math.min(generationRequestRateLimit, recoveryFloor));
 		}
-		return Math.max(20, Math.min(384, scaled));
+		if (directFill) {
+			int directFillFloor = readInt(
+				"pauc.lod.directHorizonGenerationFloor",
+				nearCoverageDebt ? 768 : (movementCatchup ? 896 : 640),
+				64,
+				PauCLodClientSettings.maxGenerationRequestRateLimit()
+			);
+			scaled = Math.max(scaled, directFillFloor);
+		}
+		return Math.max(20, Math.min(PauCLodClientSettings.maxGenerationRequestRateLimit(), scaled));
 	}
 
 	public static int adjustRetentionMargin(int retentionMarginChunks) {
@@ -327,12 +340,28 @@ public final class PauCClientFluidityState {
 		return snapshot.active ? Math.max(0.15D, Math.min(1.60D, scale * snapshot.meshScale)) : scale;
 	}
 
-	private static int targetDistanceCeiling(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, boolean constrainedHeap, double heapPressure) {
+	private static int targetDistanceCeiling(
+		Band band,
+		boolean shaderActive,
+		boolean hugePack,
+		boolean heavyPack,
+		boolean constrainedHeap,
+		double heapPressure,
+		boolean fpsFirstVanilla
+	) {
 		if (band == Band.RECOVERY) {
 			return 0;
 		}
 		if (band == Band.HEADROOM && !hugePack && heapPressure < 0.82D) {
 			return 0;
+		}
+		if (fpsFirstVanilla) {
+			if (band == Band.RELIEF || heapPressure > 0.90D) {
+				return readInt("pauc.lod.vanillaHighFpsReliefTargetDistance", 16, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS);
+			}
+			if (band == Band.BALANCED) {
+				return readInt("pauc.lod.vanillaHighFpsBalancedTargetDistance", 24, PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, PauCLodRange.MAX_TARGET_DISTANCE_CHUNKS);
+			}
 		}
 		if (band == Band.RELIEF || heapPressure > 0.90D) {
 			return shaderActive ? 32 : hugePack || constrainedHeap ? 32 : 40;
@@ -383,9 +412,20 @@ public final class PauCClientFluidityState {
 		return 0;
 	}
 
-	private static int visibleFillFloorCeiling(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, double heapPressure) {
+	private static int visibleFillFloorCeiling(
+		Band band,
+		boolean shaderActive,
+		boolean hugePack,
+		boolean heavyPack,
+		double heapPressure,
+		boolean fpsFirstVanilla,
+		boolean coverageDebt
+	) {
 		if (band == Band.RECOVERY) {
 			return 0;
+		}
+		if (fpsFirstVanilla && coverageDebt) {
+			return readInt("pauc.lod.vanillaHighFpsCoverageFillFloorCeiling", 192, 64, 384);
 		}
 		if (band == Band.RELIEF || heapPressure > 0.90D) {
 			return shaderActive ? 96 : 112;
@@ -399,9 +439,20 @@ public final class PauCClientFluidityState {
 		return 0;
 	}
 
-	private static int emergencyGenerationCap(Band band, boolean shaderActive, boolean hugePack, boolean heavyPack, double heapPressure) {
+	private static int emergencyGenerationCap(
+		Band band,
+		boolean shaderActive,
+		boolean hugePack,
+		boolean heavyPack,
+		double heapPressure,
+		boolean fpsFirstVanilla,
+		boolean coverageDebt
+	) {
 		if (band == Band.RECOVERY) {
 			return 0;
+		}
+		if (fpsFirstVanilla && coverageDebt) {
+			return readInt("pauc.lod.vanillaHighFpsCoverageGenerationCap", 224, 64, 384);
 		}
 		if (band == Band.RELIEF || heapPressure > 0.90D) {
 			return shaderActive ? 128 : hugePack ? 112 : 144;
@@ -456,6 +507,10 @@ public final class PauCClientFluidityState {
 			+ externalFpsDip
 			+ ", avgChunkMs="
 			+ (avgChunkMs >= 0.0D ? round(avgChunkMs) : "-")
+			+ ", genTput="
+			+ (PauCEmbeddedLodRuntimeDiagnostics.completionsPerSecond() >= 0.0D
+				? round(PauCEmbeddedLodRuntimeDiagnostics.completionsPerSecond()) + "/s"
+				: "-")
 			+ ", shaderRecovery="
 			+ shaderTransitionTicks
 			+ "t]";
@@ -530,13 +585,6 @@ public final class PauCClientFluidityState {
 
 	private static double clamp(double value, double min, double max) {
 		return Math.max(min, Math.min(max, value));
-	}
-
-	private static boolean isQueueIdleResolved(boolean queueFullyDrained, boolean frameWatchdogSpike, double heapPressure) {
-		return queueFullyDrained
-			&& drainedQueueStableTicks >= readInt(IDLE_QUEUE_RESOLVED_STABLE_TICKS_PROPERTY, 12, 1, 240)
-			&& !frameWatchdogSpike
-			&& heapPressure <= readDouble(DRAINED_QUEUE_RESOLVED_MAX_HEAP_RATIO_PROPERTY, 0.86D, 0.20D, 0.95D);
 	}
 
 	private static Band stabilizeBand(

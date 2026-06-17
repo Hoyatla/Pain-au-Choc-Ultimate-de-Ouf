@@ -24,6 +24,9 @@ public final class PauCTerrainGeneratorDetector {
 		if (platform.isModLoaded("stratospheric")) {
 			return GeneratorKind.STRATOSPHERIC;
 		}
+		if (platform.isModLoaded("jjthunder_to_the_max")) {
+			return GeneratorKind.JJTHUNDER;
+		}
 		if (platform.isModLoaded("wilderwild") || platform.isModLoaded("wilder_wild") || platform.isModLoaded("william_wythers")) {
 			return GeneratorKind.WILDER_WILDS;
 		}
@@ -125,6 +128,11 @@ public final class PauCTerrainGeneratorDetector {
 		TERRALITH("terralith", false, true, 16, 2),
 		CONTINENTS("continents", false, true, 16, 2),
 		STRATOSPHERIC("stratospheric", true, false, 20, 2),
+		// JJThunder To The Max ("jjthunder_to_the_max"): terraforms the overworld into extreme amplified vanilla terrain
+		// (towering mountains, deep valleys) with vanilla biome placement and pure-noise, feature-light generation. So:
+		// complex vertical relief (tall LODs need high vertical quality + generous retention), narrow vanilla biome
+		// transitions, and a high generation-rate headroom since per-chunk gen is cheap (no Terralith-style features).
+		JJTHUNDER("jjthunder", true, false, 24, 2),
 		WILDER_WILDS("wilder_wilds", true, false, 16, 1),
 		NULLSCAPE("nullscape", false, false, 8, 0),
 		BOP("bop", false, true, 12, 1),

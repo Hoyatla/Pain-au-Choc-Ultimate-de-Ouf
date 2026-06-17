@@ -1,15 +1,18 @@
 package fr.hoyatla.pauc.platform.forge.runtime;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class PauCPathfindingCircuitBreaker {
-	private static final Map<String, AttemptWindow> WINDOWS = new ConcurrentHashMap<>();
+	private static final Map<AttemptKey, AttemptWindow> WINDOWS = new ConcurrentHashMap<>();
 	private static final Map<PathFailureKey, CachedPathFailure> FAILED_PATHS = new ConcurrentHashMap<>();
 	private static volatile long lastFailurePruneAtMs;
 	private static long deniedAttempts;
@@ -20,7 +23,7 @@ public final class PauCPathfindingCircuitBreaker {
 	}
 
 	public static boolean shouldAllow(ServerLevel level, Mob mob, BlockPos targetPos) {
-		if (!PauCRuntimeSwitches.enabled("pathfindingBreaker.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("pathfindingBreaker.enabled", PauCServerOptimizationProfile.Feature.PATHFINDING_BREAKER)) {
 			return true;
 		}
 
@@ -40,7 +43,7 @@ public final class PauCPathfindingCircuitBreaker {
 
 		long windowMs = PauCRuntimeSwitches.readLong("pathfindingBreaker.windowMs", 1_000L, 50L, 60_000L);
 		int maxAttempts = PauCRuntimeSwitches.readInt("pathfindingBreaker.maxAttempts", 4, 1, 128);
-		String key = level.dimension().location() + "|" + mob.getUUID() + "|" + chunkX + "," + chunkZ;
+		AttemptKey key = AttemptKey.of(level, mob, chunkX, chunkZ);
 		AttemptWindow window = WINDOWS.computeIfAbsent(key, ignored -> new AttemptWindow());
 		long now = System.currentTimeMillis();
 
@@ -59,7 +62,7 @@ public final class PauCPathfindingCircuitBreaker {
 	}
 
 	public static boolean hasCachedFailure(ServerLevel level, Mob mob, BlockPos targetPos) {
-		if (!PauCRuntimeSwitches.enabled("pathfindingCache.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("pathfindingCache.enabled", PauCServerOptimizationProfile.Feature.PATHFINDING_CACHE)) {
 			return false;
 		}
 
@@ -80,7 +83,7 @@ public final class PauCPathfindingCircuitBreaker {
 	}
 
 	public static void rememberFailure(ServerLevel level, Mob mob, BlockPos targetPos) {
-		if (!PauCRuntimeSwitches.enabled("pathfindingCache.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("pathfindingCache.enabled", PauCServerOptimizationProfile.Feature.PATHFINDING_CACHE)) {
 			return;
 		}
 
@@ -137,9 +140,15 @@ public final class PauCPathfindingCircuitBreaker {
 		private int attempts;
 	}
 
-	private record PathFailureKey(String dimensionId, UUID mobId, long targetPos) {
+	private record AttemptKey(ResourceKey<Level> dimensionKey, UUID mobId, long targetChunkPos) {
+		private static AttemptKey of(ServerLevel level, Mob mob, int chunkX, int chunkZ) {
+			return new AttemptKey(level.dimension(), mob.getUUID(), ChunkPos.asLong(chunkX, chunkZ));
+		}
+	}
+
+	private record PathFailureKey(ResourceKey<Level> dimensionKey, UUID mobId, long targetPos) {
 		private static PathFailureKey of(ServerLevel level, Mob mob, BlockPos targetPos) {
-			return new PathFailureKey(level.dimension().location().toString(), mob.getUUID(), targetPos.asLong());
+			return new PathFailureKey(level.dimension(), mob.getUUID(), targetPos.asLong());
 		}
 	}
 

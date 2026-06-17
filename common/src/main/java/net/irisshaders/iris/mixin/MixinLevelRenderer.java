@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.math.Axis;
 import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
+import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.irisshaders.iris.Iris;
@@ -75,19 +76,46 @@ public class MixinLevelRenderer {
 
 	@Unique
 	private static boolean pauc$shouldUseFogSkyColor() {
-		return PauCLodHorizonState.shouldExtendVanillaFog()
+		return PauCLodClientSettings.isVanillaFogEnabled()
+			&& PauCLodHorizonState.shouldExtendVanillaFog()
 			&& !PauCLodShaderContext.isShaderPackInUse()
 			&& pauc$skyFogBlend() > 0.0F;
 	}
 
 	@Unique
 	private static float pauc$blendSkyWithFog(float original, double fogComponent) {
+		pauc$logFogDomeProbe();
 		if (!pauc$shouldUseFogSkyColor()) {
 			return original;
 		}
 
 		float blend = pauc$skyFogBlend();
 		return original + ((float) fogComponent - original) * blend;
+	}
+
+	@Unique
+	private static boolean pauc$fogDomeProbeInit;
+	@Unique
+	private static boolean pauc$fogDomeProbeLastFog;
+
+	// Verification probe: logs the vanilla fog button together with the distance-fog and sky-dome-tint states
+	// on each button flip, so it is visible in a session log that they switch off together (no fog<->dome swap).
+	@Unique
+	private static void pauc$logFogDomeProbe() {
+		boolean fog = PauCLodClientSettings.isVanillaFogEnabled();
+		if (pauc$fogDomeProbeInit && fog == pauc$fogDomeProbeLastFog) {
+			return;
+		}
+		pauc$fogDomeProbeInit = true;
+		pauc$fogDomeProbeLastFog = fog;
+		boolean shader = PauCLodShaderContext.isShaderPackInUse();
+		Iris.logger.info(
+			"PauC FOG-DOME: vanillaFog={}, distanceFogDisabled={}, skyDomeTint={}, shader={}",
+			fog,
+			!fog && !shader,
+			pauc$shouldUseFogSkyColor(),
+			shader
+		);
 	}
 
 	// Begin shader rendering after buffers have been cleared.

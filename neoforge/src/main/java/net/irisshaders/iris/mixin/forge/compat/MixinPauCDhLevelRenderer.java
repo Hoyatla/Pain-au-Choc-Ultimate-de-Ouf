@@ -15,6 +15,7 @@ import com.seibel.distanthorizons.core.render.RenderBufferHandler;
 import com.seibel.distanthorizons.core.world.IDhClientWorld;
 import com.seibel.distanthorizons.core.wrapperInterfaces.render.renderPass.IDhGenericRenderer;
 import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
+import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodFallbackVisuals;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodLateDepthBuffer;
@@ -141,7 +142,9 @@ public abstract class MixinPauCDhLevelRenderer {
 				}
 				pauc$skipLodsThisFrame = false;
 				pauc$transitionHoldLogged = false;
+				long pauc$lodPassStart = System.nanoTime();
 				ClientApi.INSTANCE.renderLods();
+				fr.hoyatla.pauc.platform.forge.client.PauCLodRenderTimer.recordSolidPassNanos(System.nanoTime() - pauc$lodPassStart);
 				PauCCudaLodProxyRenderer.render(this.level, Minecraft.getInstance().gameRenderer.getMainCamera(), modelViewMatrixStack, "solid");
 				pauc$logDhRenderDiagnostics();
 			} else if (renderType.equals(RenderType.translucent())) {
@@ -171,8 +174,41 @@ public abstract class MixinPauCDhLevelRenderer {
 		ClientApi.RENDER_STATE.mcProjectionMatrix = McObjectConverter_forge.Convert(projectionMatrix);
 		ClientApi.RENDER_STATE.partialTickTime = MinecraftRenderWrapper_forge.INSTANCE.getPartialTickTime();
 		ClientApi.RENDER_STATE.clientLevelWrapper = ClientLevelWrapper_forge.getWrapperIfDifferent(ClientApi.RENDER_STATE.clientLevelWrapper, this.level);
-		ClientApi.RENDER_STATE.vanillaFogEnabled = !PauCLodShaderPresentation.shouldLateRenderFallbackLods()
+		// The Vanilla Fog toggle also governs the DH LOD runtime's own vanilla fog (shaderless only): when the
+		// player turns fog off without a shader pack, the runtime skips applying vanilla fog to the distant
+		// LODs (a flag it already honors). With a shader pack active the toggle is forced on, so we never touch
+		// the shader's fog on the LODs — the shader owns its atmosphere.
+		boolean fogToggle = PauCLodClientSettings.isVanillaFogEnabled() || PauCLodShaderContext.isShaderPackInUse();
+		ClientApi.RENDER_STATE.vanillaFogEnabled = fogToggle
+			&& !PauCLodShaderPresentation.shouldLateRenderFallbackLods()
 			&& (PauCLodHorizonState.shouldExtendVanillaFog() || PauCLodShaderContext.shouldApplyFallbackFog());
+		pauc$logFogPerfProbe(fogToggle, ClientApi.RENDER_STATE.vanillaFogEnabled);
+	}
+
+	@Unique
+	private static long pauc$fogPerfProbeLastLogMs;
+	@Unique
+	private static boolean pauc$fogPerfProbeLastToggle = true;
+
+	@Unique
+	private static void pauc$logFogPerfProbe(boolean fogToggle, boolean dhVanillaFog) {
+		// Probe: surfaces when the fog perf lever flips and what the DH LOD runtime fog ends up at, so the
+		// FPS delta of cutting fog can be attributed in a session log.
+		if (fogToggle == pauc$fogPerfProbeLastToggle) {
+			return;
+		}
+		long now = System.currentTimeMillis();
+		if (now - pauc$fogPerfProbeLastLogMs < 1000L) {
+			return;
+		}
+		pauc$fogPerfProbeLastLogMs = now;
+		pauc$fogPerfProbeLastToggle = fogToggle;
+		PAUC_DH_RENDER_LOGGER.info(
+			"PauC FOG-PERF: vanillaFogToggle={}, dhLodVanillaFog={}, lateRender={}",
+			fogToggle,
+			dhVanillaFog,
+			PauCLodShaderPresentation.shouldLateRenderFallbackLods()
+		);
 	}
 
 	@Unique

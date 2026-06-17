@@ -778,7 +778,7 @@ val paucMigrationAudit by tasks.registering {
 
 val deployToPrismTestInstance by tasks.registering(Copy::class) {
     group = "deployment"
-    description = "Copies the built PauC jar into the PrismLauncher 1.20.1 road beta test instance."
+    description = "Copies the standalone PauC jar into the PrismLauncher 1.20.1 road beta test instance."
     dependsOn("build", sanitizeGeneratedJars, paucMigrationAudit)
     mustRunAfter(sanitizeGeneratedJars)
 
@@ -787,6 +787,18 @@ val deployToPrismTestInstance by tasks.registering(Copy::class) {
     into(prismTestModsDir)
     doFirst {
         prismTestModsDir.mkdirs()
+        prismTestModsDir.listFiles()
+            ?.filter { file ->
+                file.isFile
+                    && file.name.startsWith("Pain_au_Choc_Ultimate_de_Ouf-")
+                    && file.name.endsWith(".jar")
+                    && file.name != "Pain_au_Choc_Ultimate_de_Ouf-$MOD_VERSION.jar"
+            }
+            ?.forEach { staleJar ->
+                if (!staleJar.delete()) {
+                    logger.warn("Could not remove stale PauC test-instance jar: ${staleJar.absolutePath}")
+                }
+            }
     }
 }
 
@@ -800,6 +812,12 @@ tasks.matching { it.name in setOf("reobfJar", "reobfJarJar", "build") }.configur
 
 tasks.jar {
     archiveClassifier = "std"
+}
+
+tasks.withType<Jar>().configureEach {
+    exclude("paucultimate-devenvironment.mixins.json")
+    exclude("net/irisshaders/iris/mixin/devenvironment/**")
+    exclude("net/paucshaders/pauc/mixin/devenvironment/**")
 }
 
 val notNeoTask: (Task) -> Boolean = { it: Task ->

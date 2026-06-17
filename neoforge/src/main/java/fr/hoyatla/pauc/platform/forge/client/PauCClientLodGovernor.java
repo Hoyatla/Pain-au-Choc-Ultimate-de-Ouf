@@ -59,7 +59,6 @@ public final class PauCClientLodGovernor {
 		PauCLodHorizonState.update(range);
 		if (startupRefreshTicks > 0) {
 			startupRefreshTicks--;
-			applyInitialVideoRuntimeState(minecraft);
 		}
 		PauCEmbeddedDhBridge.applyLodRange(range);
 		lastFrame = frame;
@@ -129,21 +128,6 @@ public final class PauCClientLodGovernor {
 
 	private static boolean readEnabled() {
 		return PauCLodClientSettings.isLodsEnabled();
-	}
-
-	private static void applyInitialVideoRuntimeState(Minecraft minecraft) {
-		try {
-			if (minecraft == null || minecraft.options == null || minecraft.getWindow() == null) {
-				return;
-			}
-
-			int framerateLimit = minecraft.options.framerateLimit().get();
-			if (framerateLimit > 0) {
-				minecraft.getWindow().setFramerateLimit(framerateLimit);
-			}
-		} catch (RuntimeException | LinkageError exception) {
-			LOGGER.debug("PauC could not refresh the Minecraft framerate limit on client session start.", exception);
-		}
 	}
 
 	public record LodFrame(

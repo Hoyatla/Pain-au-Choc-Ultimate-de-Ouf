@@ -22,10 +22,17 @@ import java.util.function.Function;
 
 public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSource implements MemoryTrackingBuffer, Groupable, WrappingMultiBufferSource {
 	private static final int NUM_BUFFERS = 32;
+	private static final int MIN_INITIAL_BUFFER_BYTES = 64 * 1024;
+	private static final int MAX_INITIAL_BUFFER_BYTES = 512 * 1024;
+	private static final int IDLE_TRIM_FRAMES = 15;
+	private static final int HARD_IDLE_TRIM_FRAMES = 90;
+	private static final int IDLE_TRIM_MIN_BYTES = 384 * 1024;
 	private static final String[] DELEGATE_METHOD_NAMES = {"sodium$getDelegate", "paucor$getDelegate"};
 
 	private final RenderOrderManager renderOrderManager;
 	private final SegmentedBufferBuilder[] builders;
+	private final boolean[] slotTouchedThisFrame;
+	private final int[] slotIdleFrames;
 	/**
 	 * An LRU cache mapping RenderType objects to a relevant buffer.
 	 */
@@ -47,10 +54,8 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 
 		this.renderOrderManager = new GraphTranslucencyRenderOrderManager();
 		this.builders = new SegmentedBufferBuilder[NUM_BUFFERS];
-
-		for (int i = 0; i < this.builders.length; i++) {
-			this.builders[i] = new SegmentedBufferBuilder();
-		}
+		this.slotTouchedThisFrame = new boolean[NUM_BUFFERS];
+		this.slotIdleFrames = new int[NUM_BUFFERS];
 
 		// use accessOrder=true so our LinkedHashMap works as an LRU cache.
 		this.affinities = new LinkedHashMap<>(32, 0.75F, true);
@@ -113,7 +118,13 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 			affinities.put(renderType, affinity);
 		}
 
-		VertexConsumer buffer = builders[affinity].getBuffer(renderType);
+		SegmentedBufferBuilder builder = builders[affinity];
+		if (builder == null) {
+			builder = new SegmentedBufferBuilder(initialBufferBytes(renderType));
+			builders[affinity] = builder;
+		}
+		slotTouchedThisFrame[affinity] = true;
+		VertexConsumer buffer = builder.getBuffer(renderType);
 
 		if (vertexBufferExtensionClass != null && delegateMethod != null && vertexBufferExtensionClass.isInstance(buffer)) {
 			try {
@@ -126,6 +137,10 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 		}
 
 		return buffer;
+	}
+
+	private static int initialBufferBytes(RenderType renderType) {
+		return Math.max(MIN_INITIAL_BUFFER_BYTES, Math.min(MAX_INITIAL_BUFFER_BYTES, renderType.bufferSize()));
 	}
 
 	private static Method pauc$findDelegateMethod(Class<?> extensionClass) {
@@ -152,6 +167,9 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 		profiler.push("collect");
 
 		for (SegmentedBufferBuilder builder : builders) {
+			if (builder == null) {
+				continue;
+			}
 			List<BufferSegment> segments = builder.getSegments();
 
 			for (BufferSegment segment : segments) {
@@ -261,7 +279,9 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 		int size = 0;
 
 		for (SegmentedBufferBuilder builder : builders) {
-			size += builder.getAllocatedSize();
+			if (builder != null) {
+				size += builder.getAllocatedSize();
+			}
 		}
 
 		return size;
@@ -272,7 +292,9 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 		int size = 0;
 
 		for (SegmentedBufferBuilder builder : builders) {
-			size += builder.getUsedSize();
+			if (builder != null) {
+				size += builder.getUsedSize();
+			}
 		}
 
 		return size;
@@ -280,8 +302,39 @@ public class FullyBufferedMultiBufferSource extends MultiBufferSource.BufferSour
 
 	@Override
 	public void freeAndDeleteBuffer() {
-		for (SegmentedBufferBuilder builder : builders) {
-			builder.freeAndDeleteBuffer();
+		for (int i = 0; i < builders.length; i++) {
+			SegmentedBufferBuilder builder = builders[i];
+			if (builder != null) {
+				builder.freeAndDeleteBuffer();
+				builders[i] = null;
+			}
+			slotTouchedThisFrame[i] = false;
+			slotIdleFrames[i] = 0;
+		}
+	}
+
+	public void onFrameComplete() {
+		for (int i = 0; i < builders.length; i++) {
+			SegmentedBufferBuilder builder = builders[i];
+			if (slotTouchedThisFrame[i]) {
+				slotTouchedThisFrame[i] = false;
+				slotIdleFrames[i] = 0;
+				continue;
+			}
+
+			slotTouchedThisFrame[i] = false;
+			if (builder == null) {
+				slotIdleFrames[i] = 0;
+				continue;
+			}
+
+			int idleFrames = ++slotIdleFrames[i];
+			int allocatedBytes = builder.getAllocatedSize();
+			if (idleFrames >= HARD_IDLE_TRIM_FRAMES || (idleFrames >= IDLE_TRIM_FRAMES && allocatedBytes >= IDLE_TRIM_MIN_BYTES)) {
+				builder.freeAndDeleteBuffer();
+				builders[i] = null;
+				slotIdleFrames[i] = 0;
+			}
 		}
 	}
 

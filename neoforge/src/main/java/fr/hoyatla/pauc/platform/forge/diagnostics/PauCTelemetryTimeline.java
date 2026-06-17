@@ -5,9 +5,12 @@ import fr.hoyatla.pauc.PauCIdentity;
 import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFrameMetrics;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientFpsGovernor;
+import fr.hoyatla.pauc.platform.forge.client.PauCClientFrontierWarmupManager;
+import fr.hoyatla.pauc.platform.forge.client.PauCEmbeddedDhBridge;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientGpuPathController;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientLodGovernor;
 import fr.hoyatla.pauc.platform.forge.client.PauCClientSurfaceLodMode;
+import fr.hoyatla.pauc.platform.forge.client.PauCClientTargetFps;
 import fr.hoyatla.pauc.platform.forge.client.PauCDynamicResolution;
 import fr.hoyatla.pauc.platform.forge.client.PauCEmbeddedLodRuntimeDiagnostics;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
@@ -191,6 +194,7 @@ public final class PauCTelemetryTimeline {
 				+ "\"type\":\"heartbeat\","
 				+ "\"fps\":" + fps + ','
 				+ "\"targetFps\":" + targetFps + ','
+				+ "\"fpsReferenceMode\":\"" + json(PauCClientTargetFps.referenceMode(Minecraft.getInstance())) + "\","
 				+ "\"avgFrameMs\":" + decimal(PauCClientFrameMetrics.averageFrameTimeMs()) + ','
 				+ "\"p99FrameMs\":" + decimal(PauCClientFrameMetrics.percentileFrameTimeMs(99.0D)) + ','
 				+ "\"heapUsedMiB\":" + mib(usedMemoryBytes) + ','
@@ -206,6 +210,9 @@ public final class PauCTelemetryTimeline {
 				+ "\"gpu\":\"" + json(PauCClientGpuPathController.describeState()) + "\","
 				+ "\"scheduler\":\"" + json(PauCScheduler.describeState()) + "\","
 				+ "\"governor\":\"" + json(governorKey) + "\","
+				+ "\"governorActuation\":\"" + json(PauCClientFpsGovernor.describeActuationState()) + "\","
+				+ "\"embeddedDhActuation\":\"" + json(PauCEmbeddedDhBridge.describeActuationState()) + "\","
+				+ "\"frontierActuation\":\"" + json(PauCClientFrontierWarmupManager.describeActuationState()) + "\","
 				+ "\"surface\":\"" + json(surfaceKey) + "\","
 				+ "\"lodRange\":\"" + json(lodKey) + "\","
 				+ "\"drs\":\"" + json(PauCDynamicResolution.describeState()) + "\","

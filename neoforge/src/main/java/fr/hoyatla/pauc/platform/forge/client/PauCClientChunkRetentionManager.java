@@ -107,6 +107,12 @@ public final class PauCClientChunkRetentionManager {
 		}
 
 		if (!PauCCompatManager.isEnabled(PauCCompatModule.CLIENT_CHUNK_RETENTION_RING)) {
+			if (minecraft.level == null || minecraft.player == null) {
+				clearTrackingOnly();
+				return;
+			}
+			releaseAll(minecraft.level.getChunkSource(), "hard-retention-disabled");
+			PauCClientFrontierWarmupManager.onClientTick(minecraft.level, Map.of());
 			return;
 		}
 

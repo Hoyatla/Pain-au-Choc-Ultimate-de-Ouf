@@ -151,6 +151,10 @@ public final class PauCCompatManager {
 			}
 		}
 
+		if (module == PauCCompatModule.CLIENT_CHUNK_RETENTION_RING) {
+			return false;
+		}
+
 		return true;
 	}
 

@@ -23,6 +23,10 @@ public final class MixinChatComponent {
 			|| plainText.contains("This can cause FPS stuttering")
 			|| plainText.contains("Shenandoah (Java 8 through 17)")
 			|| plainText.contains("ZGC (Java 21+)")
+			|| plainText.contains("PauC UltimateLOD: slow world gen.")
+			|| plainText.contains("C2ME missing, low CPU usage and slow world gen speeds expected.")
+			|| plainText.contains("PL is set to use MC's internal server for world gen")
+			|| plainText.contains("this mode is less efficient unless a mod like C2ME is present.")
 			|| plainText.contains("Saved screenshot as ");
 	}
 

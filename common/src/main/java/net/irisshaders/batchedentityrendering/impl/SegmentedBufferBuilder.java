@@ -13,14 +13,18 @@ import java.util.List;
 import java.util.Objects;
 
 public class SegmentedBufferBuilder implements MultiBufferSource, MemoryTrackingBuffer {
+	private static final int MIN_INITIAL_BUFFER_BYTES = 16 * 1024;
 	private final BufferBuilder buffer;
 	private final List<BufferSegment> buffers;
 	private RenderType currentType;
 
 	public SegmentedBufferBuilder() {
-		// 2 MB initial allocation
-		this.buffer = new BufferBuilder(512 * 1024);
-		this.buffers = new ArrayList<>();
+		this(512 * 1024);
+	}
+
+	public SegmentedBufferBuilder(int initialCapacityBytes) {
+		this.buffer = new BufferBuilder(Math.max(MIN_INITIAL_BUFFER_BYTES, initialCapacityBytes));
+		this.buffers = new ArrayList<>(8);
 		this.currentType = null;
 	}
 
@@ -31,13 +35,7 @@ public class SegmentedBufferBuilder implements MultiBufferSource, MemoryTracking
 	@Override
 	public VertexConsumer getBuffer(RenderType renderType) {
 		if (!Objects.equals(currentType, renderType)) {
-			if (currentType != null) {
-				if (shouldSortOnUpload(currentType)) {
-					buffer.setQuadSorting(RenderSystem.getVertexSorting());
-				}
-
-				buffers.add(new BufferSegment(Objects.requireNonNull(buffer.end()), currentType));
-			}
+			finishCurrentType();
 
 			buffer.begin(renderType.mode(), renderType.format());
 
@@ -57,9 +55,9 @@ public class SegmentedBufferBuilder implements MultiBufferSource, MemoryTracking
 		return buffer;
 	}
 
-	public List<BufferSegment> getSegments() {
+	private void finishCurrentType() {
 		if (currentType == null) {
-			return Collections.emptyList();
+			return;
 		}
 
 		if (shouldSortOnUpload(currentType)) {
@@ -67,36 +65,41 @@ public class SegmentedBufferBuilder implements MultiBufferSource, MemoryTracking
 		}
 
 		buffers.add(new BufferSegment(Objects.requireNonNull(buffer.end()), currentType));
-
 		currentType = null;
+	}
+
+	public List<BufferSegment> getSegments() {
+		if (currentType == null && buffers.isEmpty()) {
+			return Collections.emptyList();
+		}
+
+		finishCurrentType();
 
 		List<BufferSegment> finalSegments = new ArrayList<>(buffers);
-
 		buffers.clear();
-
 		return finalSegments;
 	}
 
 	public List<BufferSegment> getSegmentsForType(TransparencyType transparencyType) {
-		if (currentType == null) {
+		finishCurrentType();
+		if (buffers.isEmpty()) {
 			return Collections.emptyList();
 		}
 
-		if (((BlendingStateHolder) currentType).getTransparencyType() == transparencyType) {
-			if (shouldSortOnUpload(currentType)) {
-				buffer.setQuadSorting(RenderSystem.getVertexSorting());
+		List<BufferSegment> finalSegments = null;
+		for (int i = 0; i < buffers.size(); ) {
+			BufferSegment segment = buffers.get(i);
+			if (((BlendingStateHolder) segment.type()).getTransparencyType() == transparencyType) {
+				if (finalSegments == null) {
+					finalSegments = new ArrayList<>();
+				}
+				finalSegments.add(segment);
+				buffers.remove(i);
+				continue;
 			}
-
-			buffers.add(new BufferSegment(Objects.requireNonNull(buffer.end()), currentType));
-
-			currentType = null;
+			i++;
 		}
-
-		List<BufferSegment> finalSegments = buffers.stream().filter(segment -> ((BlendingStateHolder) segment.type()).getTransparencyType() == transparencyType).toList();
-
-		buffers.removeAll(finalSegments);
-
-		return finalSegments;
+		return finalSegments == null ? Collections.emptyList() : finalSegments;
 	}
 
 	@Override
@@ -119,6 +122,8 @@ public class SegmentedBufferBuilder implements MultiBufferSource, MemoryTracking
 
 	@Override
 	public void freeAndDeleteBuffer() {
+		buffers.clear();
+		currentType = null;
 		if (buffer instanceof MemoryTrackingBuffer trackingBuffer) {
 			trackingBuffer.freeAndDeleteBuffer();
 		}

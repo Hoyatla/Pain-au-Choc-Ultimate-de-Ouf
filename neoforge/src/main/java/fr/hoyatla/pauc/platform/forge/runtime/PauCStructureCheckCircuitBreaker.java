@@ -1,19 +1,22 @@
 package fr.hoyatla.pauc.platform.forge.runtime;
 
 import net.minecraft.core.BlockPos;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class PauCStructureCheckCircuitBreaker {
-	private static final Map<String, RegionWindow> REGIONS = new ConcurrentHashMap<>();
+	private static final Map<RegionKey, RegionWindow> REGIONS = new ConcurrentHashMap<>();
 
 	private PauCStructureCheckCircuitBreaker() {
 	}
 
 	public static boolean shouldAllow(ServerLevel level, BlockPos origin, int radius) {
-		if (!PauCRuntimeSwitches.enabled("structureBreaker.enabled", true)) {
+		if (!PauCServerOptimizationProfile.enabled("structureBreaker.enabled", PauCServerOptimizationProfile.Feature.STRUCTURE_BREAKER)) {
 			return true;
 		}
 
@@ -23,7 +26,8 @@ public final class PauCStructureCheckCircuitBreaker {
 
 		int regionX = origin.getX() >> 9;
 		int regionZ = origin.getZ() >> 9;
-		String regionKey = level.dimension().location() + "|" + regionX + "," + regionZ + "|" + clampRadius(radius);
+		int clampedRadius = clampRadius(radius);
+		RegionKey regionKey = RegionKey.of(level, regionX, regionZ, clampedRadius);
 		RegionWindow window = REGIONS.computeIfAbsent(regionKey, ignored -> new RegionWindow());
 		long now = System.currentTimeMillis();
 		long windowMs = PauCRuntimeSwitches.readLong("structureBreaker.windowMs", 2_000L, 100L, 60_000L);
@@ -65,5 +69,11 @@ public final class PauCStructureCheckCircuitBreaker {
 		private long windowStartMs = System.currentTimeMillis();
 		private long cooldownUntilMs;
 		private int count;
+	}
+
+	private record RegionKey(ResourceKey<Level> dimensionKey, long regionPos, int radius) {
+		private static RegionKey of(ServerLevel level, int regionX, int regionZ, int radius) {
+			return new RegionKey(level.dimension(), ChunkPos.asLong(regionX, regionZ), radius);
+		}
 	}
 }

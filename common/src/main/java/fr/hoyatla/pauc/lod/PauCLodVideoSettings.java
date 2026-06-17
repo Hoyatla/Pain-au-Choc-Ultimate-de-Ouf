@@ -13,14 +13,15 @@ public final class PauCLodVideoSettings {
 	private static AbstractWidget lodCloudsWidget;
 	private static AbstractWidget nvidiaAccelerationWidget;
 	private static AbstractWidget terrainMorphingWidget;
+	private static AbstractWidget dynamicResolutionWidget;
 
-	public static final OptionInstance<Boolean> LODS_ENABLED = new PauCLodToggleOption(
-		"options.pauc.lods",
-		minecraft -> Tooltip.create(Component.translatable("options.pauc.lods.tooltip")),
-		(option, enabled) -> Component.translatable(enabled ? "options.pauc.lods.enabled" : "options.pauc.lods.disabled"),
+	public static final OptionInstance<Boolean> VANILLA_FOG = new PauCLodToggleOption(
+		"options.pauc.vanillaFog",
+		minecraft -> Tooltip.create(Component.translatable("options.pauc.vanillaFog.tooltip")),
+		(option, enabled) -> Component.translatable(enabled ? "options.pauc.vanillaFog.enabled" : "options.pauc.vanillaFog.disabled"),
 		OptionInstance.BOOLEAN_VALUES,
-		PauCLodClientSettings.isLodsEnabled(),
-		PauCLodVideoSettings::setLodsEnabled
+		PauCLodClientSettings.isVanillaFogEnabled(),
+		PauCLodVideoSettings::setVanillaFogEnabled
 	);
 
 	public static final OptionInstance<Integer> LOD_RENDER_DISTANCE = new PauCLodDistanceOption(
@@ -59,21 +60,30 @@ public final class PauCLodVideoSettings {
 		PauCLodVideoSettings::setTerrainMorphingEnabled
 	);
 
+	public static final OptionInstance<Integer> DYNAMIC_RESOLUTION = new PauCDynamicResolutionOption(
+		"options.pauc.dynamicResolution",
+		minecraft -> Tooltip.create(Component.translatable("options.pauc.dynamicResolution.tooltip")),
+		PauCLodVideoSettings::dynamicResolutionCaption,
+		new OptionInstance.IntRange(PauCDynamicResolutionMode.OFF.index(), PauCDynamicResolutionMode.PERFORMANCE.index()),
+		PauCLodClientSettings.dynamicResolutionMode().index(),
+		PauCLodVideoSettings::setDynamicResolutionMode
+	);
+
 	private PauCLodVideoSettings() {
 	}
 
 	public static void syncFromClientSettings() {
-		LODS_ENABLED.set(PauCLodClientSettings.isLodsEnabled());
+		VANILLA_FOG.set(PauCLodClientSettings.isVanillaFogEnabled());
 		LOD_RENDER_DISTANCE.set(PauCLodClientSettings.configuredTargetDistanceChunks());
 		LOD_CLOUDS.set(PauCLodClientSettings.isLodCloudsEnabled());
 		NVIDIA_ACCELERATION.set(PauCLodClientSettings.isNvidiaAccelerationEnabled());
 		TERRAIN_MORPHING.set(PauCLodClientSettings.isTerrainMorphingEnabled());
+		DYNAMIC_RESOLUTION.set(PauCLodClientSettings.dynamicResolutionMode().index());
 		updateLinkedWidgets();
 	}
 
-	private static void setLodsEnabled(boolean enabled) {
-		PauCLodClientSettings.setLodsEnabled(enabled);
-		updateLinkedWidgets();
+	private static void setVanillaFogEnabled(boolean enabled) {
+		PauCLodClientSettings.setVanillaFogEnabled(enabled);
 	}
 
 	private static void setLodCloudsEnabled(boolean enabled) {
@@ -88,6 +98,11 @@ public final class PauCLodVideoSettings {
 
 	private static void setTerrainMorphingEnabled(boolean enabled) {
 		PauCLodClientSettings.setTerrainMorphingEnabled(enabled);
+		updateLinkedWidgets();
+	}
+
+	private static void setDynamicResolutionMode(int modeIndex) {
+		PauCLodClientSettings.setDynamicResolutionMode(PauCDynamicResolutionMode.byIndex(modeIndex));
 		updateLinkedWidgets();
 	}
 
@@ -135,6 +150,11 @@ public final class PauCLodVideoSettings {
 		return Component.translatable(enabled ? "options.pauc.terrainMorphing.enabled" : "options.pauc.terrainMorphing.disabled");
 	}
 
+	private static Component dynamicResolutionCaption(Component option, int modeIndex) {
+		PauCDynamicResolutionMode mode = PauCDynamicResolutionMode.byIndex(modeIndex);
+		return Component.translatable("options.generic_value", option, Component.translatable("options.pauc.dynamicResolution." + mode.id()));
+	}
+
 	private static void updateLinkedWidgets() {
 		boolean enabled = PauCLodClientSettings.isLodsEnabled();
 		if (lodDistanceWidget != null) {
@@ -153,6 +173,9 @@ public final class PauCLodVideoSettings {
 		if (terrainMorphingWidget != null) {
 			terrainMorphingWidget.active = enabled;
 			terrainMorphingWidget.setMessage(terrainMorphingCaption(Component.translatable("options.pauc.terrainMorphing"), PauCLodClientSettings.isTerrainMorphingEnabled()));
+		}
+		if (dynamicResolutionWidget != null) {
+			dynamicResolutionWidget.setMessage(dynamicResolutionCaption(Component.translatable("options.pauc.dynamicResolution"), PauCLodClientSettings.dynamicResolutionMode().index()));
 		}
 	}
 
@@ -255,6 +278,27 @@ public final class PauCLodVideoSettings {
 		public AbstractWidget createButton(Options options, int x, int y, int width) {
 			AbstractWidget widget = super.createButton(options, x, y, width);
 			terrainMorphingWidget = widget;
+			updateLinkedWidgets();
+			return widget;
+		}
+	}
+
+	private static final class PauCDynamicResolutionOption extends OptionInstance<Integer> {
+		private PauCDynamicResolutionOption(
+			String caption,
+			TooltipSupplier<Integer> tooltip,
+			CaptionBasedToString<Integer> captionBasedToString,
+			ValueSet<Integer> values,
+			Integer initialValue,
+			Consumer<Integer> changeCallback
+		) {
+			super(caption, tooltip, captionBasedToString, values, initialValue, changeCallback);
+		}
+
+		@Override
+		public AbstractWidget createButton(Options options, int x, int y, int width) {
+			AbstractWidget widget = super.createButton(options, x, y, width);
+			dynamicResolutionWidget = widget;
 			updateLinkedWidgets();
 			return widget;
 		}

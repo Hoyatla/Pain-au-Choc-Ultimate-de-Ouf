@@ -16,17 +16,21 @@ public final class PauCClientChunkPriorityScorer {
 	private static final double WARM_SCORE_THRESHOLD = 0.45D;
 	private static final double SNAP_DOT_THRESHOLD = 0.55D;
 	private static final int SNAP_MODE_TICKS = 14;
-	private static final double MOVEMENT_CATCHUP_SPEED_THRESHOLD = 0.16D;
-	private static final int MOVEMENT_CATCHUP_TICKS = 80;
-	private static final int MOVEMENT_SUSTAINED_TICKS = 8;
+	private static final double MOVEMENT_CATCHUP_SPEED_THRESHOLD = 0.10D;
+	private static final int MOVEMENT_CATCHUP_TICKS = 120;
+	private static final int MOVEMENT_SUSTAINED_TICKS = 6;
 	private static final String MOVEMENT_CATCHUP_IDLE_RELEASE_STEP_PROPERTY = "pauc.lod.movementCatchupIdleReleaseStep";
 	private static final String MOVEMENT_CATCHUP_IDLE_MAX_QUEUE_PRESSURE_PROPERTY = "pauc.lod.movementCatchupIdleMaxQueuePressure";
 	private static final String MOVEMENT_CATCHUP_IDLE_MAX_PENDING_CHUNKS_PROPERTY = "pauc.lod.movementCatchupIdleMaxPendingChunks";
 	private static final String HIGH_TARGET_FPS_PROPERTY = "pauc.lod.vanillaHighTargetFps";
 	private static final String HIGH_TARGET_WARM_RADIUS_LEAD_PROPERTY = "pauc.lod.vanillaHighTargetWarmRadiusLeadChunks";
+	private static final String HIGH_TARGET_LOOKAHEAD_BONUS_PROPERTY = "pauc.lod.vanillaHighTargetLookaheadBonusChunks";
 	private static final String FOG_PRELOAD_RADIUS_PROPERTY = "pauc.lod.fogPreloadRadiusChunks";
 	private static final String FOG_PRELOAD_MIN_EXTRA_PROPERTY = "pauc.lod.fogPreloadMinExtraChunks";
 	private static final String SHORT_RANGE_ROUND_HORIZON_WARMUP_PROPERTY = "pauc.lod.shortRangeRoundHorizonWarmup";
+	private static final String VANILLA_SEAL_RING_CHUNKS_PROPERTY = "pauc.lod.vanillaSealRingChunks";
+	private static final String VANILLA_SEAL_TRAVEL_RING_CHUNKS_PROPERTY = "pauc.lod.vanillaSealTravelRingChunks";
+	private static final String HIGH_TARGET_WARM_BEYOND_SLIDER_PROPERTY = "pauc.lod.vanillaHighTargetWarmBeyondSlider";
 	private static double previousLookX;
 	private static double previousLookZ;
 	private static boolean previousLookInitialized;
@@ -93,18 +97,36 @@ public final class PauCClientChunkPriorityScorer {
 		boolean fastTravel = elytraFlight || speed >= 0.55D;
 		boolean snapMode = snapModeRemainingTicks > 0;
 		boolean movementCatchup = updateMovementCatchup(dimensionId, playerChunk, speed);
-		boolean fpsFirstVanilla = isFpsFirstVanillaMode(PauCClientTargetFps.effectiveTargetFps(minecraft));
+		boolean fpsFirstVanilla = isFpsFirstVanillaMode(minecraft, PauCClientTargetFps.effectiveTargetFps(minecraft));
 		int warmRadiusChunks = fogPreloadWarmRadius(renderDistance, warmMarginChunks, fastTravel || snapMode || movementCatchup, fpsFirstVanilla);
+		LookaheadCenter lookaheadCenter = computeLookaheadCenter(
+			playerChunk,
+			warmRadiusChunks,
+			renderDistance,
+			normalizedLookX,
+			normalizedLookZ,
+			motionX,
+			motionZ,
+			speed,
+			turnSeverity,
+			fastTravel,
+			snapMode,
+			movementCatchup,
+			fpsFirstVanilla
+		);
 		lastMovementCatchup = movementCatchup;
 		return new PriorityFrame(
 			dimensionId,
 			playerChunk.x,
 			playerChunk.z,
+			lookaheadCenter.chunkX(),
+			lookaheadCenter.chunkZ(),
 			player.blockPosition().getY() >> 4,
 			level.getMinSection(),
 			level.getMaxSection() - 1,
 			renderDistance,
 			warmRadiusChunks,
+			lookaheadCenter.lookaheadChunks(),
 			normalizedLookX,
 			normalizedLookZ,
 			motionX,
@@ -124,14 +146,23 @@ public final class PauCClientChunkPriorityScorer {
 	}
 
 	public static boolean isFpsFirstVanillaMode() {
-		return isFpsFirstVanillaMode(PauCClientTargetFps.effectiveTargetFps());
+		return isFpsFirstVanillaMode(Minecraft.getInstance(), PauCClientTargetFps.effectiveTargetFps());
 	}
 
 	public static boolean isFpsFirstVanillaMode(int targetFps) {
+		return isFpsFirstVanillaMode(Minecraft.getInstance(), targetFps);
+	}
+
+	private static boolean isFpsFirstVanillaMode(Minecraft minecraft, int targetFps) {
 		PauCLodGameplayProfile.Profile profile = PauCLodGameplayProfile.current();
+		int threshold = readInt(HIGH_TARGET_FPS_PROPERTY, profile == PauCLodGameplayProfile.Profile.SHOOTER ? 120 : 132, 90, 240);
+		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
+		boolean highFpsIntent = playerVideo.available()
+			? playerVideo.fpsUnlimited() || playerVideo.fpsLimit() >= threshold
+			: targetFps >= threshold;
 		return !PauCLodShaderContext.isShaderPackInUse()
 			&& (profile == PauCLodGameplayProfile.Profile.SHOOTER || profile == PauCLodGameplayProfile.Profile.COMPETITIVE)
-			&& targetFps >= readInt(HIGH_TARGET_FPS_PROPERTY, profile == PauCLodGameplayProfile.Profile.SHOOTER ? 120 : 132, 90, 240);
+			&& highFpsIntent;
 	}
 
 	public static ChunkPriority score(PriorityFrame frame, int chunkX, int chunkZ, boolean retained) {
@@ -145,8 +176,15 @@ public final class PauCClientChunkPriorityScorer {
 		double ringCenter = frame.renderDistanceChunks() + 0.5D;
 		double ringWidth = Math.max(1.0D, frame.warmRadiusChunks() - frame.renderDistanceChunks() + 1.0D);
 		double radialDistance = Math.sqrt((double) dx * dx + (double) dz * dz);
+		int projectedDx = chunkX - frame.priorityCenterChunkX();
+		int projectedDz = chunkZ - frame.priorityCenterChunkZ();
+		double projectedRadialDistance = Math.sqrt((double) projectedDx * projectedDx + (double) projectedDz * projectedDz);
 		double length = Math.max(1.0D, radialDistance);
 		double ringScore = 1.0D - Math.min(1.0D, Math.abs(radialDistance - ringCenter) / ringWidth);
+		double projectedRingScore = frame.lookaheadChunks() > 0
+			? 1.0D - Math.min(1.0D, Math.abs(projectedRadialDistance - ringCenter) / ringWidth)
+			: ringScore;
+		ringScore = Math.max(ringScore, projectedRingScore);
 		double directionX = dx / length;
 		double directionZ = dz / length;
 		double rawFacingDot = directionX * frame.lookX() + directionZ * frame.lookZ();
@@ -156,6 +194,16 @@ public final class PauCClientChunkPriorityScorer {
 		boolean movementCatchup = frame.movementCatchup();
 		boolean priorityTravel = frame.fastTravel() || movementCatchup;
 		boolean fpsFirstVanilla = frame.fpsFirstVanilla();
+		int sealRingChunks = vanillaSealRingChunks(priorityTravel);
+		boolean sealRing = chebyshevDistance > frame.renderDistanceChunks()
+			&& chebyshevDistance <= frame.renderDistanceChunks() + sealRingChunks;
+		if (sealRing) {
+			boolean ahead = rawFacingDot >= -0.35D || rawMotionDot >= -0.35D;
+			double sealScore = 1.0D
+				+ Math.max(0.0D, sealRingChunks - (chebyshevDistance - frame.renderDistanceChunks())) * 0.04D
+				+ (ahead ? 0.05D : 0.0D);
+			return new ChunkPriority(sealScore, chebyshevDistance, radialDistance, ahead, true, true);
+		}
 		boolean viewportCentralBias = PauCLodGameplayProfile.viewportCentralBias() && fpsFirstVanilla && !priorityTravel;
 		double speedReference = frame.fastTravel() ? 0.8D : (movementCatchup ? 0.22D : 0.25D);
 		double speedFactor = Math.min(1.0D, frame.speedBlocksPerTick() / speedReference);
@@ -170,6 +218,10 @@ public final class PauCClientChunkPriorityScorer {
 		double retainedBonus = retained ? 0.08D : 0.0D;
 		double snapBoost = frame.snapMode() ? (ringScore * 0.18D) + (nearLiveBoundaryScore * 0.10D) : 0.0D;
 		double movementBoost = movementCatchup ? (aheadScore * 0.12D) + (nearLiveBoundaryScore * 0.08D) : 0.0D;
+		if (frame.lookaheadChunks() > 0) {
+			double projectedAlignment = 1.0D - Math.min(1.0D, projectedRadialDistance / Math.max(1.0D, frame.renderDistanceChunks() + frame.lookaheadChunks()));
+			movementBoost += Math.max(0.0D, projectedAlignment) * (priorityTravel ? 0.10D : 0.06D);
+		}
 		double rearPenalty = 0.0D;
 		if (chebyshevDistance > frame.renderDistanceChunks() + 1) {
 			rearPenalty = Math.max(0.0D, -rawFacingDot) * (priorityTravel ? 0.16D : fpsFirstVanilla ? 0.18D : 0.10D)
@@ -208,6 +260,51 @@ public final class PauCClientChunkPriorityScorer {
 			: totalScore >= (movementCatchup ? 0.38D : viewportCentralBias ? 0.54D : fpsFirstVanilla ? 0.50D : WARM_SCORE_THRESHOLD)
 				&& (ahead || nearLiveBand);
 		return new ChunkPriority(totalScore, chebyshevDistance, radialDistance, ahead, retain, warm);
+	}
+
+	private static LookaheadCenter computeLookaheadCenter(
+		ChunkPos playerChunk,
+		int warmRadiusChunks,
+		int renderDistance,
+		double lookX,
+		double lookZ,
+		double motionX,
+		double motionZ,
+		double speed,
+		double turnSeverity,
+		boolean fastTravel,
+		boolean snapMode,
+		boolean movementCatchup,
+		boolean fpsFirstVanilla
+	) {
+		double guideWeight = speed >= 0.08D ? 0.72D : 0.35D;
+		double guideX = (motionX * guideWeight) + (lookX * (1.0D - guideWeight));
+		double guideZ = (motionZ * guideWeight) + (lookZ * (1.0D - guideWeight));
+		double guideLength = Math.max(1.0E-4D, Math.sqrt(guideX * guideX + guideZ * guideZ));
+		double normalizedGuideX = guideX / guideLength;
+		double normalizedGuideZ = guideZ / guideLength;
+
+		double lead = snapMode ? 2.0D : 0.0D;
+		if (movementCatchup) {
+			lead = Math.max(lead, 3.0D + (speed * 14.0D));
+		}
+		if (fastTravel) {
+			lead = Math.max(lead, 5.0D + (speed * 10.0D));
+		}
+		if (turnSeverity > 0.32D) {
+			lead += 1.0D;
+		}
+		if (fpsFirstVanilla && (movementCatchup || fastTravel || speed >= 0.08D)) {
+			lead += readInt(HIGH_TARGET_LOOKAHEAD_BONUS_PROPERTY, 2, 0, 8);
+		}
+
+		int maxLead = Math.max(0, Math.min(warmRadiusChunks, Math.max(4, warmRadiusChunks - Math.max(renderDistance - 1, 1))));
+		int lookaheadChunks = Math.max(0, Math.min(maxLead, (int) Math.round(lead)));
+		return new LookaheadCenter(
+			playerChunk.x + (int) Math.round(normalizedGuideX * lookaheadChunks),
+			playerChunk.z + (int) Math.round(normalizedGuideZ * lookaheadChunks),
+			lookaheadChunks
+		);
 	}
 
 	private static boolean updateMovementCatchup(String dimensionId, ChunkPos playerChunk, double speed) {
@@ -259,6 +356,9 @@ public final class PauCClientChunkPriorityScorer {
 			minimumExtra = Math.min(minimumExtra, travelFill ? 12 : 8);
 		}
 		int targetRadius = Math.max(range.lodEndChunk(), renderDistance + minimumExtra);
+		if (fpsFirstVanilla && !readBoolean(HIGH_TARGET_WARM_BEYOND_SLIDER_PROPERTY, false)) {
+			targetRadius = range.lodEndChunk();
+		}
 		boolean shortRangeRoundWarmup = range.lodEndChunk() <= 64 && readBoolean(SHORT_RANGE_ROUND_HORIZON_WARMUP_PROPERTY, true);
 		if (!fpsFirstVanilla && (travelFill || shortRangeRoundWarmup)) {
 			targetRadius = Math.max(targetRadius, Math.min(roundHorizonRadius, range.lodEndChunk() + minimumExtra));
@@ -277,8 +377,23 @@ public final class PauCClientChunkPriorityScorer {
 			renderDistance,
 			maxConfiguredRadius
 		);
-		int radiusCap = fpsFirstVanilla && !travelFill ? Math.min(roundHorizonRadius, targetRadius) : roundHorizonRadius;
-		return Math.max(baseWarmRadius, Math.min(configuredRadius, radiusCap));
+		int radiusCap = fpsFirstVanilla && !readBoolean(HIGH_TARGET_WARM_BEYOND_SLIDER_PROPERTY, false)
+			? range.lodEndChunk()
+			: fpsFirstVanilla && !travelFill ? Math.min(roundHorizonRadius, targetRadius) : roundHorizonRadius;
+		int warmRadius = Math.max(baseWarmRadius, Math.min(configuredRadius, radiusCap));
+		if (fpsFirstVanilla && !readBoolean(HIGH_TARGET_WARM_BEYOND_SLIDER_PROPERTY, false)) {
+			return Math.max(renderDistance, Math.min(warmRadius, range.lodEndChunk()));
+		}
+		return warmRadius;
+	}
+
+	public static int vanillaSealRingChunks(boolean travelFill) {
+		return readInt(
+			travelFill ? VANILLA_SEAL_TRAVEL_RING_CHUNKS_PROPERTY : VANILLA_SEAL_RING_CHUNKS_PROPERTY,
+			travelFill ? 6 : 4,
+			1,
+			16
+		);
 	}
 
 	private static boolean isMovementCatchupQueueResolved() {
@@ -324,11 +439,14 @@ public final class PauCClientChunkPriorityScorer {
 		String dimensionId,
 		int playerChunkX,
 		int playerChunkZ,
+		int priorityCenterChunkX,
+		int priorityCenterChunkZ,
 		int playerSectionY,
 		int minSectionY,
 		int maxSectionY,
 		int renderDistanceChunks,
 		int warmRadiusChunks,
+		int lookaheadChunks,
 		double lookX,
 		double lookZ,
 		double motionX,
@@ -350,6 +468,13 @@ public final class PauCClientChunkPriorityScorer {
 		boolean ahead,
 		boolean shouldRetain,
 		boolean shouldWarm
+	) {
+	}
+
+	private record LookaheadCenter(
+		int chunkX,
+		int chunkZ,
+		int lookaheadChunks
 	) {
 	}
 }
