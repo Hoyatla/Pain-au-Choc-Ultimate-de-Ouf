@@ -3,6 +3,8 @@ package net.irisshaders.batchedentityrendering.mixin;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
+import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.world.entity.Entity;
@@ -14,11 +16,8 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyVariable;
 import org.spongepowered.asm.mixin.injection.Slice;
 
-import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collection;
 import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 
 /**
  * Sorts the entity list to allow entities of the same type to be properly batched. Without sorting, entities are
@@ -41,46 +40,76 @@ import java.util.Map;
  */
 @Mixin(value = LevelRenderer.class, priority = 999)
 public class MixinLevelRenderer_EntityListSorting {
+	@Unique
+	private static final String SORT_BATCH_THRESHOLD_PROPERTY = "pauc.lod.entitySortBatchThreshold";
 	@Shadow(aliases = "f_109465_")
 	private ClientLevel level;
 	@Unique
-	private final Map<EntityType<?>, List<Entity>> pauc$sortedEntityGroups = new HashMap<>();
+	private final Reference2ObjectOpenHashMap<EntityType<?>, ObjectArrayList<Entity>> pauc$sortedEntityGroups = new Reference2ObjectOpenHashMap<>();
 	@Unique
-	private final List<Entity> pauc$sortedEntities = new ArrayList<>();
+	private final ObjectArrayList<ObjectArrayList<Entity>> pauc$activeGroups = new ObjectArrayList<>();
+	@Unique
+	private final ObjectArrayList<Entity> pauc$sortedEntities = new ObjectArrayList<>();
 
 	@WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = "Ljava/lang/Iterable;iterator()Ljava/util/Iterator;"))
 	private Iterator<Entity> batchedentityrendering$sortEntityList(Iterable<Entity> instance, Operation<Iterator<Entity>> original) {
+		int sortBatchThreshold = pauc$readInt(SORT_BATCH_THRESHOLD_PROPERTY, 24, 0, 2048);
+		if (!PauCVillagePerformanceDiagnostics.isScenePressureActive()
+			&& instance instanceof Collection<?> collection
+			&& collection.size() <= sortBatchThreshold) {
+			return original.call(instance);
+		}
+
 		long startedAt = System.nanoTime();
 		// Sort the entity list first in order to allow vanilla's entity batching code to work better.
 		this.level.getProfiler().push("sortEntityList");
 
-		for (List<Entity> group : pauc$sortedEntityGroups.values()) {
-			group.clear();
+		for (int index = 0; index < pauc$activeGroups.size(); index++) {
+			pauc$activeGroups.get(index).clear();
 		}
+		pauc$activeGroups.clear();
 		pauc$sortedEntities.clear();
+		if (instance instanceof Collection<?> collection) {
+			pauc$sortedEntities.ensureCapacity(collection.size());
+		}
 		int entityCount = 0;
 		int groupCount = 0;
 		original.call(instance).forEachRemaining(entity -> {
 			EntityType<?> type = entity.getType();
-			List<Entity> group = pauc$sortedEntityGroups.get(type);
+			ObjectArrayList<Entity> group = pauc$sortedEntityGroups.get(type);
 			if (group == null) {
-				group = new ArrayList<>(32);
+				group = new ObjectArrayList<>(32);
 				pauc$sortedEntityGroups.put(type, group);
+			}
+			if (group.isEmpty()) {
+				pauc$activeGroups.add(group);
 			}
 			group.add(entity);
 		});
 
-		for (List<Entity> group : pauc$sortedEntityGroups.values()) {
-			if (!group.isEmpty()) {
-				groupCount++;
-				entityCount += group.size();
-				pauc$sortedEntities.addAll(group);
-			}
+		for (int index = 0; index < pauc$activeGroups.size(); index++) {
+			ObjectArrayList<Entity> group = pauc$activeGroups.get(index);
+			groupCount++;
+			entityCount += group.size();
+			pauc$sortedEntities.addAll(group);
 		}
 
 		this.level.getProfiler().pop();
 		PauCVillagePerformanceDiagnostics.recordEntitySort(entityCount, groupCount, System.nanoTime() - startedAt);
 
 		return pauc$sortedEntities.iterator();
+	}
+
+	@Unique
+	private static int pauc$readInt(String key, int fallback, int min, int max) {
+		String rawValue = System.getProperty(key);
+		if (rawValue == null) {
+			return Math.max(min, Math.min(max, fallback));
+		}
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(rawValue.trim())));
+		} catch (NumberFormatException ignored) {
+			return Math.max(min, Math.min(max, fallback));
+		}
 	}
 }

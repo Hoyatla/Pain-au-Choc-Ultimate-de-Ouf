@@ -566,7 +566,7 @@ public final class PauCClientFrontierWarmupManager {
 	public static int activeFillRadiusChunks(int fallbackRadiusChunks) {
 		int targetRadius = sanitizeFillRadiusChunks(fallbackRadiusChunks);
 		if (isDirectHorizonFillActive(targetRadius)) {
-			return targetRadius;
+			return directFillFocusRadiusChunks(targetRadius);
 		}
 		CoverageSnapshot snapshot = lastCoverageSnapshot;
 		if (snapshot.available() && snapshot.activeBandEnd() > 0) {
@@ -585,7 +585,11 @@ public final class PauCClientFrontierWarmupManager {
 			return 0;
 		}
 		if (isDirectHorizonFillActive(targetRadius)) {
-			return targetRadius;
+			return advanceFillBandEnd(
+				directFillFocusRadiusChunks(targetRadius),
+				targetRadius,
+				directFillRequestedBandLead()
+			);
 		}
 
 		CoverageSnapshot snapshot = lastCoverageSnapshot;
@@ -622,7 +626,11 @@ public final class PauCClientFrontierWarmupManager {
 			return 0;
 		}
 		if (isDirectHorizonFillActive(targetRadius)) {
-			return targetRadius;
+			return advanceFillBandEnd(
+				requestedFillRadiusChunks(targetRadius),
+				targetRadius,
+				directFillBackgroundBandLead()
+			);
 		}
 
 		int requestRadius = requestedFillRadiusChunks(targetRadius);
@@ -642,6 +650,84 @@ public final class PauCClientFrontierWarmupManager {
 			extraBands = Math.max(0, extraBands - 1);
 		}
 		return advanceFillBandEnd(requestRadius, targetRadius, extraBands);
+	}
+
+	private static int directFillFocusRadiusChunks(int targetRadius) {
+		int sanitizedTarget = sanitizeFillRadiusChunks(targetRadius);
+		if (sanitizedTarget <= 0) {
+			return 0;
+		}
+
+		PauCLodRange range = PauCClientLodGovernor.currentRange();
+		int lodStart = range != null && range.enabled()
+			? range.lodStartChunk()
+			: Math.max(PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, Math.min(sanitizedTarget, 8));
+		int configuredExtra = range != null && range.enabled()
+			? range.configuredExtraDistanceChunks()
+			: PauCLodClientSettings.configuredTargetDistanceChunks();
+		int leadChunks = 4 + Math.min(12, Math.max(2, configuredExtra / 6));
+		if (isActiveTravelFill()) {
+			leadChunks += 2;
+		}
+
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		if (snapshot.available()) {
+			if (snapshot.nearDebt()) {
+				leadChunks = Math.min(leadChunks, isActiveTravelFill() ? 8 : 6);
+			} else if (snapshot.activeBandRatio() >= 0.55D && snapshot.ratio() >= 0.28D) {
+				leadChunks += 1;
+			}
+		}
+
+		if (PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
+			if (backlogPressure >= 0.55D) {
+				leadChunks = Math.min(leadChunks, isActiveTravelFill() ? 8 : 6);
+			} else if (backlogPressure >= 0.35D) {
+				leadChunks = Math.min(leadChunks, isActiveTravelFill() ? 10 : 8);
+			}
+		}
+
+		int focusRadius = lodStart + Math.max(4, Math.min(18, leadChunks));
+		return Math.max(lodStart, Math.min(sanitizedTarget, focusRadius));
+	}
+
+	private static int directFillRequestedBandLead() {
+		int lead = isActiveTravelFill() ? 2 : 1;
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.backlogPressure()
+			: 0.0D;
+		if (backlogPressure >= 0.55D) {
+			return 1;
+		}
+		if (snapshot.available()
+			&& !snapshot.nearDebt()
+			&& snapshot.activeBandRatio() >= 0.60D
+			&& snapshot.ratio() >= 0.30D
+			&& backlogPressure < 0.35D) {
+			lead++;
+		}
+		return Math.max(1, Math.min(FILL_BANDS.length, lead));
+	}
+
+	private static int directFillBackgroundBandLead() {
+		int lead = 0;
+		CoverageSnapshot snapshot = lastCoverageSnapshot;
+		double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.backlogPressure()
+			: 0.0D;
+		if (backlogPressure < 0.35D) {
+			lead = isActiveTravelFill() ? 2 : 1;
+		}
+		if (snapshot.available()
+			&& !snapshot.nearDebt()
+			&& snapshot.activeBandRatio() >= 0.72D
+			&& snapshot.ratio() >= 0.44D
+			&& backlogPressure < 0.22D) {
+			lead++;
+		}
+		return Math.max(0, Math.min(FILL_BANDS.length, lead));
 	}
 
 	public static boolean isActiveTravelFill() {

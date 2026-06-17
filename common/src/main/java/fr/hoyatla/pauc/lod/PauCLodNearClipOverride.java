@@ -29,6 +29,7 @@ public final class PauCLodNearClipOverride {
 	private static final String SHADER_OFF_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffNearClipInsetChunks";
 	private static final String SHADER_OFF_MOVING_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffMovingNearClipInsetChunks";
 	private static final String SHADER_OFF_STARTUP_INSET_CHUNKS_PROPERTY = "pauc.lod.shaderOffStartupNearClipInsetChunks";
+	private static final String SHADER_OFF_BOUNDARY_RECOVERY_CLIP_PROPERTY = "pauc.lod.shaderOffBoundaryRecoveryClip";
 	private static final int DEFAULT_INSET_CHUNKS = 2;
 	private static final int DEFAULT_SHADER_OFF_INSET_CHUNKS = 3;
 	private static final int DEFAULT_SHADER_OFF_MOVING_INSET_CHUNKS = 4;
@@ -70,11 +71,14 @@ public final class PauCLodNearClipOverride {
 		boolean underVanilla = shouldKeepLodsUnderVanilla();
 		int insetChunks = underVanilla ? 0 : insetChunks();
 		boolean groundedOverlapClip = shouldUseGroundedOverlapClip();
+		boolean boundaryRecoveryClip = shouldUseBoundaryRecoveryClip();
 		float underVanillaClipBlocks = underVanillaClipBlocks(range, groundedOverlapClip);
 		float appliedNearClipBlocks = underVanilla
 			? underVanillaClipBlocks
+			: boundaryRecoveryClip
+				? originalNearClipBlocks
 			: Math.max(originalNearClipBlocks, boundaryClipBlocks(range, insetChunks));
-		logOverride(originalNearClipBlocks, appliedNearClipBlocks, range, insetChunks, underVanilla, groundedOverlapClip);
+		logOverride(originalNearClipBlocks, appliedNearClipBlocks, range, insetChunks, underVanilla, groundedOverlapClip, boundaryRecoveryClip);
 		return appliedNearClipBlocks;
 	}
 
@@ -316,6 +320,13 @@ public final class PauCLodNearClipOverride {
 		return now <= groundedOverlapClipHoldUntilMs;
 	}
 
+	private static boolean shouldUseBoundaryRecoveryClip() {
+		return !shouldKeepLodsUnderVanilla()
+			&& !PauCLodShaderContext.isShaderPackInUse()
+			&& shouldHoldTerrainContinuity()
+			&& readBoolean(SHADER_OFF_BOUNDARY_RECOVERY_CLIP_PROPERTY, true);
+	}
+
 	private static boolean shouldHoldTerrainContinuity() {
 		long now = System.currentTimeMillis();
 		if (now > terrainContinuityHoldUntilMs) {
@@ -335,7 +346,7 @@ public final class PauCLodNearClipOverride {
 		return pos.getY();
 	}
 
-	private static void logOverride(float originalNearClipBlocks, float appliedNearClipBlocks, PauCLodRange range, int insetChunks, boolean underVanilla, boolean groundedOverlapClip) {
+	private static void logOverride(float originalNearClipBlocks, float appliedNearClipBlocks, PauCLodRange range, int insetChunks, boolean underVanilla, boolean groundedOverlapClip, boolean boundaryRecoveryClip) {
 		long now = System.currentTimeMillis();
 		boolean changed = Math.abs(appliedNearClipBlocks - lastLoggedApplied) >= 1.0F
 			|| range.lodStartChunk() != lastLoggedLodStartChunk
@@ -358,7 +369,9 @@ public final class PauCLodNearClipOverride {
 		lastLogMs = now;
 		LOGGER.info(
 			"PauC DH near-clip override: mode={}, original={} blocks, applied={} blocks, lodStart={} chunks, inset={} chunks, groundedOverlapClip={}, featureTransition={}, continuityHold={}, {}",
-			underVanilla ? groundedOverlapClip ? "lods-under-vanilla-grounded-overlap-mask" : "lods-under-vanilla" : "boundary-clip",
+			underVanilla
+				? groundedOverlapClip ? "lods-under-vanilla-grounded-overlap-mask" : "lods-under-vanilla"
+				: boundaryRecoveryClip ? "boundary-recovery" : "boundary-clip",
 			roundOneDecimal(originalNearClipBlocks),
 			roundOneDecimal(appliedNearClipBlocks),
 			range.lodStartChunk(),

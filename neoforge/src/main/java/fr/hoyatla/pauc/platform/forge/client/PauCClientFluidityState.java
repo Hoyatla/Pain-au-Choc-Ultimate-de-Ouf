@@ -262,12 +262,13 @@ public final class PauCClientFluidityState {
 		boolean coverageDebt = PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt();
 		boolean nearCoverageDebt = PauCClientFrontierWarmupManager.hasNearCoverageDebt();
 		boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(PauCLodClientSettings.targetDistanceChunks());
+		boolean backlogRecovery = shouldProtectBacklogRecovery(movementCatchup, coverageDebt, nearCoverageDebt);
 		// Resilient sustainable-rate cap (measured, no per-pack constant): while a real backlog exists, never
 		// request meaningfully more chunks/s than the embedded LOD runtime is actually COMPLETING on this
 		// modpack + hardware. Heavy worldgen (slow per-chunk gen, e.g. Terralith) self-limits instead of
 		// piling an unbounded backlog - the root cause of map-load stutter and 1% low dips - while light packs
 		// stay uncapped and push far. movementCatchup is exempt so the player can briefly burst to fill ahead.
-		if (!directFill && !movementCatchup && !coverageDebt) {
+		if (!directFill && !movementCatchup && !coverageDebt && !backlogRecovery) {
 			double throughput = PauCEmbeddedLodRuntimeDiagnostics.completionsPerSecond();
 			int backlog = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() + PauCEmbeddedLodRuntimeDiagnostics.pendingTasks();
 			int backlogThreshold = readInt("pauc.lod.sustainableRateBacklogTasks", 96, 8, 8192);
@@ -299,7 +300,7 @@ public final class PauCClientFluidityState {
 				: generationRequestRateLimit;
 			scaled = Math.max(scaled, Math.min(cap, coverageFloor));
 		}
-		if (snapshot.emergencyGenerationCap > 0 && !movementCatchup && !coverageDebt) {
+		if (snapshot.emergencyGenerationCap > 0 && !movementCatchup && !coverageDebt && !directFill && !backlogRecovery) {
 			scaled = Math.min(scaled, snapshot.emergencyGenerationCap);
 		}
 		if (movementCatchup) {
@@ -308,6 +309,14 @@ public final class PauCClientFluidityState {
 				case RECOVERY -> 320;
 				case BALANCED, HEADROOM -> 192;
 			};
+			scaled = Math.max(scaled, Math.min(generationRequestRateLimit, recoveryFloor));
+		} else if (backlogRecovery) {
+			int recoveryFloor = readInt(
+				"pauc.lod.backlogRecoveryGenerationFloor",
+				PauCLodShaderContext.isShaderPackInUse() ? 224 : 320,
+				64,
+				PauCLodClientSettings.maxGenerationRequestRateLimit()
+			);
 			scaled = Math.max(scaled, Math.min(generationRequestRateLimit, recoveryFloor));
 		}
 		if (directFill) {
@@ -320,6 +329,19 @@ public final class PauCClientFluidityState {
 			scaled = Math.max(scaled, directFillFloor);
 		}
 		return Math.max(20, Math.min(PauCLodClientSettings.maxGenerationRequestRateLimit(), scaled));
+	}
+
+	private static boolean shouldProtectBacklogRecovery(boolean movementCatchup, boolean coverageDebt, boolean nearCoverageDebt) {
+		if (movementCatchup || coverageDebt || nearCoverageDebt || !PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return false;
+		}
+
+		int totalBacklogTasks = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() + PauCEmbeddedLodRuntimeDiagnostics.pendingTasks();
+		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
+		double queuePressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
+		return queuePressure >= readDouble("pauc.lod.backlogRecoveryMinQueuePressure", 0.18D, 0.0D, 1.0D)
+			|| pendingChunks >= readInt("pauc.lod.backlogRecoveryMinPendingChunks", 384, 32, 32768)
+			|| totalBacklogTasks >= readInt("pauc.lod.backlogRecoveryMinBacklogTasks", 96, 8, 8192);
 	}
 
 	public static int adjustRetentionMargin(int retentionMarginChunks) {
@@ -505,6 +527,9 @@ public final class PauCClientFluidityState {
 			+ backlogResolved
 			+ ", externalDip="
 			+ externalFpsDip
+			+ ", scene="
+			+ (PauCVillagePerformanceDiagnostics.isScenePressureActive() ? PauCVillagePerformanceDiagnostics.scenePressureTier() + "/" : "off/")
+			+ (PauCVillagePerformanceDiagnostics.lastPlayerGrounded() ? "ground" : "free")
 			+ ", avgChunkMs="
 			+ (avgChunkMs >= 0.0D ? round(avgChunkMs) : "-")
 			+ ", genTput="
@@ -672,6 +697,14 @@ public final class PauCClientFluidityState {
 		} else if (renderedBlockEntitiesWindow >= 384L) {
 			score += 2;
 		} else if (renderedBlockEntitiesWindow >= 128L) {
+			score += 1;
+		}
+		int scenePressureTier = PauCVillagePerformanceDiagnostics.scenePressureTier();
+		if (scenePressureTier >= 3) {
+			score += 3;
+		} else if (scenePressureTier >= 2) {
+			score += 2;
+		} else if (scenePressureTier >= 1) {
 			score += 1;
 		}
 		if (PauCVillagePerformanceDiagnostics.isVillagePressureActive()) {

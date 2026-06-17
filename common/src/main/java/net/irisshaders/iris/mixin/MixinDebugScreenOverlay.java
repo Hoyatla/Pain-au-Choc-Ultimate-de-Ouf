@@ -101,12 +101,12 @@ public abstract class MixinDebugScreenOverlay {
 		//}
 
 		Iris.getPipelineManager().getPipeline().ifPresent(pipeline -> pipeline.addDebugText(messages));
+		if (PauCLodDiagnostics.enabled() || PauCLodDiagnostics.hasHudFpsMetrics()) {
+			messages.add(PauCLodDiagnostics.fpsLine());
+		}
 		if (PauCLodDiagnostics.enabled()) {
-			messages.add(PauCLodDiagnostics.overviewLine());
-			messages.add(PauCLodDiagnostics.shaderLine());
-			messages.add(PauCLodDiagnostics.policyLine());
-			messages.add(PauCLodDiagnostics.validationLine());
-			messages.add(PauCLodDiagnostics.cullingLine());
+			messages.add(PauCLodDiagnostics.compactOverviewLine());
+			messages.add(PauCLodDiagnostics.compactModeLine());
 		}
 		iris$sanitizeLegacyRendererLabels(messages);
 	}

@@ -595,6 +595,7 @@ public final class PauCEmbeddedDhBridge {
 		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
 		boolean shaderRuntime = isShaderPackRuntimeInUse();
 		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
+		boolean queueBackedUp = isDirectFillQueueBackedUp();
 		boolean coarseFillCatchup = shaderFallback
 			|| directFill
 			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
@@ -604,11 +605,22 @@ public final class PauCEmbeddedDhBridge {
 			directFill
 				? fpsFirstVanilla
 					? (activeTravelFill ? 56 : 40)
-					: (activeTravelFill ? 48 : 36)
+				: (activeTravelFill ? 48 : 36)
 				: coarseFillCatchup ? 32 : 12,
 			0,
 			128
 		);
+		if (directFill && fpsFirstVanilla) {
+			int visibleLeadChunks = readInt(
+				queueBackedUp
+					? "pauc.lod.directHorizonBacklogPreloadLeadChunks"
+					: "pauc.lod.directHorizonVisiblePreloadLeadChunks",
+				queueBackedUp ? (activeTravelFill ? 12 : 6) : (activeTravelFill ? 24 : 12),
+				0,
+				48
+			);
+			preloadExtraChunks = Math.min(preloadExtraChunks, visibleLeadChunks);
+		}
 		int maxRequestBlocks = readInt(
 			MAX_GENERATION_REQUEST_BLOCKS_PROPERTY,
 			directFill
@@ -623,9 +635,13 @@ public final class PauCEmbeddedDhBridge {
 		int requestedFillRadius = PauCClientFrontierWarmupManager.requestedFillRadiusChunks(targetDistance);
 		int backgroundFillRadius = PauCClientFrontierWarmupManager.backgroundFillRadiusChunks(targetDistance);
 		int requestRadiusChunks = directFill
-			? targetDistance
+			? Math.max(activeFillRadius, requestedFillRadius)
 			: Math.min(targetDistance, Math.max(requestedFillRadius, PauCLodHorizonState.currentRange().lodStartChunk()));
 		int requestDistanceBlocks = clampInt((requestRadiusChunks + preloadExtraChunks) * 16, 256, maxRequestBlocks);
+		if (directFill && fpsFirstVanilla && queueBackedUp) {
+			int backlogLeadChunks = readInt("pauc.lod.directHorizonBacklogRequestLeadChunks", activeTravelFill ? 12 : 6, 0, 48);
+			requestDistanceBlocks = Math.min(requestDistanceBlocks, clampInt((activeFillRadius + backlogLeadChunks) * 16, 256, maxRequestBlocks));
+		}
 		if (coarseFillCatchup) {
 			int coarseFillDefault = shaderFallback ? 768 : shaderRuntime ? 512 : fpsFirstVanilla ? 1024 : 768;
 			int coarseFillCeiling = shaderFallback ? 1024 : shaderRuntime ? 768 : fpsFirstVanilla ? 1536 : 1024;
@@ -674,7 +690,7 @@ public final class PauCEmbeddedDhBridge {
 			loggedRoundHorizonGenerationPolicy = true;
 			lastLoggedGenerationPolicy = generationPolicySignature;
 			LOGGER.info(
-				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, activeFillBand={} chunks, generationRequest={} blocks, preloadExtra={} chunks, requestRate={}/s, nSized={}, fillHoles={}, coarseFirst={}.",
+				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, activeFillBand={} chunks, generationRequest={} blocks, preloadExtra={} chunks, requestRate={}/s, nSized={}, fillHoles={}, coarseFirst={}, queueBackedUp={}.",
 				targetDistance,
 				activeFillRadius,
 				requestDistanceBlocks,
@@ -682,7 +698,8 @@ public final class PauCEmbeddedDhBridge {
 				requestRateLimit,
 				nSizedGeneration,
 				fillHoles,
-				coarseFirstFill
+				coarseFirstFill,
+				queueBackedUp
 			);
 			LOGGER.info(
 				"PauC embedded DH bridge fill expansion: requestedRadius={} chunks, backgroundRadius={} chunks, shaderFallback={}, catchup={}, directFill={}.",
@@ -727,12 +744,20 @@ public final class PauCEmbeddedDhBridge {
 		boolean shaderRuntime = isShaderPackRuntimeInUse();
 		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
 		boolean keepUnderVanilla = PauCLodNearClipOverride.shouldKeepLodsUnderVanilla();
+		boolean coverageRecovery = !shaderRuntime
+			&& !keepUnderVanilla
+			&& (PauCClientFrontierWarmupManager.hasNearCoverageDebt()
+				|| PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage());
 		float overdrawPrevention = (float) readDouble(
 			shaderFallback ? SHADER_FALLBACK_OVERDRAW_PREVENTION_PROPERTY : shaderRuntime ? SHADER_OVERDRAW_PREVENTION_PROPERTY : RELIEF_OVERDRAW_PREVENTION_PROPERTY,
 			keepUnderVanilla || shaderFallback ? -1.0D : shaderRuntime ? 0.80D : 0.88D,
 			-1.0D,
 			1.0D
 		);
+		if (coverageRecovery) {
+			// Coverage first: let LOD terrain overlap while the vanilla/LOD junction is still refilling.
+			overdrawPrevention = -1.0F;
+		}
 		EDhApiMcRenderingFadeMode fadeMode = shaderRuntime
 			? readEnum(
 				shaderFallback ? SHADER_FALLBACK_VANILLA_FADE_MODE_PROPERTY : SHADER_VANILLA_FADE_MODE_PROPERTY,
@@ -744,11 +769,11 @@ public final class PauCEmbeddedDhBridge {
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_OVERDRAW_PREVENTION_FIELD, overdrawPrevention)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD, Boolean.FALSE);
 
-		String transitionSignature = shaderRuntime + ":" + shaderFallback + ":" + keepUnderVanilla + ":" + fadeMode + ":" + overdrawPrevention;
+		String transitionSignature = shaderRuntime + ":" + shaderFallback + ":" + keepUnderVanilla + ":" + coverageRecovery + ":" + fadeMode + ":" + overdrawPrevention;
 		if (configured && (!loggedSeamlessTransitionOverride || !transitionSignature.equals(lastLoggedSeamlessTransitionPolicy))) {
 			loggedSeamlessTransitionOverride = true;
 			lastLoggedSeamlessTransitionPolicy = transitionSignature;
-			LOGGER.info("PauC embedded DH bridge configured vanilla-to-LOD boundary: shaderRuntime={}, shaderFallback={}, keepUnderVanilla={}, vanillaFade={}, overdraw={}, fastMovementOverdraw=false.", shaderRuntime, shaderFallback, keepUnderVanilla, fadeMode, overdrawPrevention);
+			LOGGER.info("PauC embedded DH bridge configured vanilla-to-LOD boundary: shaderRuntime={}, shaderFallback={}, keepUnderVanilla={}, coverageRecovery={}, vanillaFade={}, overdraw={}, fastMovementOverdraw=false.", shaderRuntime, shaderFallback, keepUnderVanilla, coverageRecovery, fadeMode, overdrawPrevention);
 		}
 	}
 
@@ -1132,6 +1157,15 @@ public final class PauCEmbeddedDhBridge {
 		return Math.max(min, Math.min(max, value));
 	}
 
+	private static boolean isDirectFillQueueBackedUp() {
+		if (!PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return false;
+		}
+		return PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() >= readInt("pauc.lod.directHorizonBacklogPendingChunks", 1536, 128, 32768)
+			|| PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() >= readInt("pauc.lod.directHorizonBacklogTasks", 128, 8, 8192)
+			|| PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() >= readDouble("pauc.lod.directHorizonBacklogQueuePressure", 0.28D, 0.0D, 1.0D);
+	}
+
 	private record BridgeState(
 		boolean available,
 		String status,
@@ -1210,6 +1244,7 @@ public final class PauCEmbeddedDhBridge {
 			int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
 			boolean coarseFill = PauCClientFrontierWarmupManager.shouldPreferCoarseFill() || PauCClientChunkPriorityScorer.isMovementCatchupActive();
 			boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(PauCLodClientSettings.targetDistanceChunks());
+			boolean activeTravelFill = PauCClientFrontierWarmupManager.isActiveTravelFill();
 			boolean aggressiveFill = coarseFill || directFill;
 			boolean shaderRuntime = isShaderPackRuntimeInUse();
 			boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
@@ -1231,6 +1266,9 @@ public final class PauCEmbeddedDhBridge {
 				: (shaderRuntime ? 0.54D : fpsFirstVanilla ? 0.46D : 0.68D)) + modpackShareBoost, 0.25D, 0.92D);
 			if (directFill) {
 				defaultThreadShare = Math.max(defaultThreadShare, shaderRuntime ? 0.68D : fpsFirstVanilla ? 0.58D : 0.76D);
+				if (fpsFirstVanilla && !shaderRuntime) {
+					defaultThreadShare = Math.max(defaultThreadShare, activeTravelFill ? 0.82D : 0.74D);
+				}
 			}
 			int defaultThreads = clampInt((int) Math.ceil(processors * defaultThreadShare), 2, threadCeiling);
 			double defaultRuntimeRatio = clampDouble((aggressiveFill
@@ -1238,6 +1276,9 @@ public final class PauCEmbeddedDhBridge {
 				: (shaderRuntime ? 0.52D : fpsFirstVanilla ? 0.42D : 0.68D)) + modpackShareBoost * 0.50D, 0.05D, 0.92D);
 			if (directFill) {
 				defaultRuntimeRatio = Math.max(defaultRuntimeRatio, shaderRuntime ? 0.66D : fpsFirstVanilla ? 0.56D : 0.90D);
+				if (fpsFirstVanilla && !shaderRuntime) {
+					defaultRuntimeRatio = Math.max(defaultRuntimeRatio, activeTravelFill ? 0.76D : 0.68D);
+				}
 			}
 			return new RuntimeLodSettings(
 				defaultMaxHorizontalResolution(),

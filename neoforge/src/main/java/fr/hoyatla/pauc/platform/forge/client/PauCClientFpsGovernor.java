@@ -2,6 +2,7 @@ package fr.hoyatla.pauc.platform.forge.client;
 
 import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
+import fr.hoyatla.pauc.lod.PauCLodDiagnostics;
 import fr.hoyatla.pauc.lod.PauCLodGameplayProfile;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
@@ -26,6 +27,8 @@ public final class PauCClientFpsGovernor {
 	private static final String DYNAMIC_MAX_RESOLUTION_PROPERTY = "pauc.lod.dynamicMaxHorizontalResolution";
 	private static final String DYNAMIC_HORIZONTAL_QUALITY_PROPERTY = "pauc.lod.dynamicHorizontalQuality";
 	private static final String DYNAMIC_VERTICAL_QUALITY_PROPERTY = "pauc.lod.dynamicVerticalQuality";
+	private static final String RUNTIME_HUD_RAW_FPS_PROPERTY = PauCLodDiagnostics.HUD_RAW_FPS_PROPERTY;
+	private static final String RUNTIME_HUD_AVERAGE_FPS_PROPERTY = PauCLodDiagnostics.HUD_AVERAGE_FPS_PROPERTY;
 	private static final String VILLAGE_GENERATION_RATE_PROPERTY = "pauc.lod.villageGenerationRequestRateLimit";
 	private static final String VILLAGE_WARMUP_SCALE_PROPERTY = "pauc.lod.villageWarmupScale";
 	private static final String VILLAGE_SEVERE_RATIO_PROPERTY = "pauc.lod.villageSevereFpsRatio";
@@ -111,6 +114,7 @@ public final class PauCClientFpsGovernor {
 
 	public static void onClientTick(Minecraft minecraft) {
 		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
+			clearRuntimeHudFps();
 			resetTargetDistanceStabilizer();
 			clearPresentationQualityStabilizer();
 			clearDynamicOverrides();
@@ -124,6 +128,7 @@ public final class PauCClientFpsGovernor {
 
 		int fps = queryFps(minecraft);
 		if (fps <= 0) {
+			clearRuntimeHudFps();
 			applyPolicy(Policy.STARTUP, "fps-unavailable");
 			return;
 		}
@@ -147,6 +152,7 @@ public final class PauCClientFpsGovernor {
 		boolean queueDrained = workloadSnapshot.queueDrained();
 		boolean queueFullyDrained = workloadSnapshot.queueFullyDrained();
 		lastConservativeFps = steadyFps;
+		updateRuntimeHudFps(fps, smoothedFps);
 		lastQueuePressure = queuePressure;
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		PauCLodShaderProfiles.Family shaderFamily = PauCLodShaderProfiles.currentFamily();
@@ -337,6 +343,7 @@ public final class PauCClientFpsGovernor {
 		PauCClientFluidityState.reset();
 		PauCWorkloadState.reset();
 		fr.hoyatla.pauc.lod.PauCShaderShadowBudget.reset();
+		clearRuntimeHudFps();
 		clearDynamicOverrides();
 	}
 
@@ -1198,6 +1205,24 @@ public final class PauCClientFpsGovernor {
 		}
 	}
 
+	private static void updateRuntimeHudFps(int rawFps, double averageFps) {
+		if (rawFps > 0) {
+			setSystemPropertyIfChanged(RUNTIME_HUD_RAW_FPS_PROPERTY, Integer.toString(rawFps));
+		} else {
+			System.clearProperty(RUNTIME_HUD_RAW_FPS_PROPERTY);
+		}
+		if (averageFps >= 0.0D) {
+			setSystemPropertyIfChanged(RUNTIME_HUD_AVERAGE_FPS_PROPERTY, round(averageFps));
+		} else {
+			System.clearProperty(RUNTIME_HUD_AVERAGE_FPS_PROPERTY);
+		}
+	}
+
+	private static void clearRuntimeHudFps() {
+		System.clearProperty(RUNTIME_HUD_RAW_FPS_PROPERTY);
+		System.clearProperty(RUNTIME_HUD_AVERAGE_FPS_PROPERTY);
+	}
+
 	private static void suspendOutsideWorld() {
 		smoothedFps = -1.0D;
 		slowSmoothedFps = -1.0D;
@@ -1225,6 +1250,7 @@ public final class PauCClientFpsGovernor {
 		System.clearProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY);
 		PauCClientFluidityState.reset();
 		PauCWorkloadState.reset();
+		clearRuntimeHudFps();
 		clearDynamicOverrides();
 	}
 

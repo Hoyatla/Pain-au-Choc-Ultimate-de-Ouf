@@ -51,15 +51,15 @@ public final class PauCParticleBudget {
 		syncFrame();
 		spawnedThisFrame++;
 
-		// Default OFF (known-good visual baseline): dropping particles is a visible change. Opt-in only.
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"))) {
+		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
 			return false;
 		}
-		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {
+		boolean scenePressure = PauCVillagePerformanceDiagnostics.isScenePressureActive();
+		if (!PauCFrameSpikeAbsorber.isAbsorbing() && !scenePressure) {
 			return false;
 		}
 
-		double workScale = PauCFrameSpikeAbsorber.workScale();
+		double workScale = particlePressureScale(scenePressure);
 		boolean near = cameraValid && isNear(x, y, z);
 
 		if (!near) {
@@ -136,6 +136,21 @@ public final class PauCParticleBudget {
 
 	private static int scale(int base, double workScale) {
 		return Math.max(8, (int) Math.round(base * workScale));
+	}
+
+	private static double particlePressureScale(boolean scenePressure) {
+		double scale = 1.0D;
+		if (PauCFrameSpikeAbsorber.isAbsorbing()) {
+			scale = Math.min(scale, PauCFrameSpikeAbsorber.workScale());
+		}
+		if (scenePressure) {
+			scale = Math.min(scale, PauCVillagePerformanceDiagnostics.scenePressureScale());
+			if (PauCVillagePerformanceDiagnostics.lastPlayerGrounded()
+				&& PauCVillagePerformanceDiagnostics.lastPlayerHorizontalSpeed() >= 0.10D) {
+				scale = Math.max(0.40D, scale - 0.08D);
+			}
+		}
+		return scale;
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {

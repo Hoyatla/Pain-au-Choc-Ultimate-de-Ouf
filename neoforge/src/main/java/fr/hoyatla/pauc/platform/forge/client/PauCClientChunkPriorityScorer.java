@@ -22,6 +22,10 @@ public final class PauCClientChunkPriorityScorer {
 	private static final String MOVEMENT_CATCHUP_IDLE_RELEASE_STEP_PROPERTY = "pauc.lod.movementCatchupIdleReleaseStep";
 	private static final String MOVEMENT_CATCHUP_IDLE_MAX_QUEUE_PRESSURE_PROPERTY = "pauc.lod.movementCatchupIdleMaxQueuePressure";
 	private static final String MOVEMENT_CATCHUP_IDLE_MAX_PENDING_CHUNKS_PROPERTY = "pauc.lod.movementCatchupIdleMaxPendingChunks";
+	private static final String MOVEMENT_CATCHUP_HOLD_MIN_QUEUE_PRESSURE_PROPERTY = "pauc.lod.movementCatchupHoldMinQueuePressure";
+	private static final String MOVEMENT_CATCHUP_HOLD_MIN_PENDING_CHUNKS_PROPERTY = "pauc.lod.movementCatchupHoldMinPendingChunks";
+	private static final String MOVEMENT_CATCHUP_HOLD_MIN_BACKLOG_TASKS_PROPERTY = "pauc.lod.movementCatchupHoldMinBacklogTasks";
+	private static final String MOVEMENT_CATCHUP_HOLD_MIN_TICKS_PROPERTY = "pauc.lod.movementCatchupHoldMinTicks";
 	private static final String HIGH_TARGET_FPS_PROPERTY = "pauc.lod.vanillaHighTargetFps";
 	private static final String HIGH_TARGET_WARM_RADIUS_LEAD_PROPERTY = "pauc.lod.vanillaHighTargetWarmRadiusLeadChunks";
 	private static final String HIGH_TARGET_LOOKAHEAD_BONUS_PROPERTY = "pauc.lod.vanillaHighTargetLookaheadBonusChunks";
@@ -322,6 +326,7 @@ public final class PauCClientChunkPriorityScorer {
 		boolean moving = speed >= MOVEMENT_CATCHUP_SPEED_THRESHOLD;
 		boolean idleQueueResolved = isMovementCatchupQueueResolved();
 		boolean idleRelease = idleQueueResolved && !chunkChanged && speed < (MOVEMENT_CATCHUP_SPEED_THRESHOLD * 0.50D);
+		boolean holdForBacklog = movementCatchupRemainingTicks > 0 && shouldHoldMovementCatchupForBacklog();
 		if (chunkChanged || moving) {
 			sustainedMovementTicks = Math.min(MOVEMENT_SUSTAINED_TICKS, sustainedMovementTicks + 1);
 		} else {
@@ -331,10 +336,17 @@ public final class PauCClientChunkPriorityScorer {
 		if (chunkChanged || sustainedMovementTicks >= MOVEMENT_SUSTAINED_TICKS) {
 			movementCatchupRemainingTicks = MOVEMENT_CATCHUP_TICKS;
 		} else if (movementCatchupRemainingTicks > 0) {
-			int releaseStep = idleRelease
-				? readInt(MOVEMENT_CATCHUP_IDLE_RELEASE_STEP_PROPERTY, 4, 1, 20)
-				: 1;
-			movementCatchupRemainingTicks = Math.max(0, movementCatchupRemainingTicks - releaseStep);
+			if (holdForBacklog && !idleRelease) {
+				movementCatchupRemainingTicks = Math.max(
+					movementCatchupRemainingTicks,
+					readInt(MOVEMENT_CATCHUP_HOLD_MIN_TICKS_PROPERTY, 90, 10, 240)
+				);
+			} else {
+				int releaseStep = idleRelease
+					? readInt(MOVEMENT_CATCHUP_IDLE_RELEASE_STEP_PROPERTY, 4, 1, 20)
+					: 1;
+				movementCatchupRemainingTicks = Math.max(0, movementCatchupRemainingTicks - releaseStep);
+			}
 		}
 
 		previousPlayerChunkX = playerChunk.x;
@@ -404,6 +416,22 @@ public final class PauCClientChunkPriorityScorer {
 			&& PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= 0
 			&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= readInt(MOVEMENT_CATCHUP_IDLE_MAX_PENDING_CHUNKS_PROPERTY, 12, 0, 512)
 			&& PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() <= readDouble(MOVEMENT_CATCHUP_IDLE_MAX_QUEUE_PRESSURE_PROPERTY, 0.02D, 0.0D, 1.0D);
+	}
+
+	private static boolean shouldHoldMovementCatchupForBacklog() {
+		if (!PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return false;
+		}
+		if (PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt() || PauCClientFrontierWarmupManager.hasNearCoverageDebt()) {
+			return true;
+		}
+
+		int totalBacklogTasks = PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() + PauCEmbeddedLodRuntimeDiagnostics.pendingTasks();
+		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
+		double queuePressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
+		return queuePressure >= readDouble(MOVEMENT_CATCHUP_HOLD_MIN_QUEUE_PRESSURE_PROPERTY, 0.18D, 0.0D, 1.0D)
+			|| pendingChunks >= readInt(MOVEMENT_CATCHUP_HOLD_MIN_PENDING_CHUNKS_PROPERTY, 384, 32, 32768)
+			|| totalBacklogTasks >= readInt(MOVEMENT_CATCHUP_HOLD_MIN_BACKLOG_TASKS_PROPERTY, 96, 8, 8192);
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
