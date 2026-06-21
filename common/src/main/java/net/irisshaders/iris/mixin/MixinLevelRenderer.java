@@ -7,6 +7,7 @@ import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.gl.IrisRenderSystem;
@@ -76,9 +77,12 @@ public class MixinLevelRenderer {
 
 	@Unique
 	private static boolean pauc$shouldUseFogSkyColor() {
+		boolean shaderPackInUse = PauCLodShaderContext.isShaderPackInUse();
+		boolean paucShaderpackOwnsSky = shaderPackInUse
+			&& PauCLodShaderProfiles.currentFamily() == PauCLodShaderProfiles.Family.PAUC;
 		return PauCLodClientSettings.isVanillaFogEnabled()
 			&& PauCLodHorizonState.shouldExtendVanillaFog()
-			&& !PauCLodShaderContext.isShaderPackInUse()
+			&& (!shaderPackInUse || paucShaderpackOwnsSky)
 			&& pauc$skyFogBlend() > 0.0F;
 	}
 
@@ -94,10 +98,15 @@ public class MixinLevelRenderer {
 	}
 
 	@Unique
+	private static boolean pauc$shouldHideVoidSkyBand() {
+		return PauCLodShaderContext.isShaderPackInUse()
+			&& PauCLodShaderProfiles.currentFamily() == PauCLodShaderProfiles.Family.PAUC;
+	}
+
+	@Unique
 	private static boolean pauc$fogDomeProbeInit;
 	@Unique
 	private static boolean pauc$fogDomeProbeLastFog;
-
 	// Verification probe: logs the vanilla fog button together with the distance-fog and sky-dome-tint states
 	// on each button flip, so it is visible in a session log that they switch off together (no fog<->dome swap).
 	@Unique
@@ -238,6 +247,15 @@ public class MixinLevelRenderer {
 	private float pauc$useFogColorForVanillaSkyBlue(float original) {
 		Vector3d fogColor = CapturedRenderingState.INSTANCE.getFogColor();
 		return pauc$blendSkyWithFog(original, fogColor.z);
+	}
+
+	@ModifyArg(
+		method = "renderSky",
+		at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/systems/RenderSystem;setShaderColor(FFFF)V", ordinal = 5, remap = false),
+		index = 3
+	)
+	private float pauc$hideVoidSkyBandAlpha(float original) {
+		return pauc$shouldHideVoidSkyBand() ? 0.0F : original;
 	}
 
 	@Inject(method = "renderLevel", at = @At(value = "INVOKE", target = RENDER_SKY))

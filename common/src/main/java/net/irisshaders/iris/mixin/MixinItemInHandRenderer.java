@@ -1,7 +1,7 @@
 package net.irisshaders.iris.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import net.irisshaders.iris.api.v0.IrisApi;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.pathways.HandRenderer;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.renderer.ItemInHandRenderer;
@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class MixinItemInHandRenderer {
 	@Inject(method = "renderArmWithItem", at = @At("HEAD"), cancellable = true)
 	private void iris$skipTranslucentHands(AbstractClientPlayer abstractClientPlayer, float f, float g, InteractionHand interactionHand, float h, ItemStack itemStack, float i, PoseStack poseStack, MultiBufferSource multiBufferSource, int j, CallbackInfo ci) {
-		if (IrisApi.getInstance().isShaderPackInUse()) {
+		if (PauCShaders.isShaderPackInUse()) {
 			if (HandRenderer.INSTANCE.isRenderingSolid() && HandRenderer.INSTANCE.isHandTranslucent(interactionHand)) {
 				ci.cancel();
 			} else if (!HandRenderer.INSTANCE.isRenderingSolid() && !HandRenderer.INSTANCE.isHandTranslucent(interactionHand)) {

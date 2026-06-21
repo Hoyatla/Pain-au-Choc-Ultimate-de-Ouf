@@ -1,8 +1,10 @@
 package fr.hoyatla.pauc.lod;
 
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -31,7 +33,7 @@ public final class PauCEntityRenderBudget {
 	private static final String MAX_STRIDE_PROPERTY = "pauc.lod.entityRenderBudgetMaxStride";
 	private static final String LARGE_ENTITY_SIZE_PROPERTY = "pauc.lod.entityRenderBudgetLargeSizeBlocks";
 
-	private static final double DEFAULT_FAR_FRACTION = 0.6D;
+	private static final double DEFAULT_FAR_FRACTION = 0.78D;
 	private static final int DEFAULT_MAX_STRIDE = 3;
 	private static final double DEFAULT_LARGE_ENTITY_SIZE_BLOCKS = 3.0D;
 
@@ -53,16 +55,13 @@ public final class PauCEntityRenderBudget {
 		if (entity == null) {
 			return false;
 		}
-		// Default OFF: per-frame dephasing of visible far entities strobes during sustained pressure (hordes), which
-		// reads as jank. Kept as opt-in. Hostile-mob visibility is gameplay-critical, so entities are otherwise left to
-		// the (invisible) occlusion cull and the existing distance cull only.
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"))) {
-			return false;
-		}
-		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {
+		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
 			return false;
 		}
 		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+			return false;
+		}
+		if (PauCShaders.isShaderPackInUse()) {
 			return false;
 		}
 
@@ -81,6 +80,9 @@ public final class PauCEntityRenderBudget {
 		if (entity.isPassenger() || entity.isVehicle() || entity.hasCustomName()) {
 			return false;
 		}
+		if (!isBudgetEligibleEntity(entity)) {
+			return false;
+		}
 		if (isLargeEntity(entity)) {
 			return false;
 		}
@@ -91,8 +93,16 @@ public final class PauCEntityRenderBudget {
 			return false;
 		}
 
-		int maxStride = readInt(MAX_STRIDE_PROPERTY, DEFAULT_MAX_STRIDE, 1, 8);
-		int stride = 1 + (int) Math.round(PauCFrameSpikeAbsorber.pressure01() * (maxStride - 1));
+		int animationTier = PauCVillagePerformanceDiagnostics.animationLodTier();
+		double absorberPressure = PauCFrameSpikeAbsorber.pressure01();
+		boolean measuredPressure = animationTier >= 2
+			|| PauCVillagePerformanceDiagnostics.isHordePressureActive()
+			|| (PauCFrameSpikeAbsorber.isAbsorbing() && absorberPressure >= 0.80D);
+		if (!measuredPressure) {
+			return false;
+		}
+
+		int stride = activeStride();
 		if (stride <= 1) {
 			return false;
 		}
@@ -144,6 +154,37 @@ public final class PauCEntityRenderBudget {
 		AABB box = entity.getBoundingBox();
 		double width = Math.max(box.getXsize(), box.getZsize());
 		return width >= large || box.getYsize() >= large;
+	}
+
+	private static int activeStride() {
+		int maxStride = readInt(MAX_STRIDE_PROPERTY, DEFAULT_MAX_STRIDE, 1, 8);
+		int tier = PauCVillagePerformanceDiagnostics.animationLodTier();
+		if (PauCFrameSpikeAbsorber.isAbsorbing()) {
+			double absorberPressure = PauCFrameSpikeAbsorber.pressure01();
+			if (absorberPressure >= 0.75D) {
+				tier = Math.max(tier, 3);
+			} else if (absorberPressure >= 0.35D) {
+				tier = Math.max(tier, 2);
+			}
+		}
+		if (tier >= 3) {
+			return Math.min(maxStride, 3);
+		}
+		if (tier >= 2) {
+			return Math.min(maxStride, 2);
+		}
+		return 1;
+	}
+
+	private static boolean isBudgetEligibleEntity(Entity entity) {
+		if (PauCVillagePerformanceDiagnostics.isVillageEntity(entity)) {
+			return false;
+		}
+		MobCategory category = entity.getType().getCategory();
+		return switch (category) {
+			case CREATURE, AMBIENT, WATER_CREATURE, WATER_AMBIENT, UNDERGROUND_WATER_CREATURE, AXOLOTLS -> true;
+			default -> false;
+		};
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {

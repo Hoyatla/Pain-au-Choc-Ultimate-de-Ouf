@@ -35,8 +35,6 @@ public class OptionMenuElementScreen {
 				}
 			} catch (IllegalArgumentException error) {
 				Iris.logger.warn(error.getMessage());
-
-				this.elements.add(OptionMenuElement.EMPTY);
 			}
 		}
 	}

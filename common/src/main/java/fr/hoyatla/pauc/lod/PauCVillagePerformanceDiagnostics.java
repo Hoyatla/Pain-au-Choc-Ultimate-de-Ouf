@@ -42,6 +42,7 @@ public final class PauCVillagePerformanceDiagnostics {
 	private static final String SCENE_PRESSURE_SORT_MS_THRESHOLD_PROPERTY = "pauc.lod.scenePressureEntitySortMsThreshold";
 	private static final String SCENE_PRESSURE_MOVEMENT_SPEED_THRESHOLD_PROPERTY = "pauc.lod.scenePressureMovementSpeedThreshold";
 	private static final String SCENE_PRESSURE_HOLD_TICKS_PROPERTY = "pauc.lod.scenePressureHoldTicks";
+	private static final String SCENE_PRESSURE_PROJECTION_MIN_TICKS_PROPERTY = "pauc.lod.scenePressureProjectionMinTicks";
 	private static final int SAMPLE_INTERVAL_TICKS = 20;
 	private static final Reference2ByteOpenHashMap<EntityType<?>> VILLAGE_ENTITY_TYPES = new Reference2ByteOpenHashMap<>();
 	private static final Reference2ByteOpenHashMap<BlockEntityType<?>> VILLAGE_BLOCK_ENTITY_TYPES = new Reference2ByteOpenHashMap<>();
@@ -248,8 +249,8 @@ public final class PauCVillagePerformanceDiagnostics {
 		maxCulledVillageBlockEntitiesWindow = Math.max(maxCulledVillageBlockEntitiesWindow, windowCulledVillageBlockEntities);
 		resetRenderWindow();
 		updateVillagePressure(totalEntities, villageEntities, windowEntities, windowVillageEntities, windowBlockEntities, windowVillageBlockEntities);
-		updateHordePressure(totalEntities, windowEntities, windowBlockEntities);
 		updateScenePressure(minecraft, windowEntities, windowBlockEntities);
+		updateHordePressure(totalEntities, windowEntities, windowBlockEntities);
 	}
 
 	public static void recordEntityRender(Entity entity) {
@@ -357,17 +358,53 @@ public final class PauCVillagePerformanceDiagnostics {
 			&& scenePressureActive;
 	}
 
+	public static boolean isProjectedScenePressureActive() {
+		return projectedScenePressureTier() > 0;
+	}
+
 	public static int scenePressureTier() {
 		return Math.max(0, Math.min(3, lastScenePressureTier));
 	}
 
 	public static double scenePressureScale() {
-		return switch (scenePressureTier()) {
-			case 3 -> 0.58D;
-			case 2 -> 0.72D;
-			case 1 -> 0.86D;
-			default -> 1.0D;
-		};
+		return scenePressureScaleForTier(scenePressureTier());
+	}
+
+	public static int projectedScenePressureTier() {
+		if (!diagnosticsEnabled || !Boolean.parseBoolean(System.getProperty(SCENE_PRESSURE_ENABLED_PROPERTY, "true"))) {
+			return 0;
+		}
+
+		ScenePressureState projectedState = evaluateScenePressure(
+			Minecraft.getInstance(),
+			projectedWindowValue(renderedEntitiesWindow),
+			projectedWindowValue(renderedBlockEntitiesWindow)
+		);
+		int tier = projectedState.tier();
+		if (scenePressureActive) {
+			tier = Math.max(tier, lastScenePressureTier);
+		}
+		return Math.max(0, Math.min(3, tier));
+	}
+
+	public static double projectedScenePressureScale() {
+		return scenePressureScaleForTier(projectedScenePressureTier());
+	}
+
+	public static String projectedScenePressureReason() {
+		if (!diagnosticsEnabled || !Boolean.parseBoolean(System.getProperty(SCENE_PRESSURE_ENABLED_PROPERTY, "true"))) {
+			return "off";
+		}
+
+		ScenePressureState projectedState = evaluateScenePressure(
+			Minecraft.getInstance(),
+			projectedWindowValue(renderedEntitiesWindow),
+			projectedWindowValue(renderedBlockEntitiesWindow)
+		);
+		if (scenePressureActive && lastScenePressureTier >= projectedState.tier()) {
+			return lastScenePressureReason;
+		}
+		return projectedState.reason();
 	}
 
 	public static double lastPlayerHorizontalSpeed() {
@@ -385,8 +422,52 @@ public final class PauCVillagePerformanceDiagnostics {
 		return Math.max(0, Math.min(3, lastAnimationLodTier));
 	}
 
+	public static int projectedAnimationLodTier() {
+		if (!diagnosticsEnabled || !Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true"))) {
+			return 0;
+		}
+
+		HordePressureState projectedState = evaluateHordePressure(
+			lastClientEntityCount,
+			projectedWindowValue(renderedEntitiesWindow),
+			projectedWindowValue(renderedBlockEntitiesWindow),
+			projectedScenePressureTier()
+		);
+		int tier = projectedState.tier();
+		if (hordePressureActive) {
+			tier = Math.max(tier, lastAnimationLodTier);
+		}
+		return Math.max(0, Math.min(3, tier));
+	}
+
 	public static int blockEntityFrameBudget() {
 		return Math.max(0, lastBlockEntityFrameBudget);
+	}
+
+	public static int projectedBlockEntityFrameBudget() {
+		if (!diagnosticsEnabled) {
+			return 0;
+		}
+
+		int steadyBudget = readInt(HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY, 1500, 128, 20000);
+		int severeBudget = readInt(HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY, 600, 64, 10000);
+		int projectedTier = projectedAnimationLodTier();
+		int projectedSceneTier = projectedScenePressureTier();
+		if (projectedTier >= 2 || villagePressureActive || projectedSceneTier >= 2) {
+			return severeBudget;
+		}
+		if (projectedTier >= 1 || projectedSceneTier >= 1) {
+			return Math.max(severeBudget + 128, (int) Math.round(steadyBudget * 0.80D));
+		}
+		return steadyBudget;
+	}
+
+	public static long projectedRenderedEntitiesWindow() {
+		return projectedWindowValue(renderedEntitiesWindow);
+	}
+
+	public static long projectedRenderedBlockEntitiesWindow() {
+		return projectedWindowValue(renderedBlockEntitiesWindow);
 	}
 
 	public static int lastClientEntityCount() {
@@ -440,6 +521,10 @@ public final class PauCVillagePerformanceDiagnostics {
 			+ scenePressureTier()
 			+ "/"
 			+ lastScenePressureReason
+			+ ", sceneProjected="
+			+ projectedScenePressureTier()
+			+ "/"
+			+ projectedScenePressureReason()
 			+ "/speed="
 			+ String.format(Locale.ROOT, "%.2f", lastPlayerHorizontalSpeed)
 			+ ", renderedEntities="
@@ -460,10 +545,14 @@ public final class PauCVillagePerformanceDiagnostics {
 			+ culledVillageBlockEntities
 			+ ", renderWindow="
 			+ lastRenderedEntitiesWindow
+			+ "/proj="
+			+ projectedRenderedEntitiesWindow()
 			+ "/village="
 			+ lastRenderedVillageEntitiesWindow
 			+ ", blockWindow="
 			+ lastRenderedBlockEntitiesWindow
+			+ "/proj="
+			+ projectedRenderedBlockEntitiesWindow()
 			+ "/village="
 			+ lastRenderedVillageBlockEntitiesWindow
 			+ ", cullWindow="
@@ -589,13 +678,9 @@ public final class PauCVillagePerformanceDiagnostics {
 			return;
 		}
 
-		int totalThreshold = readInt(HORDE_TOTAL_ENTITY_THRESHOLD_PROPERTY, 192, 32, 4096);
-		int renderedEntityThreshold = readInt(HORDE_RENDERED_ENTITY_THRESHOLD_PROPERTY, 4096, 256, 50000);
-		int renderedBlockEntityThreshold = readInt(HORDE_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 1536, 128, 50000);
 		int pressureHoldTicks = readInt(HORDE_PRESSURE_HOLD_TICKS_PROPERTY, 80, SAMPLE_INTERVAL_TICKS, 600);
-		boolean pressureCandidate = totalEntities >= totalThreshold
-			|| windowEntities >= renderedEntityThreshold
-			|| windowBlockEntities >= renderedBlockEntityThreshold;
+		HordePressureState pressureState = evaluateHordePressure(totalEntities, windowEntities, windowBlockEntities, lastScenePressureTier);
+		boolean pressureCandidate = pressureState.activeCandidate();
 
 		boolean wasActive = hordePressureActive;
 		if (pressureCandidate) {
@@ -610,27 +695,10 @@ public final class PauCVillagePerformanceDiagnostics {
 				hordePressureActivations++;
 			}
 		}
-
-		int tier = 0;
-		if (hordePressureActive) {
-			double entityLoad = Math.max(
-				totalEntities / (double) Math.max(1, totalThreshold),
-				windowEntities / (double) Math.max(1, renderedEntityThreshold)
-			);
-			double blockEntityLoad = windowBlockEntities / (double) Math.max(1, renderedBlockEntityThreshold);
-			double load = Math.max(entityLoad, blockEntityLoad);
-			if (load >= 2.5D) {
-				tier = 3;
-			} else if (load >= 1.5D || villagePressureActive) {
-				tier = 2;
-			} else {
-				tier = 1;
-			}
-		}
-		lastAnimationLodTier = Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true")) ? tier : 0;
-		int steadyBudget = readInt(HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY, 1500, 128, 20000);
-		int severeBudget = readInt(HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY, 600, 64, 10000);
-		lastBlockEntityFrameBudget = tier >= 2 || villagePressureActive ? severeBudget : steadyBudget;
+		lastAnimationLodTier = Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true"))
+			? pressureState.tier()
+			: 0;
+		lastBlockEntityFrameBudget = pressureState.blockEntityFrameBudget();
 	}
 
 	private static void updateScenePressure(Minecraft minecraft, long windowEntities, long windowBlockEntities) {
@@ -642,24 +710,11 @@ public final class PauCVillagePerformanceDiagnostics {
 			return;
 		}
 
-		LocalPlayer player = minecraft.player;
-		lastPlayerHorizontalSpeed = player != null ? player.getDeltaMovement().horizontalDistance() : 0.0D;
-		lastPlayerGrounded = player != null && player.onGround();
-		double sortMs = lastEntitySortNanos / 1_000_000.0D;
-		int entityThreshold = readInt(SCENE_PRESSURE_RENDERED_ENTITY_THRESHOLD_PROPERTY, 160, 16, 8192);
-		int blockEntityThreshold = readInt(SCENE_PRESSURE_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 256, 16, 8192);
-		int severeEntityThreshold = readInt(SCENE_PRESSURE_SEVERE_ENTITY_THRESHOLD_PROPERTY, entityThreshold * 2, entityThreshold, 32768);
-		int severeBlockEntityThreshold = readInt(SCENE_PRESSURE_SEVERE_BLOCK_ENTITY_THRESHOLD_PROPERTY, blockEntityThreshold * 2, blockEntityThreshold, 32768);
-		int movingEntityThreshold = readInt(SCENE_PRESSURE_MOVING_ENTITY_THRESHOLD_PROPERTY, Math.max(48, entityThreshold / 2), 8, 8192);
-		int movingBlockEntityThreshold = readInt(SCENE_PRESSURE_MOVING_BLOCK_ENTITY_THRESHOLD_PROPERTY, Math.max(64, blockEntityThreshold / 2), 8, 8192);
-		double movementSpeedThreshold = readDouble(SCENE_PRESSURE_MOVEMENT_SPEED_THRESHOLD_PROPERTY, 0.10D, 0.01D, 2.0D);
-		double sortThresholdMs = readDouble(SCENE_PRESSURE_SORT_MS_THRESHOLD_PROPERTY, 1.20D, 0.10D, 30.0D);
+		ScenePressureState pressureState = evaluateScenePressure(minecraft, windowEntities, windowBlockEntities);
 		int pressureHoldTicks = readInt(SCENE_PRESSURE_HOLD_TICKS_PROPERTY, 80, SAMPLE_INTERVAL_TICKS, 600);
-		boolean movingGrounded = lastPlayerGrounded && lastPlayerHorizontalSpeed >= movementSpeedThreshold;
-		boolean pressureCandidate = windowEntities >= entityThreshold
-			|| windowBlockEntities >= blockEntityThreshold
-			|| sortMs >= sortThresholdMs
-			|| (movingGrounded && (windowEntities >= movingEntityThreshold || windowBlockEntities >= movingBlockEntityThreshold));
+		boolean pressureCandidate = pressureState.activeCandidate();
+		lastPlayerHorizontalSpeed = pressureState.playerHorizontalSpeed();
+		lastPlayerGrounded = pressureState.playerGrounded();
 
 		boolean wasActive = scenePressureActive;
 		if (pressureCandidate) {
@@ -674,37 +729,120 @@ public final class PauCVillagePerformanceDiagnostics {
 				scenePressureActivations++;
 			}
 		}
+		lastScenePressureTier = scenePressureActive ? pressureState.tier() : 0;
+		lastScenePressureReason = scenePressureActive ? pressureState.reason() : "off";
+	}
 
+	private static double scenePressureScaleForTier(int tier) {
+		return switch (Math.max(0, Math.min(3, tier))) {
+			case 3 -> 0.58D;
+			case 2 -> 0.72D;
+			case 1 -> 0.86D;
+			default -> 1.0D;
+		};
+	}
+
+	private static long projectedWindowValue(long value) {
+		if (value <= 0L) {
+			return 0L;
+		}
+
+		int minTicks = readInt(SCENE_PRESSURE_PROJECTION_MIN_TICKS_PROPERTY, 5, 1, SAMPLE_INTERVAL_TICKS);
+		int observedTicks = Math.max(minTicks, sampleTicks);
+		double factor = SAMPLE_INTERVAL_TICKS / (double) observedTicks;
+		return Math.max(value, Math.round(value * factor));
+	}
+
+	private static HordePressureState evaluateHordePressure(int totalEntities, long windowEntities, long windowBlockEntities, int sceneTier) {
+		int totalThreshold = readInt(HORDE_TOTAL_ENTITY_THRESHOLD_PROPERTY, 192, 32, 4096);
+		int renderedEntityThreshold = readInt(HORDE_RENDERED_ENTITY_THRESHOLD_PROPERTY, 4096, 256, 50000);
+		int renderedBlockEntityThreshold = readInt(HORDE_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 1536, 128, 50000);
+		boolean pressureCandidate = totalEntities >= totalThreshold
+			|| windowEntities >= renderedEntityThreshold
+			|| windowBlockEntities >= renderedBlockEntityThreshold;
 		int tier = 0;
-		String reason = "off";
-		if (scenePressureActive) {
-			double entityLoad = windowEntities / (double) Math.max(1, entityThreshold);
-			double blockEntityLoad = windowBlockEntities / (double) Math.max(1, blockEntityThreshold);
-			double severeEntityLoad = windowEntities / (double) Math.max(1, severeEntityThreshold);
-			double severeBlockEntityLoad = windowBlockEntities / (double) Math.max(1, severeBlockEntityThreshold);
-			double sortLoad = sortMs / Math.max(0.10D, sortThresholdMs);
-			double movementEntityLoad = movingGrounded ? windowEntities / (double) Math.max(1, movingEntityThreshold) : 0.0D;
-			double movementBlockEntityLoad = movingGrounded ? windowBlockEntities / (double) Math.max(1, movingBlockEntityThreshold) : 0.0D;
-			double load = Math.max(Math.max(entityLoad, blockEntityLoad), Math.max(sortLoad, Math.max(movementEntityLoad, movementBlockEntityLoad)));
-			if (severeEntityLoad >= 1.0D || severeBlockEntityLoad >= 1.0D || load >= 2.25D) {
+		if (pressureCandidate) {
+			double entityLoad = Math.max(
+				totalEntities / (double) Math.max(1, totalThreshold),
+				windowEntities / (double) Math.max(1, renderedEntityThreshold)
+			);
+			double blockEntityLoad = windowBlockEntities / (double) Math.max(1, renderedBlockEntityThreshold);
+			double load = Math.max(entityLoad, blockEntityLoad);
+			if (sceneTier >= 3) {
+				load = Math.max(load, 1.65D);
+			} else if (sceneTier >= 2) {
+				load = Math.max(load, 1.35D);
+			}
+			if (load >= 2.5D) {
 				tier = 3;
-			} else if (load >= 1.40D) {
+			} else if (load >= 1.5D || villagePressureActive || sceneTier >= 2) {
 				tier = 2;
 			} else {
 				tier = 1;
 			}
-			if (sortLoad >= Math.max(Math.max(entityLoad, blockEntityLoad), 1.0D)) {
-				reason = "entity-sort";
-			} else if (movingGrounded && Math.max(movementEntityLoad, movementBlockEntityLoad) >= Math.max(entityLoad, blockEntityLoad)) {
-				reason = "ground-motion";
-			} else if (blockEntityLoad >= entityLoad) {
-				reason = "block-entities";
-			} else {
-				reason = "entities";
-			}
 		}
-		lastScenePressureTier = tier;
-		lastScenePressureReason = reason;
+
+		int steadyBudget = readInt(HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY, 1500, 128, 20000);
+		int severeBudget = readInt(HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY, 600, 64, 10000);
+		int budget = tier >= 2 || villagePressureActive || sceneTier >= 2
+			? severeBudget
+			: steadyBudget;
+		if (tier == 1 || sceneTier == 1) {
+			budget = Math.min(budget, Math.max(severeBudget + 128, (int) Math.round(steadyBudget * 0.80D)));
+		}
+		return new HordePressureState(pressureCandidate, tier, Math.max(0, budget));
+	}
+
+	private static ScenePressureState evaluateScenePressure(Minecraft minecraft, long windowEntities, long windowBlockEntities) {
+		LocalPlayer player = minecraft != null ? minecraft.player : null;
+		double playerHorizontalSpeed = player != null ? player.getDeltaMovement().horizontalDistance() : 0.0D;
+		boolean playerGrounded = player != null && player.onGround();
+		double sortMs = lastEntitySortNanos / 1_000_000.0D;
+		int entityThreshold = readInt(SCENE_PRESSURE_RENDERED_ENTITY_THRESHOLD_PROPERTY, 160, 16, 8192);
+		int blockEntityThreshold = readInt(SCENE_PRESSURE_RENDERED_BLOCK_ENTITY_THRESHOLD_PROPERTY, 256, 16, 8192);
+		int severeEntityThreshold = readInt(SCENE_PRESSURE_SEVERE_ENTITY_THRESHOLD_PROPERTY, entityThreshold * 2, entityThreshold, 32768);
+		int severeBlockEntityThreshold = readInt(SCENE_PRESSURE_SEVERE_BLOCK_ENTITY_THRESHOLD_PROPERTY, blockEntityThreshold * 2, blockEntityThreshold, 32768);
+		int movingEntityThreshold = readInt(SCENE_PRESSURE_MOVING_ENTITY_THRESHOLD_PROPERTY, Math.max(48, entityThreshold / 2), 8, 8192);
+		int movingBlockEntityThreshold = readInt(SCENE_PRESSURE_MOVING_BLOCK_ENTITY_THRESHOLD_PROPERTY, Math.max(64, blockEntityThreshold / 2), 8, 8192);
+		double movementSpeedThreshold = readDouble(SCENE_PRESSURE_MOVEMENT_SPEED_THRESHOLD_PROPERTY, 0.10D, 0.01D, 2.0D);
+		double sortThresholdMs = readDouble(SCENE_PRESSURE_SORT_MS_THRESHOLD_PROPERTY, 1.20D, 0.10D, 30.0D);
+		boolean movingGrounded = playerGrounded && playerHorizontalSpeed >= movementSpeedThreshold;
+		boolean pressureCandidate = windowEntities >= entityThreshold
+			|| windowBlockEntities >= blockEntityThreshold
+			|| sortMs >= sortThresholdMs
+			|| (movingGrounded && (windowEntities >= movingEntityThreshold || windowBlockEntities >= movingBlockEntityThreshold));
+		if (!pressureCandidate) {
+			return new ScenePressureState(false, 0, "off", playerHorizontalSpeed, playerGrounded);
+		}
+
+		double entityLoad = windowEntities / (double) Math.max(1, entityThreshold);
+		double blockEntityLoad = windowBlockEntities / (double) Math.max(1, blockEntityThreshold);
+		double severeEntityLoad = windowEntities / (double) Math.max(1, severeEntityThreshold);
+		double severeBlockEntityLoad = windowBlockEntities / (double) Math.max(1, severeBlockEntityThreshold);
+		double sortLoad = sortMs / Math.max(0.10D, sortThresholdMs);
+		double movementEntityLoad = movingGrounded ? windowEntities / (double) Math.max(1, movingEntityThreshold) : 0.0D;
+		double movementBlockEntityLoad = movingGrounded ? windowBlockEntities / (double) Math.max(1, movingBlockEntityThreshold) : 0.0D;
+		double load = Math.max(Math.max(entityLoad, blockEntityLoad), Math.max(sortLoad, Math.max(movementEntityLoad, movementBlockEntityLoad)));
+		int tier;
+		if (severeEntityLoad >= 1.0D || severeBlockEntityLoad >= 1.0D || load >= 2.25D) {
+			tier = 3;
+		} else if (load >= 1.40D) {
+			tier = 2;
+		} else {
+			tier = 1;
+		}
+
+		String reason;
+		if (sortLoad >= Math.max(Math.max(entityLoad, blockEntityLoad), 1.0D)) {
+			reason = "entity-sort";
+		} else if (movingGrounded && Math.max(movementEntityLoad, movementBlockEntityLoad) >= Math.max(entityLoad, blockEntityLoad)) {
+			reason = "ground-motion";
+		} else if (blockEntityLoad >= entityLoad) {
+			reason = "block-entities";
+		} else {
+			reason = "entities";
+		}
+		return new ScenePressureState(true, tier, reason, playerHorizontalSpeed, playerGrounded);
 	}
 
 	private static void resetRenderWindow() {
@@ -776,5 +914,17 @@ public final class PauCVillagePerformanceDiagnostics {
 		} catch (NumberFormatException ignored) {
 			return Math.max(min, Math.min(max, fallback));
 		}
+	}
+
+	private record ScenePressureState(
+		boolean activeCandidate,
+		int tier,
+		String reason,
+		double playerHorizontalSpeed,
+		boolean playerGrounded
+	) {
+	}
+
+	private record HordePressureState(boolean activeCandidate, int tier, int blockEntityFrameBudget) {
 	}
 }

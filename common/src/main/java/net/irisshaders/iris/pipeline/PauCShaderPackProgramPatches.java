@@ -1,6 +1,8 @@
 package net.irisshaders.iris.pipeline;
 
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
+import fr.hoyatla.pauc.lod.PauCShaderCapabilities;
+import fr.hoyatla.pauc.lod.PauCShaderProfileId;
 import net.irisshaders.iris.Iris;
 
 import java.util.Locale;
@@ -33,12 +35,36 @@ public final class PauCShaderPackProgramPatches {
 	private static boolean photonCloudDepthPatchLogged;
 	private static boolean photonCloudHistoryPatchLogged;
 	private static boolean photonCloudEdgePatchLogged;
+	private static boolean paucNativeHeaderPatchLogged;
 	private static volatile int photonCloudDepthPatchCount;
 	private static volatile int photonCloudHistoryPatchCount;
 	private static volatile int photonCloudEdgePatchCount;
+	private static volatile int paucNativeHeaderPatchCount;
 	private static volatile PauCLodShaderProfiles.Family lastShaderFamily = PauCLodShaderProfiles.Family.GENERIC;
+	private static volatile PauCShaderProfileId lastProfileId = PauCShaderProfileId.SHADER_OFF;
 
 	private PauCShaderPackProgramPatches() {
+	}
+
+	public static String patchBeforeTransform(String programName, String source, String stage) {
+		if (source == null) {
+			return null;
+		}
+
+		refreshState();
+		if (lastProfileId == PauCShaderProfileId.PAUC_NATIVE) {
+			return patchPaucNativeHeader(programName, source, stage);
+		}
+		return source;
+	}
+
+	public static String patchVertex(String programName, String source) {
+		if (source == null) {
+			return null;
+		}
+
+		refreshState();
+		return source;
 	}
 
 	public static String patchFragment(String programName, String source) {
@@ -46,7 +72,10 @@ public final class PauCShaderPackProgramPatches {
 			return null;
 		}
 
-		lastShaderFamily = PauCLodShaderProfiles.familyForPackName(Iris.getCurrentPackName());
+		refreshState();
+		if (lastProfileId == PauCShaderProfileId.PAUC_NATIVE) {
+			return source;
+		}
 		return switch (lastShaderFamily) {
 			case PHOTON -> patchPhotonClouds(programName, source);
 			default -> source;
@@ -56,13 +85,87 @@ public final class PauCShaderPackProgramPatches {
 	public static String describeState() {
 		return "shaderPatches[family="
 			+ lastShaderFamily.name().toLowerCase(java.util.Locale.ROOT)
+			+ ", profile="
+			+ lastProfileId.id()
 			+ ", photonDepth="
 			+ photonCloudDepthPatchCount
 			+ ", photonHistory="
 			+ photonCloudHistoryPatchCount
 			+ ", photonEdge="
 			+ photonCloudEdgePatchCount
+			+ ", nativeHeader="
+			+ paucNativeHeaderPatchCount
 			+ "]";
+	}
+
+	private static String patchPaucNativeHeader(String programName, String source, String stage) {
+		if (source.contains("PAUC_SHADERPACK_NATIVE")) {
+			return source;
+		}
+
+		String patched = injectHeaderAfterVersion(source, buildPaucNativeHeader());
+		if (!patched.equals(source)) {
+			paucNativeHeaderPatchCount++;
+			if (!paucNativeHeaderPatchLogged) {
+				paucNativeHeaderPatchLogged = true;
+				Iris.logger.info("PauC attached native shaderpack header to {} {}.", stage, programName);
+			}
+		}
+		return patched;
+	}
+
+	private static void refreshState() {
+		lastProfileId = PauCLodShaderProfiles.currentProfileId();
+		lastShaderFamily = PauCLodShaderProfiles.currentFamily();
+	}
+
+	private static String buildPaucNativeHeader() {
+		PauCShaderCapabilities capabilities = PauCLodShaderProfiles.currentProfileId() == PauCShaderProfileId.PAUC_NATIVE
+			? fr.hoyatla.pauc.lod.PauCLodShaderContext.currentCapabilities()
+			: PauCShaderCapabilities.shaderOff();
+		int familyCode = switch (PauCLodShaderProfiles.currentFamily()) {
+			case GENERIC -> 0;
+			case PHOTON -> 1;
+			case SOLAS -> 2;
+			case COMPLEMENTARY -> 3;
+			case RETHINKING -> 4;
+			case BSL -> 5;
+			case BLISS -> 6;
+			case PAUC -> 7;
+		};
+		return """
+			#define PAUC_SHADER_CONTRACT_VERSION 1
+			#define PAUC_SHADERPACK_NATIVE 1
+			#define PAUC_SHADER_PROFILE_CODE 4
+			#define PAUC_SHADER_FAMILY_CODE %d
+			#define PAUC_SHADER_FAMILY_PAUC 1
+			#define PAUC_SHADER_CAP_DH_TERRAIN %d
+			#define PAUC_SHADER_CAP_DH_SHADOW %d
+			#define PAUC_SHADER_CAP_TRANSITION_FOG %d
+			#define PAUC_SHADER_CAP_COLORED_LIGHTS %d
+			#define PAUC_SHADER_CAP_WEATHER_FOG %d
+			
+			""".formatted(
+			familyCode,
+			capabilities.supportsDhTerrain() ? 1 : 0,
+			capabilities.supportsDhShadow() ? 1 : 0,
+			capabilities.supportsTransitionFog() ? 1 : 0,
+			capabilities.supportsColoredLights() ? 1 : 0,
+			capabilities.supportsWeatherFog() ? 1 : 0
+		);
+	}
+
+	private static String injectHeaderAfterVersion(String source, String header) {
+		int versionIndex = source.indexOf("#version");
+		if (versionIndex < 0) {
+			return header + source;
+		}
+
+		int insertionIndex = source.indexOf('\n', versionIndex);
+		if (insertionIndex < 0) {
+			return source + "\n" + header;
+		}
+		return source.substring(0, insertionIndex + 1) + header + source.substring(insertionIndex + 1);
 	}
 
 	private static String patchPhotonClouds(String programName, String source) {

@@ -3,7 +3,7 @@ package net.irisshaders.iris.gui.element.widget;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.NavigationController;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
+import net.irisshaders.iris.gui.screen.ShaderPackHost;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuLinkElement;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -23,6 +23,7 @@ public class LinkElementWidget extends CommentedElementWidget<OptionMenuLinkElem
 	private final String targetScreenId;
 	private final MutableComponent label;
 
+	private ShaderPackHost screen;
 	private NavigationController navigation;
 	private MutableComponent trimmedLabel = null;
 	private boolean isLabelTrimmed = false;
@@ -35,7 +36,8 @@ public class LinkElementWidget extends CommentedElementWidget<OptionMenuLinkElem
 	}
 
 	@Override
-	public void init(ShaderPackScreen screen, NavigationController navigation) {
+	public void init(ShaderPackHost screen, NavigationController navigation) {
+		this.screen = screen;
 		this.navigation = navigation;
 	}
 
@@ -63,7 +65,7 @@ public class LinkElementWidget extends CommentedElementWidget<OptionMenuLinkElem
 
 		if (hovered && this.isLabelTrimmed) {
 			// To prevent other elements from being drawn on top of the tooltip
-			ShaderPackScreen.TOP_LAYER_RENDER_QUEUE.add(() -> GuiUtil.drawTextPanel(font, guiGraphics, this.label, mouseX + 2, mouseY - 16));
+			this.screen.queueTopLayerRender(() -> GuiUtil.drawTextPanel(font, guiGraphics, this.label, mouseX + 2, mouseY - 16));
 		}
 	}
 

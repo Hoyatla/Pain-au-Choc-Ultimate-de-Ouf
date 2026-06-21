@@ -1,0 +1,176 @@
+package net.irisshaders.iris.shaderpack.discovery;
+
+import net.irisshaders.iris.Iris;
+import org.jetbrains.annotations.Nullable;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+
+public final class BundledShaderpackInstaller {
+	public static final String PHOTON_ID = "pauc_builtin_photon";
+	public static final String SOLAS_ID = "pauc_builtin_solas";
+	private static final String ALLOW_EXTERNAL_PACKS_PROPERTY = "pauc.shaderpacks.allowExternal";
+
+	private static final String CACHE_DIR_NAME = ".pauc_builtin_shaderpacks";
+	private static final String CONFIG_DIR_NAME = ".pauc_builtin_shaderpack_configs";
+
+	private static final List<BundledShaderpack> BUNDLED_PACKS = List.of(
+		new BundledShaderpack(PHOTON_ID, "Photon", "photon_v1.3b.zip", "/pauc/shaderpacks/photon_v1.3b.zip"),
+		new BundledShaderpack(SOLAS_ID, "Solas", "Solas Shader V3.6.zip", "/pauc/shaderpacks/solas_shader_v3.6.zip")
+	);
+
+	private static final Map<String, BundledShaderpack> PACKS_BY_ID = new LinkedHashMap<>();
+	private static final Map<String, String> LEGACY_NAME_TO_ID = new LinkedHashMap<>();
+
+	static {
+		for (BundledShaderpack pack : BUNDLED_PACKS) {
+			PACKS_BY_ID.put(pack.id(), pack);
+			LEGACY_NAME_TO_ID.put(pack.legacyFileName(), pack.id());
+			LEGACY_NAME_TO_ID.put(pack.displayName(), pack.id());
+		}
+	}
+
+	private BundledShaderpackInstaller() {
+	}
+
+	public static void ensureBundledShaderpacksPresent(Path shaderpacksDirectory) {
+		try {
+			Files.createDirectories(cacheDirectory(shaderpacksDirectory));
+			Files.createDirectories(configDirectory(shaderpacksDirectory));
+		} catch (IOException e) {
+			Iris.logger.warn("Failed to prepare PauC bundled shaderpack cache directories in {}.", shaderpacksDirectory, e);
+		}
+	}
+
+	public static List<String> bundledPackIds() {
+		return PACKS_BY_ID.keySet().stream().toList();
+	}
+
+	public static boolean allowExternalPackSelection() {
+		String rawValue = System.getProperty(ALLOW_EXTERNAL_PACKS_PROPERTY);
+		return rawValue != null && Boolean.parseBoolean(rawValue);
+	}
+
+	public static List<String> mergeBundledWithExternal(List<String> externalPackNames) {
+		if (!allowExternalPackSelection()) {
+			return bundledPackIds();
+		}
+
+		List<String> merged = new ArrayList<>(bundledPackIds());
+		for (String externalPackName : externalPackNames) {
+			if (shouldHidePackFileName(externalPackName)) {
+				continue;
+			}
+			merged.add(canonicalizePackName(externalPackName));
+		}
+		return merged;
+	}
+
+	public static String canonicalizePackName(@Nullable String packName) {
+		if (packName == null || packName.isBlank()) {
+			return packName;
+		}
+
+		String directMatch = LEGACY_NAME_TO_ID.get(packName);
+		if (directMatch != null) {
+			return directMatch;
+		}
+
+		String normalized = packName.toLowerCase(Locale.ROOT);
+		if (normalized.contains("photon")) {
+			return PHOTON_ID;
+		}
+		if (normalized.contains("solas")) {
+			return SOLAS_ID;
+		}
+		return packName;
+	}
+
+	public static String displayPackName(@Nullable String packName) {
+		if (packName == null || packName.isBlank()) {
+			return "";
+		}
+
+		BundledShaderpack bundledPack = PACKS_BY_ID.get(canonicalizePackName(packName));
+		if (bundledPack != null) {
+			return bundledPack.displayName();
+		}
+
+		if (packName.endsWith(".zip")) {
+			return packName.substring(0, packName.length() - 4);
+		}
+		return packName;
+	}
+
+	public static boolean isBundledPackId(String packName) {
+		return PACKS_BY_ID.containsKey(canonicalizePackName(packName));
+	}
+
+	public static boolean shouldHidePackFileName(String fileName) {
+		if (fileName == null || fileName.isBlank()) {
+			return true;
+		}
+
+		if (CACHE_DIR_NAME.equals(fileName) || CONFIG_DIR_NAME.equals(fileName)) {
+			return true;
+		}
+
+		return LEGACY_NAME_TO_ID.containsKey(fileName);
+	}
+
+	public static @Nullable ResolvedBundledShaderpack resolveBundledPack(String packName, Path shaderpacksDirectory) throws IOException {
+		BundledShaderpack bundledPack = PACKS_BY_ID.get(canonicalizePackName(packName));
+		if (bundledPack == null) {
+			return null;
+		}
+
+		Path cacheDirectory = cacheDirectory(shaderpacksDirectory);
+		Files.createDirectories(cacheDirectory);
+		Path cachedZip = cacheDirectory.resolve(bundledPack.legacyFileName());
+		ensureCachedZip(bundledPack, cachedZip);
+
+		Path configDirectory = configDirectory(shaderpacksDirectory);
+		Files.createDirectories(configDirectory);
+		Path configFile = configDirectory.resolve(bundledPack.id() + ".txt");
+
+		return new ResolvedBundledShaderpack(bundledPack.id(), bundledPack.displayName(), cachedZip, configFile);
+	}
+
+	private static void ensureCachedZip(BundledShaderpack pack, Path cachedZip) throws IOException {
+		if (Files.exists(cachedZip)) {
+			return;
+		}
+
+		try (InputStream stream = BundledShaderpackInstaller.class.getResourceAsStream(pack.resourcePath())) {
+			if (stream == null) {
+				throw new IOException("Bundled shaderpack resource not found: " + pack.resourcePath());
+			}
+
+			Path temp = cachedZip.resolveSibling(cachedZip.getFileName() + ".tmp");
+			Files.copy(stream, temp, StandardCopyOption.REPLACE_EXISTING);
+			Files.move(temp, cachedZip, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		}
+	}
+
+	private static Path cacheDirectory(Path shaderpacksDirectory) {
+		return shaderpacksDirectory.resolve(CACHE_DIR_NAME);
+	}
+
+	private static Path configDirectory(Path shaderpacksDirectory) {
+		return shaderpacksDirectory.resolve(CONFIG_DIR_NAME);
+	}
+
+	public record ResolvedBundledShaderpack(String id, String displayName, Path zipFile, Path configFile) {
+	}
+
+	private record BundledShaderpack(String id, String displayName, String legacyFileName, String resourcePath) {
+	}
+}

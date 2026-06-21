@@ -1,7 +1,7 @@
 package net.irisshaders.iris.mixin.forge;
 
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.pathways.LightningHandler;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.texture.TextureAtlas;
@@ -30,7 +30,7 @@ public class MixinRenderFlame {
 		"render(Lmekanism/common/entity/EntityFlame;FFLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource;I)V"
 	}, at = @At(value = "FIELD", target = "Lmekanism/client/render/MekanismRenderType;FLAME:Ljava/util/function/Function;"))
 	private Function<ResourceLocation, RenderType> doNotSwitchShaders() {
-		if (IrisApi.getInstance().isShaderPackInUse()) {
+		if (PauCShaders.isShaderPackInUse()) {
 			return LightningHandler.MEKANISM_FLAME;
 		} else {
 			return (Function<ResourceLocation, RenderType>) MEKANISM_FLAME;

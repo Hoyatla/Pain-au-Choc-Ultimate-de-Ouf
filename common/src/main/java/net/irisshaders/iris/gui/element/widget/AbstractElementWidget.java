@@ -1,7 +1,7 @@
 package net.irisshaders.iris.gui.element.widget;
 
 import net.irisshaders.iris.gui.NavigationController;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
+import net.irisshaders.iris.gui.screen.ShaderPackHost;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuElement;
 import net.minecraft.client.gui.ComponentPath;
 import net.minecraft.client.gui.GuiGraphics;
@@ -37,7 +37,7 @@ public abstract class AbstractElementWidget<T extends OptionMenuElement> impleme
 		this.element = element;
 	}
 
-	public void init(ShaderPackScreen screen, NavigationController navigation) {
+	public void init(ShaderPackHost screen, NavigationController navigation) {
 	}
 
 	public abstract void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float tickDelta, boolean hovered);

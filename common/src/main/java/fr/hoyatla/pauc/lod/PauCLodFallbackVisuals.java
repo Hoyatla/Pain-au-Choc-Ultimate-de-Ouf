@@ -599,6 +599,7 @@ public final class PauCLodFallbackVisuals {
 			case SOLAS -> 0.48F;
 			case BSL, COMPLEMENTARY, RETHINKING -> 0.36F;
 			case BLISS -> 0.44F;
+			case PAUC -> 0.42F;
 			case GENERIC -> 0.55F;
 		};
 		return readFloat(MAX_RESCUE_STRENGTH_PROPERTY, fallback, 0.0F, 1.0F);

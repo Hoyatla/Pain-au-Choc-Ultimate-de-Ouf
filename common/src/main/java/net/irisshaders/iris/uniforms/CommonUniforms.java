@@ -2,6 +2,7 @@ package net.irisshaders.iris.uniforms;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
+import fr.hoyatla.pauc.lod.PauCShaderFrameState;
 import fr.hoyatla.pauc.lod.PauCLodShaderPresentation;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.gl.state.FogMode;
@@ -177,7 +178,45 @@ public final class CommonUniforms {
 			.uniform1i(PER_FRAME, "paucVanillaRenderDistance", PauCLodShaderPresentation::vanillaRenderDistanceBlocks)
 			.uniform1i(PER_FRAME, "paucLodStartDistance", PauCLodShaderPresentation::lodStartDistanceBlocks)
 			.uniform1i(PER_FRAME, "paucLodEndDistance", PauCLodShaderPresentation::lodEndDistanceBlocks)
-			.uniform1i(PER_FRAME, "paucShaderDhRenderDistance", DHCompat::getShaderRenderDistance);
+			.uniform1i(PER_FRAME, "paucShaderDhRenderDistance", DHCompat::getShaderRenderDistance)
+			.uniform1b(PER_FRAME, "paucShaderActive", PauCShaderFrameState::currentShaderPackActive)
+			.uniform1b(PER_FRAME, "paucShaderNativeProfile", PauCShaderFrameState::currentNativeProfileActive)
+			.uniform1b(PER_FRAME, "paucShaderFallbackActive", PauCShaderFrameState::currentFallbackActive)
+			.uniform1b(PER_FRAME, "paucShaderLodsActive", PauCShaderFrameState::currentLodsActive)
+			.uniform1b(PER_FRAME, "paucShaderUnderPressure", PauCShaderFrameState::currentUnderPressure)
+			.uniform1b(PER_FRAME, "paucShaderSupportsDhTerrain", PauCShaderFrameState::currentSupportsDhTerrain)
+			.uniform1b(PER_FRAME, "paucShaderSupportsDhShadow", PauCShaderFrameState::currentSupportsDhShadow)
+			.uniform1b(PER_FRAME, "paucShaderSupportsTransitionFog", PauCShaderFrameState::currentSupportsTransitionFog)
+			.uniform1b(PER_FRAME, "paucShaderSupportsColoredLights", PauCShaderFrameState::currentSupportsColoredLights)
+			.uniform1b(PER_FRAME, "paucShaderSupportsWeatherFog", PauCShaderFrameState::currentSupportsWeatherFog)
+			.uniform1i(PER_FRAME, "paucShaderProfileCode", PauCShaderFrameState::currentShaderProfileCode)
+			.uniform1i(PER_FRAME, "paucShaderCompatFamilyCode", PauCShaderFrameState::currentCompatibilityFamilyCode)
+			.uniform1i(PER_FRAME, "paucShaderDhModeCode", PauCShaderFrameState::currentDhModeCode)
+			.uniform1i(PER_FRAME, "paucShaderPressureCode", PauCShaderFrameState::currentPressureCode)
+			.uniform1i(PER_FRAME, "paucShaderStatusCode", PauCShaderFrameState::currentShaderStatusCode)
+			.uniform1i(PER_FRAME, "paucShaderReasonCode", PauCShaderFrameState::currentShaderReasonCode)
+			.uniform1i(PER_FRAME, "paucShaderCapabilityStatusCode", PauCShaderFrameState::currentShaderCapabilityStatusCode)
+			.uniform1i(PER_FRAME, "paucLodRoundHorizonDistance", PauCShaderFrameState::currentRoundHorizonDistanceBlocks)
+			.uniform1i(PER_FRAME, "paucLodTransitionWidth", PauCShaderFrameState::currentTransitionWidthBlocks)
+			.uniform1i(PER_FRAME, "paucVanillaFogStartDistance", PauCShaderFrameState::currentVanillaFogStartDistanceBlocks)
+			.uniform1i(PER_FRAME, "paucVanillaFogEndDistance", PauCShaderFrameState::currentVanillaFogEndDistanceBlocks)
+			.uniform1f(PER_FRAME, "paucShaderProfileDoFogMix", PauCShaderFrameState::currentProfileDoFogMix)
+			.uniform1f(PER_FRAME, "paucShaderProfileRgbFogMix", PauCShaderFrameState::currentProfileRgbFogMix)
+			.uniform1f(PER_FRAME, "paucShaderProfileCommonFogMix", PauCShaderFrameState::currentProfileCommonFogMix)
+			.uniform1f(PER_FRAME, "paucShaderProfileBorderAlphaFogMix", PauCShaderFrameState::currentProfileBorderAlphaFogMix)
+			.uniform1f(PER_FRAME, "paucShaderProfileBlissBorderFogMix", PauCShaderFrameState::currentProfileBlissBorderFogMix)
+			.uniform1f(PER_FRAME, "paucShaderProfileNearBlendEndExtra", PauCShaderFrameState::currentProfileNearBlendEndExtra)
+			.uniform1f(PER_FRAME, "paucShaderProfileFarFogWidth", PauCShaderFrameState::currentProfileFarFogWidth)
+			.uniform1f(PER_FRAME, "paucShaderProfileFarFogStrength", PauCShaderFrameState::currentProfileFarFogStrength)
+			.uniform1f(PER_FRAME, "paucShaderProfileWaterGradientStrength", PauCShaderFrameState::currentProfileWaterGradientStrength)
+			.uniform1f(PER_FRAME, "paucShaderProfileWaterEndFogStrength", PauCShaderFrameState::currentProfileWaterEndFogStrength)
+			.uniform3f(PER_FRAME, "paucShaderProfileWaterDeepTone", PauCShaderFrameState::currentProfileWaterDeepTone)
+			.uniform1f(PER_FRAME, "paucShaderProfileWaterTransparencyStrength", PauCShaderFrameState::currentProfileWaterTransparencyStrength)
+			.uniform1f(PER_FRAME, "paucShaderProfileShadowJoinNear", PauCShaderFrameState::currentProfileShadowJoinNear)
+			.uniform1f(PER_FRAME, "paucShaderProfileShadowJoinFar", PauCShaderFrameState::currentProfileShadowJoinFar)
+			.uniform1f(PER_FRAME, "paucShaderProfileShadowNearStrength", PauCShaderFrameState::currentProfileShadowNearStrength)
+			.uniform1f(PER_FRAME, "paucShaderProfileShadowSideStrength", PauCShaderFrameState::currentProfileShadowSideStrength)
+			.uniform1f(PER_FRAME, "paucShaderProfileShadowMax", PauCShaderFrameState::currentProfileShadowMax);
 	}
 
 	private static boolean isOnGround() {

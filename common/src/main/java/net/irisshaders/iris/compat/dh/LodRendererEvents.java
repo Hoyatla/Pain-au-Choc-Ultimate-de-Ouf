@@ -25,10 +25,11 @@ import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhAp
 import com.seibel.distanthorizons.api.objects.math.DhApiVec3f;
 import com.seibel.distanthorizons.coreapi.DependencyInjection.OverrideInjector;
 import fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime;
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderSafety;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.shadows.ShadowRenderer;
@@ -120,9 +121,9 @@ public class LodRendererEvents {
 				}
 
 				DHCompatInternal instance = getInstance();
-				boolean overrideActive = IrisApi.getInstance().isShaderPackInUse() && instance.shouldOverride;
+				boolean overrideActive = PauCShaders.isShaderPackInUse() && instance.shouldOverride;
 				if (DhApi.Delayed.renderProxy != null) {
-					DhApi.Delayed.renderProxy.setDeferTransparentRendering(overrideActive);
+					DhApi.Delayed.renderProxy.setDeferTransparentRendering(shouldUseDeferredTransparentRendering(instance));
 				}
 				if (overrideActive) {
 					applyPauCDhRuntimeOverrides();
@@ -211,7 +212,7 @@ public class LodRendererEvents {
 				}
 
 				DHCompatInternal instance = getInstance();
-				if (IrisApi.getInstance().isShaderPackInUse() && instance.shouldOverride && !instance.hasTranslucentOverride()) {
+				if (PauCShaders.isShaderPackInUse() && instance.shouldOverride && !instance.hasTranslucentOverride()) {
 					logShaderTransparentUnavailableOnce();
 					event.cancelEvent();
 					return;
@@ -443,7 +444,7 @@ public class LodRendererEvents {
 		DhApiBeforeApplyShaderRenderEvent beforeApplyShaderEvent = new DhApiBeforeApplyShaderRenderEvent() {
 			@Override
 			public void beforeRender(DhApiCancelableEventParam<DhApiRenderParam> event) {
-				if (IrisApi.getInstance().isShaderPackInUse() && getInstance().shouldOverride && !shouldPauseDegradedShaderLod()) {
+				if (PauCShaders.isShaderPackInUse() && getInstance().shouldOverride && !shouldPauseDegradedShaderLod()) {
 					DHCompatInternal instance = getInstance();
 
 					OverrideInjector.INSTANCE.unbind(IDhApiShadowCullingFrustum.class, (IDhApiOverrideable) ShadowRenderer.FRUSTUM);
@@ -530,7 +531,7 @@ public class LodRendererEvents {
 			return Boolean.parseBoolean(explicit);
 		}
 
-		if (!IrisApi.getInstance().isShaderPackInUse()) {
+		if (!PauCShaders.isShaderPackInUse()) {
 			return false;
 		}
 
@@ -544,6 +545,14 @@ public class LodRendererEvents {
 
 	private static boolean isOpaqueDhPass(EDhApiRenderPass renderPass) {
 		return renderPass == EDhApiRenderPass.OPAQUE || renderPass == EDhApiRenderPass.OPAQUE_AND_TRANSPARENT;
+	}
+
+	private static boolean shouldUseDeferredTransparentRendering(DHCompatInternal instance) {
+		return instance != null
+			&& PauCShaders.isShaderPackInUse()
+			&& instance.shouldOverride
+			&& instance.hasTranslucentOverride()
+			&& !PauCLodShaderContext.isFallbackActive();
 	}
 
 	private static boolean shouldRenderNativeDhShadow(DHCompatInternal instance) {

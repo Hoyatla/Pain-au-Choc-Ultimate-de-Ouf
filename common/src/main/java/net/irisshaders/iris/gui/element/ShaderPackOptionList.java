@@ -8,6 +8,7 @@ import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.NavigationController;
 import net.irisshaders.iris.gui.element.widget.AbstractElementWidget;
 import net.irisshaders.iris.gui.element.widget.OptionMenuConstructor;
+import net.irisshaders.iris.gui.screen.ShaderPackHost;
 import net.irisshaders.iris.gui.screen.ShaderPackScreen;
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuContainer;
@@ -39,11 +40,11 @@ import java.util.Properties;
 
 public class ShaderPackOptionList extends IrisContainerObjectSelectionList<ShaderPackOptionList.BaseEntry> {
 	private final List<AbstractElementWidget<?>> elementWidgets = new ArrayList<>();
-	private final ShaderPackScreen screen;
+	private final ShaderPackHost screen;
 	private final NavigationController navigation;
 	private OptionMenuContainer container;
 
-	public ShaderPackOptionList(ShaderPackScreen screen, NavigationController navigation, ShaderPack pack, Minecraft client, int width, int height, int top, int bottom, int left, int right) {
+	public ShaderPackOptionList(ShaderPackHost screen, NavigationController navigation, ShaderPack pack, Minecraft client, int width, int height, int top, int bottom, int left, int right) {
 		super(client, width, height, top, bottom, left, right, 24);
 		this.navigation = navigation;
 		this.screen = screen;
@@ -57,6 +58,7 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 
 	public void rebuild() {
 		this.clearEntries();
+		this.elementWidgets.clear();
 		this.setScrollAmount(0);
 		OptionMenuConstructor.constructAndApplyToScreen(this.container, this.screen, this, navigation);
 	}
@@ -67,7 +69,7 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 
 	@Override
 	public int getRowWidth() {
-		return Math.min(400, width - 12);
+		return Math.max(0, Math.min(400, (this.x1 - this.x0) - 18));
 	}
 
 	public void addHeader(Component text, boolean backButton) {
@@ -123,7 +125,7 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 		private static final int MIN_SIDE_BUTTON_WIDTH = 42;
 		private static final int BUTTON_HEIGHT = 16;
 
-		private final ShaderPackScreen screen;
+		private final ShaderPackHost screen;
 		private final @Nullable IrisElementRow backButton;
 		private final IrisElementRow utilityButtons = new IrisElementRow();
 		private final IrisElementRow.TextButtonElement resetButton;
@@ -131,7 +133,7 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 		private final IrisElementRow.IconButtonElement exportButton;
 		private final Component text;
 
-		public HeaderEntry(ShaderPackScreen screen, NavigationController navigation, Component text, boolean hasBackButton) {
+		public HeaderEntry(ShaderPackHost screen, NavigationController navigation, Component text, boolean hasBackButton) {
 			super(navigation);
 
 			if (hasBackButton) {
@@ -200,7 +202,7 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 		}
 
 		private void queueBottomRightAnchoredTooltip(GuiGraphics guiGraphics, int x, int y, Font font, Component text) {
-			ShaderPackScreen.TOP_LAYER_RENDER_QUEUE.add(() -> GuiUtil.drawTextPanel(
+			this.screen.queueTopLayerRender(() -> GuiUtil.drawTextPanel(
 				font, guiGraphics, text,
 				x - (font.width(text) + 10), y - 16
 			));
@@ -271,8 +273,6 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 				return false;
 			}
 
-			final ShaderPackScreen originalScreen = this.screen; // Also used to prevent invalid state
-
 			FileDialogUtil.fileSelectDialog(
 					FileDialogUtil.DialogType.OPEN, "Import Shader Settings from File",
 					Iris.getShaderpacksDirectory().resolve(Iris.getCurrentPackName() + ".txt"),
@@ -284,9 +284,30 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 						return;
 					}
 
-					if (Minecraft.getInstance().screen == originalScreen) {
-						path.ifPresent(originalScreen::importPackOptions);
+					if (this.screen instanceof ShaderPackScreen originalScreen) {
+						if (Minecraft.getInstance().screen == originalScreen) {
+							path.ifPresent(originalScreen::importPackOptions);
+						}
+						return;
 					}
+
+					path.ifPresent(settingPath -> {
+						try (InputStream in = Files.newInputStream(settingPath)) {
+							Properties properties = new Properties();
+							properties.load(in);
+							Iris.queueShaderPackOptionsFromProperties(properties);
+							this.navigation.refresh();
+							this.screen.applyChanges();
+							this.screen.displayNotification(
+								Component.translatable("options.pauc.shaderPackOptions.importedSettings", settingPath.getFileName().toString())
+									.withStyle(ChatFormatting.ITALIC, ChatFormatting.YELLOW));
+						} catch (Exception importError) {
+							Iris.logger.error("Error importing shader settings file \"" + settingPath + "\"", importError);
+							this.screen.displayNotification(
+								Component.translatable("options.pauc.shaderPackOptions.failedImport", settingPath.getFileName().toString())
+									.withStyle(ChatFormatting.ITALIC, ChatFormatting.RED));
+						}
+					});
 				});
 
 			return true;
@@ -348,12 +369,12 @@ public class ShaderPackOptionList extends IrisContainerObjectSelectionList<Shade
 
 	public static class ElementRowEntry extends BaseEntry {
 		private final List<AbstractElementWidget<?>> widgets;
-		private final ShaderPackScreen screen;
+		private final ShaderPackHost screen;
 
 		private int cachedWidth;
 		private int cachedPosX;
 
-		public ElementRowEntry(ShaderPackScreen screen, NavigationController navigation, List<AbstractElementWidget<?>> widgets) {
+		public ElementRowEntry(ShaderPackHost screen, NavigationController navigation, List<AbstractElementWidget<?>> widgets) {
 			super(navigation);
 
 			this.screen = screen;

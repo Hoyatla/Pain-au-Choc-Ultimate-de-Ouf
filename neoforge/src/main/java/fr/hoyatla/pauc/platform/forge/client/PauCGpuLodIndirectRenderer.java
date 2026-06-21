@@ -14,7 +14,7 @@ import org.slf4j.Logger;
 import java.nio.ByteBuffer;
 
 /**
- * GPU-driven coarse LOD renderer foundation (BETA 0.4.1).
+ * GPU-driven coarse LOD renderer foundation (BETA 0.5.0).
  *
  * <p>Renders the PauC coarse LOD cells (one flat plate per cell) as instanced unit quads issued with a single
  * {@code glMultiDrawElementsIndirect} call, replacing the per-frame {@code BufferBuilder} rebuild of

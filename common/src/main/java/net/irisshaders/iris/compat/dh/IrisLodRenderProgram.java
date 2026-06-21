@@ -20,6 +20,7 @@ import net.irisshaders.iris.gl.shader.ShaderType;
 import net.irisshaders.iris.gl.state.FogMode;
 import net.irisshaders.iris.gl.texture.TextureType;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
+import net.irisshaders.iris.pipeline.PauCShaderPackProgramPatches;
 import net.irisshaders.iris.pipeline.transform.PatchShaderType;
 import net.irisshaders.iris.pipeline.transform.ShaderPrinter;
 import net.irisshaders.iris.pipeline.transform.TransformPatcher;
@@ -303,6 +304,8 @@ public class IrisLodRenderProgram {
 		fragment = applyPaucLodShadowGradient(fragment, isShadowPass, translucent, name);
 		fragment = applyPaucUnderwaterRuntimeFog(fragment, isShadowPass, name);
 		fragment = ensurePaucFinalUniforms(fragment);
+		vertex = PauCShaderPackProgramPatches.patchVertex(source.getName(), vertex);
+		fragment = PauCShaderPackProgramPatches.patchFragment(source.getName(), fragment);
 		Map<PatchShaderType, String> printedSources = new EnumMap<>(PatchShaderType.class);
 		printedSources.put(PatchShaderType.VERTEX, vertex);
 		printedSources.put(PatchShaderType.TESS_CONTROL, tessControl);

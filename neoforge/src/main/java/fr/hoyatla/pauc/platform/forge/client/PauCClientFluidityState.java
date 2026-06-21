@@ -687,20 +687,26 @@ public final class PauCClientFluidityState {
 		int clientEntities = PauCVillagePerformanceDiagnostics.lastClientEntityCount();
 		long renderedEntitiesWindow = PauCVillagePerformanceDiagnostics.lastRenderedEntitiesWindow();
 		long renderedBlockEntitiesWindow = PauCVillagePerformanceDiagnostics.lastRenderedBlockEntitiesWindow();
-		if (clientEntities >= 128 || renderedEntitiesWindow >= 192L) {
+		if (clientEntities >= 160 || renderedEntitiesWindow >= 224L) {
 			score += 2;
-		} else if (clientEntities >= 64 || renderedEntitiesWindow >= 80L) {
+		} else if (clientEntities >= 96 || renderedEntitiesWindow >= 112L) {
 			score += 1;
 		}
-		if (renderedBlockEntitiesWindow >= 1024L) {
+		if (renderedBlockEntitiesWindow >= 1536L) {
 			score += 3;
-		} else if (renderedBlockEntitiesWindow >= 384L) {
+		} else if (renderedBlockEntitiesWindow >= 768L) {
 			score += 2;
-		} else if (renderedBlockEntitiesWindow >= 128L) {
+		} else if (renderedBlockEntitiesWindow >= 256L) {
 			score += 1;
 		}
 		int scenePressureTier = PauCVillagePerformanceDiagnostics.scenePressureTier();
-		if (scenePressureTier >= 3) {
+		if (shaderActive) {
+			if (scenePressureTier >= 3) {
+				score += 2;
+			} else if (scenePressureTier >= 2) {
+				score += 1;
+			}
+		} else if (scenePressureTier >= 3) {
 			score += 3;
 		} else if (scenePressureTier >= 2) {
 			score += 2;
@@ -712,6 +718,15 @@ public final class PauCClientFluidityState {
 		}
 		if (heapPressure >= 0.88D) {
 			score += 1;
+		}
+		if (shaderActive
+			&& modCount < mediumModCount
+			&& clientEntities < 128
+			&& renderedEntitiesWindow < 160L
+			&& renderedBlockEntitiesWindow < 768L
+			&& scenePressureTier <= 1
+			&& heapPressure < 0.80D) {
+			score = Math.min(score, 4);
 		}
 		PackTier tier = score >= 8 ? PackTier.HUGE : score >= 5 ? PackTier.HEAVY : score >= 2 ? PackTier.MEDIUM : PackTier.LIGHT;
 		return new RuntimeProfile(tier, score);

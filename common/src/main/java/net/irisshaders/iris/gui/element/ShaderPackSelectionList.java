@@ -3,6 +3,7 @@ package net.irisshaders.iris.gui.element;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.screen.ShaderPackScreen;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ComponentPath;
@@ -155,7 +156,8 @@ public class ShaderPackSelectionList extends IrisObjectSelectionList<ShaderPackS
 		ShaderPackEntry entry = new ShaderPackEntry(index, this, name);
 
 		Iris.getIrisConfig().getShaderPackName().ifPresent(currentPackName -> {
-			if (name.equals(currentPackName)) {
+			String configuredName = BundledShaderpackInstaller.canonicalizePackName(currentPackName);
+			if (name.equals(configuredName)) {
 				setSelected(entry);
 				setFocused(entry);
 				centerScrollOn(entry);
@@ -334,7 +336,7 @@ public class ShaderPackSelectionList extends IrisObjectSelectionList<ShaderPackS
 			this.bounds = new ScreenRectangle(x, y, entryWidth, entryHeight);
 			Font font = Minecraft.getInstance().font;
 			int color = 0xFFFFFF;
-			String name = packName;
+			String name = BundledShaderpackInstaller.displayPackName(packName);
 
 			if (hovered) {
 				GuiUtil.bindIrisWidgetsTexture();

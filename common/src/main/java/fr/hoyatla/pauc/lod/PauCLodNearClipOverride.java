@@ -16,6 +16,7 @@ public final class PauCLodNearClipOverride {
 	private static final String SHADER_ENABLED_PROPERTY = "pauc.lod.shaderNearClipOverride";
 	private static final String GLOBAL_RENDER_UTIL_PROPERTY = "pauc.lod.globalRenderUtilClip";
 	private static final String KEEP_UNDER_VANILLA_PROPERTY = "pauc.lod.keepLodsUnderVanilla";
+	private static final String AUTO_KEEP_UNDER_VANILLA_FOR_PAUC_SHADER_PROPERTY = "pauc.lod.autoKeepLodsUnderVanillaForPauCShader";
 	private static final String UNDER_VANILLA_CLIP_BLOCKS_PROPERTY = "pauc.lod.underVanillaClipBlocks";
 	private static final String SHADER_OFF_GROUNDED_OVERLAP_CLIP_PROPERTY = "pauc.lod.shaderOffGroundedOverlapClip";
 	private static final String SHADER_OFF_GROUNDED_OVERLAP_CLIP_CHUNKS_PROPERTY = "pauc.lod.shaderOffGroundedOverlapClipChunks";
@@ -114,7 +115,23 @@ public final class PauCLodNearClipOverride {
 	}
 
 	public static boolean shouldKeepLodsUnderVanilla() {
-		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, false);
+		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, false) || shouldAutoKeepLodsUnderVanillaForCurrentShader();
+	}
+
+	private static boolean shouldAutoKeepLodsUnderVanillaForCurrentShader() {
+		if (!PauCLodShaderContext.isShaderPackInUse()
+			|| !readBoolean(AUTO_KEEP_UNDER_VANILLA_FOR_PAUC_SHADER_PROPERTY, true)) {
+			return false;
+		}
+
+		if (PauCLodShaderProfiles.currentFamily() != PauCLodShaderProfiles.Family.PAUC) {
+			return false;
+		}
+
+		// Native PauC DH shaders already own the vanilla/LOD transition. Forcing the
+		// "under vanilla" clip there creates a visible water/terrain cut band instead
+		// of improving the junction.
+		return PauCLodShaderContext.isFallbackActive();
 	}
 
 	public static void setFeatureTransitionMask(boolean active, String reason) {

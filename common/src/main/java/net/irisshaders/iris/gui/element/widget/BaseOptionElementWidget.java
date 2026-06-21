@@ -3,7 +3,7 @@ package net.irisshaders.iris.gui.element.widget;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.NavigationController;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
+import net.irisshaders.iris.gui.screen.ShaderPackHost;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuElement;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -25,7 +25,7 @@ public abstract class BaseOptionElementWidget<T extends OptionMenuElement> exten
 	protected static final Component DIVIDER = Component.literal(": ");
 
 	protected MutableComponent unmodifiedLabel;
-	protected ShaderPackScreen screen;
+	protected ShaderPackHost screen;
 	protected NavigationController navigation;
 	protected Component trimmedLabel;
 	protected Component valueLabel;
@@ -40,7 +40,7 @@ public abstract class BaseOptionElementWidget<T extends OptionMenuElement> exten
 	}
 
 	@Override
-	public void init(ShaderPackScreen screen, NavigationController navigation) {
+	public void init(ShaderPackHost screen, NavigationController navigation) {
 		this.screen = screen;
 		this.navigation = navigation;
 		this.valueLabel = null;
@@ -119,7 +119,7 @@ public abstract class BaseOptionElementWidget<T extends OptionMenuElement> exten
 
 	protected final void renderTooltip(GuiGraphics guiGraphics, Component text, int mouseX, int mouseY, boolean hovered) {
 		if (hovered) {
-			ShaderPackScreen.TOP_LAYER_RENDER_QUEUE.add(() -> GuiUtil.drawTextPanel(Minecraft.getInstance().font, guiGraphics, text, mouseX + 2, mouseY - 16));
+			this.screen.queueTopLayerRender(() -> GuiUtil.drawTextPanel(Minecraft.getInstance().font, guiGraphics, text, mouseX + 2, mouseY - 16));
 		}
 	}
 
@@ -181,6 +181,9 @@ public abstract class BaseOptionElementWidget<T extends OptionMenuElement> exten
 
 			if (refresh) {
 				this.navigation.refresh();
+				if (this.screen.shouldApplyImmediately()) {
+					this.screen.applyChanges();
+				}
 			}
 
 			GuiUtil.playButtonClickSound();
@@ -199,6 +202,9 @@ public abstract class BaseOptionElementWidget<T extends OptionMenuElement> exten
 
 			if (refresh) {
 				this.navigation.refresh();
+				if (this.screen.shouldApplyImmediately()) {
+					this.screen.applyChanges();
+				}
 			}
 
 			GuiUtil.playButtonClickSound();

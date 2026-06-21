@@ -3,6 +3,7 @@ package net.irisshaders.iris.config;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gui.option.IrisVideoSettings;
 import net.irisshaders.iris.pathways.colorspace.ColorSpace;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -17,7 +18,7 @@ import java.util.Properties;
  */
 public class IrisConfig {
 	private static final String COMMENT =
-		"This file stores configuration options for Iris, such as the currently active shaderpack";
+		"This file stores configuration options for the PauC shader runtime, such as the currently active shaderpack";
 	private final Path propertiesPath;
 	/**
 	 * The path to the current shaderpack. Null if the internal shaderpack is being used.
@@ -81,7 +82,7 @@ public class IrisConfig {
 		if (name == null || name.equals("(internal)") || name.isEmpty()) {
 			this.shaderPackName = null;
 		} else {
-			this.shaderPackName = name;
+			this.shaderPackName = BundledShaderpackInstaller.canonicalizePackName(name);
 		}
 	}
 
@@ -146,6 +147,8 @@ public class IrisConfig {
 		if (shaderPackName != null) {
 			if (shaderPackName.equals("(internal)") || shaderPackName.isEmpty()) {
 				shaderPackName = null;
+			} else {
+				shaderPackName = BundledShaderpackInstaller.canonicalizePackName(shaderPackName);
 			}
 		}
 	}

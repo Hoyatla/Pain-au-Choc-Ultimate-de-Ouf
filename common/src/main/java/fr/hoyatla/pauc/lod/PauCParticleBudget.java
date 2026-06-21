@@ -54,7 +54,7 @@ public final class PauCParticleBudget {
 		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
 			return false;
 		}
-		boolean scenePressure = PauCVillagePerformanceDiagnostics.isScenePressureActive();
+		boolean scenePressure = PauCVillagePerformanceDiagnostics.isProjectedScenePressureActive();
 		if (!PauCFrameSpikeAbsorber.isAbsorbing() && !scenePressure) {
 			return false;
 		}
@@ -144,7 +144,7 @@ public final class PauCParticleBudget {
 			scale = Math.min(scale, PauCFrameSpikeAbsorber.workScale());
 		}
 		if (scenePressure) {
-			scale = Math.min(scale, PauCVillagePerformanceDiagnostics.scenePressureScale());
+			scale = Math.min(scale, PauCVillagePerformanceDiagnostics.projectedScenePressureScale());
 			if (PauCVillagePerformanceDiagnostics.lastPlayerGrounded()
 				&& PauCVillagePerformanceDiagnostics.lastPlayerHorizontalSpeed() >= 0.10D) {
 				scale = Math.max(0.40D, scale - 0.08D);

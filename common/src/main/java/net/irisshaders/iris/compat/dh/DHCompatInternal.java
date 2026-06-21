@@ -12,8 +12,8 @@ import com.seibel.distanthorizons.coreapi.DependencyInjection.OverrideInjector;
 import fr.hoyatla.pauc.lod.PauCLodShaderSafety;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gl.IrisRenderSystem;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
 import net.irisshaders.iris.gl.texture.DepthBufferFormat;
@@ -250,7 +250,7 @@ public class DHCompatInternal {
 
 		boolean currentDhEnabled = isDhRenderingEnabled();
 		if ((dhEnabled != currentDhEnabled || guiScale != Minecraft.getInstance().options.guiScale().get())
-			&& IrisApi.getInstance().isShaderPackInUse()) {
+			&& PauCShaders.isShaderPackInUse()) {
 			guiScale = Minecraft.getInstance().options.guiScale().get();
 			dhEnabled = currentDhEnabled;
 			try {

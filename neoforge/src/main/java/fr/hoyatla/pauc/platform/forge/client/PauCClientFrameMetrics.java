@@ -55,6 +55,9 @@ public final class PauCClientFrameMetrics {
 	private static double lastWatchdogFrameMs;
 	private static volatile long lastWatchdogDumpAtMs;
 	private static volatile boolean watchdogDumpRunning;
+	private static volatile long cachedFpsFrameSeq = Long.MIN_VALUE;
+	private static volatile Minecraft cachedFpsMinecraft;
+	private static volatile int cachedFps = -1;
 
 	private PauCClientFrameMetrics() {
 	}
@@ -108,6 +111,9 @@ public final class PauCClientFrameMetrics {
 		watchdogSpikeCount = 0;
 		consecutiveWatchdogSpikes = 0;
 		lastWatchdogFrameMs = -1.0D;
+		cachedFpsFrameSeq = Long.MIN_VALUE;
+		cachedFpsMinecraft = null;
+		cachedFps = -1;
 		System.clearProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY);
 		PauCFrameSpikeAbsorber.reset();
 		PauCLodRenderTimer.reset();
@@ -196,6 +202,23 @@ public final class PauCClientFrameMetrics {
 	}
 
 	public static int queryFps(Minecraft minecraft) {
+		if (minecraft == null) {
+			return -1;
+		}
+
+		long frameSeq = PauCFrameSpikeAbsorber.frameSeq();
+		if (frameSeq == cachedFpsFrameSeq && cachedFpsMinecraft == minecraft) {
+			return cachedFps;
+		}
+
+		int fps = queryFpsUncached(minecraft);
+		cachedFpsFrameSeq = frameSeq;
+		cachedFpsMinecraft = minecraft;
+		cachedFps = fps;
+		return fps;
+	}
+
+	private static int queryFpsUncached(Minecraft minecraft) {
 		if (minecraft == null) {
 			return -1;
 		}

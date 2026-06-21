@@ -108,11 +108,6 @@ public abstract class MixinBufferBuilder extends DefaultedVertexConsumer impleme
 			iris$isTerrain = false;
 			injectNormalAndUV1 = false;
 			return IrisVertexFormats.ENTITY;
-		} else if (format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-			extending = true;
-			iris$isTerrain = false;
-			injectNormalAndUV1 = true;
-			return IrisVertexFormats.GLYPH;
 		}
 
 		return format;

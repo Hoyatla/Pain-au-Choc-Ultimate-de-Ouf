@@ -25,7 +25,7 @@ public final class PauCBlockEntityRenderBudget {
 	private static final String FAR_FRACTION_PROPERTY = "pauc.lod.blockEntityRenderBudgetFarFraction";
 	private static final String MAX_STRIDE_PROPERTY = "pauc.lod.blockEntityRenderBudgetMaxStride";
 
-	private static final double DEFAULT_FAR_FRACTION = 0.6D;
+	private static final double DEFAULT_FAR_FRACTION = 0.82D;
 	private static final int DEFAULT_MAX_STRIDE = 3;
 
 	private static long observedFrameSeq = -1L;
@@ -46,12 +46,7 @@ public final class PauCBlockEntityRenderBudget {
 		if (blockEntity == null) {
 			return false;
 		}
-		// Default OFF: per-frame dephasing of visible block entities strobes (blinks every other frame), which reads as
-		// jank even when raw frame times improve. Kept as opt-in only (set pauc.lod.blockEntityRenderBudget=true).
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"))) {
-			return false;
-		}
-		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {
+		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
 			return false;
 		}
 		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
@@ -70,8 +65,7 @@ public final class PauCBlockEntityRenderBudget {
 			return false;
 		}
 
-		int maxStride = readInt(MAX_STRIDE_PROPERTY, DEFAULT_MAX_STRIDE, 1, 8);
-		int stride = 1 + (int) Math.round(PauCFrameSpikeAbsorber.pressure01() * (maxStride - 1));
+		int stride = activeStride();
 		if (stride <= 1) {
 			return false;
 		}
@@ -126,6 +120,18 @@ public final class PauCBlockEntityRenderBudget {
 		z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
 		z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
 		return z ^ (z >>> 31);
+	}
+
+	private static int activeStride() {
+		int maxStride = readInt(MAX_STRIDE_PROPERTY, DEFAULT_MAX_STRIDE, 1, 8);
+		int tier = Math.max(PauCVillagePerformanceDiagnostics.projectedAnimationLodTier(), PauCVillagePerformanceDiagnostics.projectedScenePressureTier());
+		if (PauCFrameSpikeAbsorber.isAbsorbing() && PauCFrameSpikeAbsorber.pressure01() >= 0.80D) {
+			tier = Math.max(tier, 3);
+		}
+		if (tier >= 3) {
+			return Math.min(maxStride, 2);
+		}
+		return 1;
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {

@@ -8,7 +8,7 @@ import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderPresentation;
-import net.irisshaders.iris.api.v0.IrisApi;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.minecraft.client.Camera;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -70,7 +70,7 @@ public class MixinFogRenderer {
 		// view. IMPORTANT: only when NO shader pack is active. A shader pack owns its own atmospheric fog and
 		// reads these same fog uniforms, so we must never touch them while a shader is in use — the toggle is
 		// strictly a vanilla/shaderless fog control and must not remove the shader's fog.
-		if (!PauCLodClientSettings.isVanillaFogEnabled() && !IrisApi.getInstance().isShaderPackInUse()) {
+		if (!PauCLodClientSettings.isVanillaFogEnabled() && !PauCShaders.isShaderPackInUse()) {
 			RenderSystem.setShaderFogStart(PAUC_DISABLED_FOG_START);
 			RenderSystem.setShaderFogEnd(PAUC_DISABLED_FOG_END);
 			PauCLodFogState.reset();
@@ -81,7 +81,7 @@ public class MixinFogRenderer {
 			return;
 		}
 
-		boolean shaderManagedFog = IrisApi.getInstance().isShaderPackInUse();
+		boolean shaderManagedFog = PauCShaders.isShaderPackInUse();
 		if (shaderManagedFog && PauCLodShaderPresentation.shouldLateRenderFallbackLods()) {
 			PauCLodFogState.reset();
 			return;

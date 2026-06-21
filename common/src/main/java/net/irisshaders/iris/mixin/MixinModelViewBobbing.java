@@ -1,7 +1,7 @@
 package net.irisshaders.iris.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import net.irisshaders.iris.api.v0.IrisApi;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -31,7 +31,7 @@ public class MixinModelViewBobbing {
 
 	@Inject(method = "renderLevel", at = @At("HEAD"))
 	private void iris$saveShadersOn(float pGameRenderer0, long pLong1, PoseStack pPoseStack2, CallbackInfo ci) {
-		areShadersOn = IrisApi.getInstance().isShaderPackInUse();
+		areShadersOn = PauCShaders.isShaderPackInUse();
 	}
 
 	@ModifyArg(method = "renderLevel", index = 0,

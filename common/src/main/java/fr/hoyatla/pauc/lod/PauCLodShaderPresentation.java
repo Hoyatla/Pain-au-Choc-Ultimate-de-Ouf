@@ -188,7 +188,7 @@ public final class PauCLodShaderPresentation {
 	}
 
 	private static boolean defaultLateFallbackRender() {
-		return true;
+		return false;
 	}
 
 	private static int shaderPresentationDistanceBlocks(int realRenderDistanceBlocks) {

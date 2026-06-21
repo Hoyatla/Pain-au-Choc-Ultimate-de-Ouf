@@ -2,6 +2,7 @@ package net.irisshaders.batchedentityrendering.mixin;
 
 import net.irisshaders.batchedentityrendering.impl.DrawCallTrackingRenderBuffers;
 import net.irisshaders.batchedentityrendering.impl.FullyBufferedMultiBufferSource;
+import net.irisshaders.batchedentityrendering.impl.BatchedEntityRenderingPolicy;
 import net.irisshaders.batchedentityrendering.impl.MemoryTrackingBuffer;
 import net.irisshaders.batchedentityrendering.impl.MemoryTrackingRenderBuffers;
 import net.irisshaders.batchedentityrendering.impl.RenderBuffersExt;
@@ -41,7 +42,7 @@ public class MixinRenderBuffers implements RenderBuffersExt, MemoryTrackingRende
 
 	@Inject(method = "bufferSource", at = @At("HEAD"), cancellable = true)
 	private void batchedentityrendering$replaceBufferSource(CallbackInfoReturnable<MultiBufferSource.BufferSource> cir) {
-		if (begins == 0) {
+		if (begins == 0 || !BatchedEntityRenderingPolicy.isEnabled()) {
 			return;
 		}
 
@@ -50,7 +51,7 @@ public class MixinRenderBuffers implements RenderBuffersExt, MemoryTrackingRende
 
 	@Inject(method = "crumblingBufferSource", at = @At("HEAD"), cancellable = true)
 	private void batchedentityrendering$replaceCrumblingBufferSource(CallbackInfoReturnable<MultiBufferSource.BufferSource> cir) {
-		if (begins == 0) {
+		if (begins == 0 || !BatchedEntityRenderingPolicy.isEnabled()) {
 			return;
 		}
 
@@ -68,7 +69,7 @@ public class MixinRenderBuffers implements RenderBuffersExt, MemoryTrackingRende
 
 	@Inject(method = "outlineBufferSource", at = @At("HEAD"), cancellable = true)
 	private void batchedentityrendering$replaceOutlineBufferSource(CallbackInfoReturnable<OutlineBufferSource> provider) {
-		if (begins == 0) {
+		if (begins == 0 || !BatchedEntityRenderingPolicy.isEnabled()) {
 			return;
 		}
 
@@ -77,6 +78,10 @@ public class MixinRenderBuffers implements RenderBuffersExt, MemoryTrackingRende
 
 	@Override
 	public void beginLevelRendering() {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return;
+		}
+
 		if (begins == 0) {
 			buffered.assertWrapStackEmpty();
 		}
@@ -88,6 +93,10 @@ public class MixinRenderBuffers implements RenderBuffersExt, MemoryTrackingRende
 
 	@Override
 	public void endLevelRendering() {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return;
+		}
+
 		begins -= 1;
 
 		if (begins == 0) {

@@ -1,6 +1,7 @@
 package net.irisshaders.batchedentityrendering.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.irisshaders.batchedentityrendering.impl.BatchedEntityRenderingPolicy;
 import net.irisshaders.batchedentityrendering.impl.DrawCallTrackingRenderBuffers;
 import net.irisshaders.batchedentityrendering.impl.FullyBufferedMultiBufferSource;
 import net.irisshaders.batchedentityrendering.impl.Groupable;
@@ -89,6 +90,11 @@ public class MixinLevelRenderer {
 			((DrawCallTrackingRenderBuffers) renderBuffers).resetDrawCounts();
 		}
 
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			groupable = null;
+			return;
+		}
+
 		((RenderBuffersExt) renderBuffers).beginLevelRendering();
 		MultiBufferSource provider = renderBuffers.bufferSource();
 
@@ -99,6 +105,9 @@ public class MixinLevelRenderer {
 
 	@Inject(method = "renderLevel", at = @At(value = "INVOKE", target = RENDER_ENTITY))
 	private void batchedentityrendering$preRenderEntity(PoseStack poseStack, float f, long l, boolean bl, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f matrix4f, CallbackInfo ci) {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return;
+		}
 		if (groupable != null) {
 			groupable.startGroup();
 		}
@@ -106,6 +115,9 @@ public class MixinLevelRenderer {
 
 	@Inject(method = "renderLevel", at = @At(value = "INVOKE", target = RENDER_ENTITY, shift = At.Shift.AFTER))
 	private void batchedentityrendering$postRenderEntity(PoseStack poseStack, float f, long l, boolean bl, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f matrix4f, CallbackInfo ci) {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return;
+		}
 		if (groupable != null) {
 			groupable.endGroup();
 		}
@@ -113,6 +125,10 @@ public class MixinLevelRenderer {
 
 	@Inject(method = "renderLevel", at = @At(value = "CONSTANT", args = "stringValue=translucent"), locals = LocalCapture.CAPTURE_FAILHARD)
 	private void batchedentityrendering$beginTranslucents(PoseStack poseStack, float f, long l, boolean bl, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f matrix4f, CallbackInfo ci) {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return;
+		}
+
 		RenderBuffers renderBuffers = batchedentityrendering$getRenderBuffers();
 		if (renderBuffers == null) {
 			return;
@@ -139,6 +155,10 @@ public class MixinLevelRenderer {
 
 	@Inject(method = "renderLevel", at = @At(value = "CONSTANT", args = "stringValue=translucent", shift = At.Shift.AFTER), locals = LocalCapture.CAPTURE_FAILHARD)
 	private void batchedentityrendering$endTranslucents(PoseStack poseStack, float f, long l, boolean bl, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f matrix4f, CallbackInfo ci) {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return;
+		}
+
 		RenderBuffers renderBuffers = batchedentityrendering$getRenderBuffers();
 		if (renderBuffers == null) {
 			return;
@@ -153,6 +173,11 @@ public class MixinLevelRenderer {
 	private void batchedentityrendering$endLevelRender(PoseStack poseStack, float f, long l, boolean bl, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f matrix4f, CallbackInfo ci) {
 		RenderBuffers renderBuffers = batchedentityrendering$getRenderBuffers();
 		if (renderBuffers == null) {
+			groupable = null;
+			return;
+		}
+
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
 			groupable = null;
 			return;
 		}

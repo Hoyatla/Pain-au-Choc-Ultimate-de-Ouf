@@ -5,7 +5,8 @@ import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.NavigationController;
 import net.irisshaders.iris.gui.element.ShaderPackOptionList;
 import net.irisshaders.iris.gui.element.screen.ElementWidgetScreenData;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
+import net.irisshaders.iris.gui.screen.ShaderPackHost;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuBooleanOptionElement;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuContainer;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuElement;
@@ -19,6 +20,7 @@ import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -28,7 +30,7 @@ public final class OptionMenuConstructor {
 
 	static {
 		registerScreen(OptionMenuMainElementScreen.class, screen ->
-			new ElementWidgetScreenData(Component.literal(Iris.getCurrentPackName()).append(Iris.isFallback() ? " (fallback)" : "").withStyle(ChatFormatting.BOLD), false));
+			new ElementWidgetScreenData(Component.literal(BundledShaderpackInstaller.displayPackName(Iris.getCurrentPackName())).append(Iris.isFallback() ? " (fallback)" : "").withStyle(ChatFormatting.BOLD), false));
 
 		registerScreen(OptionMenuSubElementScreen.class, screen ->
 			new ElementWidgetScreenData(GuiUtil.translateOrDefault(Component.literal(screen.screenId), "screen." + screen.screenId), true));
@@ -63,7 +65,7 @@ public final class OptionMenuConstructor {
 	}
 
 	@SuppressWarnings("unchecked")
-	public static void constructAndApplyToScreen(OptionMenuContainer container, ShaderPackScreen packScreen, ShaderPackOptionList optionList, NavigationController navigation) {
+	public static void constructAndApplyToScreen(OptionMenuContainer container, ShaderPackHost packScreen, ShaderPackOptionList optionList, NavigationController navigation) {
 		OptionMenuElementScreen screen = container.mainScreen;
 
 		if (navigation.getCurrentScreen() != null && container.subScreens.containsKey(navigation.getCurrentScreen())) {
@@ -71,13 +73,19 @@ public final class OptionMenuConstructor {
 		}
 
 		ElementWidgetScreenData data = createScreenData(screen);
+		List<AbstractElementWidget<?>> widgets = screen.elements.stream()
+			.map(element -> {
+				AbstractElementWidget<OptionMenuElement> widget = (AbstractElementWidget<OptionMenuElement>) createWidget(element);
+				widget.init(packScreen, navigation);
+				return widget;
+			})
+			.filter(widget -> widget != AbstractElementWidget.EMPTY)
+			.collect(Collectors.toList());
 
 		optionList.addHeader(data.heading(), data.backButton());
-		optionList.addWidgets(screen.getColumnCount(), screen.elements.stream().map(element -> {
-			AbstractElementWidget<OptionMenuElement> widget = (AbstractElementWidget<OptionMenuElement>) createWidget(element);
-			widget.init(packScreen, navigation);
-			return widget;
-		}).collect(Collectors.toList()));
+		if (!widgets.isEmpty()) {
+			optionList.addWidgets(screen.getColumnCount(), widgets);
+		}
 	}
 
 	public interface WidgetProvider<T extends OptionMenuElement> {

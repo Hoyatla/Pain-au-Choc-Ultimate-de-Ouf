@@ -76,6 +76,10 @@ public class ShaderpackDirectoryManager {
 	}
 
 	public List<String> enumerate() throws IOException {
+		if (!BundledShaderpackInstaller.allowExternalPackSelection()) {
+			return BundledShaderpackInstaller.bundledPackIds();
+		}
+
 		// Make sure the list is sorted since not all OSes sort the list of files in the directory.
 		// Case-insensitive sorting is the most intuitive for the user, but we then sort naturally
 		// afterwards so that we don't alternate cases weirdly in the sorted list.
@@ -100,10 +104,11 @@ public class ShaderpackDirectoryManager {
 		};
 
 		try (Stream<Path> list = Files.list(root)) {
-			return list.filter(Iris::isValidToShowPack)
+			List<String> externalPacks = list.filter(Iris::isValidToShowPack)
 				.sorted(comparator)
 				.map(path -> path.getFileName().toString())
 				.collect(Collectors.toList());
+			return BundledShaderpackInstaller.mergeBundledWithExternal(externalPacks);
 		}
 	}
 

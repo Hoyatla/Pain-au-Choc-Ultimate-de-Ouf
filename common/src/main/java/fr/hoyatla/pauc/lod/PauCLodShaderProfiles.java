@@ -1,6 +1,7 @@
 package fr.hoyatla.pauc.lod;
 
 import java.util.Locale;
+import org.joml.Vector3f;
 
 public final class PauCLodShaderProfiles {
 	private static final Profile COMPLEMENTARY_PROFILE = new Profile(
@@ -159,6 +160,32 @@ public final class PauCLodShaderProfiles {
 		false,
 		false
 	);
+	private static final Profile PAUC_PROFILE = new Profile(
+		Family.PAUC,
+		"pauc",
+		false,
+		false,
+		false,
+		"0.10",
+		"0.08",
+		"0.12",
+		"0.12",
+		"0.10",
+		"56.0",
+		"112.0",
+		"0.74",
+		"0.32",
+		"0.48",
+		"vec3(0.44, 0.60, 0.76)",
+		"0.04",
+		"160.0",
+		"544.0",
+		"0.14",
+		"0.30",
+		"0.40",
+		false,
+		false
+	);
 	private static final Profile GENERIC_PROFILE = new Profile(
 		Family.GENERIC,
 		"generic",
@@ -195,7 +222,14 @@ public final class PauCLodShaderProfiles {
 		return profile(currentFamily());
 	}
 
+	public static PauCShaderProfileId currentProfileId() {
+		return PauCLodShaderContext.currentProfileId();
+	}
+
 	public static Family currentFamily() {
+		if (currentProfileId() == PauCShaderProfileId.PAUC_NATIVE) {
+			return Family.PAUC;
+		}
 		return familyForKey(PauCLodShaderContext.shaderPackKey());
 	}
 
@@ -250,12 +284,19 @@ public final class PauCLodShaderProfiles {
 			case BLISS -> BLISS_PROFILE;
 			case PHOTON -> PHOTON_PROFILE;
 			case SOLAS -> SOLAS_PROFILE;
+			case PAUC -> PAUC_PROFILE;
 			case GENERIC -> GENERIC_PROFILE;
 		};
 	}
 
 	public static String describeCurrent() {
-		return current().describe();
+		return "shaderProfile[id="
+			+ currentProfileId().id()
+			+ ", family="
+			+ currentFamily().name().toLowerCase(Locale.ROOT)
+			+ ", "
+			+ current().describe()
+			+ "]";
 	}
 
 	public enum Family {
@@ -265,6 +306,7 @@ public final class PauCLodShaderProfiles {
 		BLISS,
 		PHOTON,
 		SOLAS,
+		PAUC,
 		GENERIC
 	}
 
@@ -319,8 +361,76 @@ public final class PauCLodShaderProfiles {
 			return family == Family.GENERIC;
 		}
 
+		public float parsedDoFogMix() {
+			return parseFloat(doFogMix, 0.16F);
+		}
+
+		public float parsedRgbFogMix() {
+			return parseFloat(rgbFogMix, 0.10F);
+		}
+
+		public float parsedCommonFogMix() {
+			return parseFloat(commonFogMix, 0.18F);
+		}
+
+		public float parsedBorderAlphaFogMix() {
+			return parseFloat(borderAlphaFogMix, 0.18F);
+		}
+
+		public float parsedBlissBorderFogMix() {
+			return parseFloat(blissBorderFogMix, 0.12F);
+		}
+
+		public float parsedNearBlendEndExtra() {
+			return parseFloat(nearBlendEndExtra, 48.0F);
+		}
+
+		public float parsedFarFogWidth() {
+			return parseFloat(farFogWidth, 96.0F);
+		}
+
+		public float parsedFarFogStrength() {
+			return parseFloat(farFogStrength, 0.86F);
+		}
+
+		public float parsedWaterGradientStrength() {
+			return parseFloat(waterGradientStrength, 0.36F);
+		}
+
+		public float parsedWaterEndFogStrength() {
+			return parseFloat(waterEndFogStrength, 0.52F);
+		}
+
+		public Vector3f parsedWaterDeepTone() {
+			return parseVec3(waterDeepTone, new Vector3f(0.50F, 0.64F, 0.78F));
+		}
+
+		public float parsedWaterTransparencyStrength() {
+			return parseFloat(waterTransparencyStrength, 0.06F);
+		}
+
+		public float parsedLodShadowJoinNear() {
+			return parseFloat(lodShadowJoinNear, 160.0F);
+		}
+
+		public float parsedLodShadowJoinFar() {
+			return parseFloat(lodShadowJoinFar, 560.0F);
+		}
+
+		public float parsedLodShadowNearStrength() {
+			return parseFloat(lodShadowNearStrength, 0.16F);
+		}
+
+		public float parsedLodShadowSideStrength() {
+			return parseFloat(lodShadowSideStrength, 0.38F);
+		}
+
+		public float parsedLodShadowMax() {
+			return parseFloat(lodShadowMax, 0.46F);
+		}
+
 		public String describe() {
-			return "shaderRuntime[id="
+			return "runtime[id="
 				+ id
 				+ ", fog="
 				+ farFogStrength
@@ -337,6 +447,41 @@ public final class PauCLodShaderProfiles {
 				+ "/"
 				+ lodShadowMax
 				+ "]";
+		}
+
+		private static float parseFloat(String rawValue, float fallback) {
+			if (rawValue == null || rawValue.isBlank()) {
+				return fallback;
+			}
+			try {
+				return Float.parseFloat(rawValue.trim());
+			} catch (NumberFormatException ignored) {
+				return fallback;
+			}
+		}
+
+		private static Vector3f parseVec3(String rawValue, Vector3f fallback) {
+			if (rawValue == null || rawValue.isBlank()) {
+				return new Vector3f(fallback);
+			}
+
+			String normalized = rawValue.trim();
+			if (normalized.startsWith("vec3(") && normalized.endsWith(")")) {
+				normalized = normalized.substring(5, normalized.length() - 1);
+			}
+			String[] parts = normalized.split(",");
+			if (parts.length != 3) {
+				return new Vector3f(fallback);
+			}
+			try {
+				return new Vector3f(
+					Float.parseFloat(parts[0].trim()),
+					Float.parseFloat(parts[1].trim()),
+					Float.parseFloat(parts[2].trim())
+				);
+			} catch (NumberFormatException ignored) {
+				return new Vector3f(fallback);
+			}
 		}
 	}
 }

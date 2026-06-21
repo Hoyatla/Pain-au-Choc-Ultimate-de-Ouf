@@ -8,6 +8,7 @@ import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.LongByReference;
 import com.sun.jna.ptr.PointerByReference;
 import fr.hoyatla.pauc.lod.PauCLodCudaBridge;
+import fr.hoyatla.pauc.lod.PauCLodGameplayProfile;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
 import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
@@ -884,11 +885,31 @@ public final class PauCCudaWorker {
 		return profile.routeSmallBatchToCpu() && count < smallBatchCpuThreshold(profile);
 	}
 
+	private static boolean shouldPreferGpuOffloadForVanilla(TerrainProfile profile) {
+		if (profile.shaderActive()) {
+			return false;
+		}
+		PauCLodGameplayProfile.Profile gameplayProfile = PauCLodGameplayProfile.current();
+		boolean fastProfile = gameplayProfile == PauCLodGameplayProfile.Profile.SHOOTER
+			|| gameplayProfile == PauCLodGameplayProfile.Profile.COMPETITIVE;
+		if (!fastProfile) {
+			return false;
+		}
+		return PauCClientChunkPriorityScorer.isFpsFirstVanillaMode()
+			|| PauCClientFrontierWarmupManager.isDirectHorizonFillActive()
+			|| PauCClientFrontierWarmupManager.isActiveTravelFill()
+			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| !PauCClientFpsGovernor.isBacklogResolved();
+	}
+
 	private static void recordTerrainCost(int count, long cudaMicros, long cpuMicros, TerrainProfile profile) {
 		TERRAIN_COST_SAMPLES.incrementAndGet();
 		TERRAIN_CUDA_COST_MICROS.addAndGet(Math.max(1L, cudaMicros));
 		TERRAIN_CPU_COST_MICROS.addAndGet(Math.max(1L, cpuMicros));
 		if (count > profile.minUsefulBatch()) {
+			return;
+		}
+		if (shouldPreferGpuOffloadForVanilla(profile)) {
 			return;
 		}
 
@@ -909,6 +930,9 @@ public final class PauCCudaWorker {
 	}
 
 	private static boolean isTerrainAutoDisabledForBatch(int count, TerrainProfile profile) {
+		if (shouldPreferGpuOffloadForVanilla(profile)) {
+			return false;
+		}
 		return TERRAIN_AUTO_DISABLED_PROFILES.contains(profile.id()) && count <= profile.minUsefulBatch();
 	}
 
@@ -927,6 +951,7 @@ public final class PauCCudaWorker {
 		boolean queueResolved = PauCClientFpsGovernor.isBacklogResolved();
 		boolean fastCatchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
 		boolean hordePressure = PauCVillagePerformanceDiagnostics.isHordePressureActive();
+		PauCLodGameplayProfile.Profile gameplayProfile = PauCLodGameplayProfile.current();
 		PauCTerrainGeneratorDetector.GeneratorKind terrain = PauCTerrainGeneratorDetector.currentClientKind();
 		PauCTerrainGeneratorDetector.ModpackClass modpackClass = PauCTerrainGeneratorDetector.currentModpackClass();
 		int terrainBatchDiscount = terrain.complexVerticalRelief() ? 24 : terrain.wideBiomeTransitions() ? 16 : 0;
@@ -950,17 +975,43 @@ public final class PauCCudaWorker {
 			|| fastCatchup
 			|| PauCClientFluidityState.lastSnapshot().band() == PauCClientFluidityState.Band.RECOVERY;
 		if (!shaderActive) {
-			int defaultMinBatch = readInt(TERRAIN_MIN_USEFUL_BATCH_PROPERTY, 160, 8, 4096);
-			long defaultInterval = readLong(TERRAIN_INTERVAL_MS_PROPERTY, 160L, 0L, 5_000L);
+			int gameplayDefaultMinBatch = switch (gameplayProfile) {
+				case SHOOTER -> 72;
+				case COMPETITIVE -> 96;
+				case BALANCED -> 128;
+				case CINEMATIC -> 160;
+			};
+			long gameplayDefaultInterval = switch (gameplayProfile) {
+				case SHOOTER -> 72L;
+				case COMPETITIVE -> 96L;
+				case BALANCED -> 128L;
+				case CINEMATIC -> 160L;
+			};
+			int defaultMinBatch = readInt(TERRAIN_MIN_USEFUL_BATCH_PROPERTY, gameplayDefaultMinBatch, 8, 4096);
+			long defaultInterval = readLong(TERRAIN_INTERVAL_MS_PROPERTY, gameplayDefaultInterval, 0L, 5_000L);
 			defaultMinBatch = Math.max(24, defaultMinBatch - terrainBatchDiscount - modpackBatchDiscount - hordeBatchDiscount);
 			defaultInterval = Math.max(8L, defaultInterval - terrainIntervalDiscount - modpackIntervalDiscount - hordeIntervalDiscount);
 			if (recoveryBias) {
-				defaultMinBatch = Math.max(64, defaultMinBatch / 2);
-				defaultInterval = Math.max(20L, defaultInterval / 2L);
+				int recoveryFloor = gameplayProfile == PauCLodGameplayProfile.Profile.SHOOTER ? 24
+					: gameplayProfile == PauCLodGameplayProfile.Profile.COMPETITIVE ? 32 : 64;
+				long recoveryIntervalFloor = gameplayProfile == PauCLodGameplayProfile.Profile.SHOOTER ? 8L
+					: gameplayProfile == PauCLodGameplayProfile.Profile.COMPETITIVE ? 12L : 20L;
+				defaultMinBatch = Math.max(recoveryFloor, defaultMinBatch / 2);
+				defaultInterval = Math.max(recoveryIntervalFloor, defaultInterval / 2L);
 			}
 			if (queueResolved || fastCatchup) {
-				defaultMinBatch = Math.max(24, Math.min(defaultMinBatch, readInt("pauc.cuda.vanillaTerrainResolvedMinUsefulBatch", 48, 8, 4096)));
-				defaultInterval = Math.max(8L, Math.min(defaultInterval, readLong("pauc.cuda.vanillaTerrainResolvedIntervalMs", 20L, 0L, 5_000L)));
+				int resolvedMinBatch = switch (gameplayProfile) {
+					case SHOOTER -> 24;
+					case COMPETITIVE -> 32;
+					default -> 48;
+				};
+				long resolvedInterval = switch (gameplayProfile) {
+					case SHOOTER -> 8L;
+					case COMPETITIVE -> 12L;
+					default -> 20L;
+				};
+				defaultMinBatch = Math.max(16, Math.min(defaultMinBatch, readInt("pauc.cuda.vanillaTerrainResolvedMinUsefulBatch", resolvedMinBatch, 8, 4096)));
+				defaultInterval = Math.max(8L, Math.min(defaultInterval, readLong("pauc.cuda.vanillaTerrainResolvedIntervalMs", resolvedInterval, 0L, 5_000L)));
 			}
 			return new TerrainProfile(
 				(queueResolved ? "shader-off-resolved" : recoveryBias ? "shader-off-recovery" : "shader-off")
@@ -1033,6 +1084,7 @@ public final class PauCCudaWorker {
 			? readInt("pauc.cuda.shaderTerrainSmallBatchFloor", 16, 8, 512)
 			: readInt("pauc.cuda.vanillaTerrainSmallBatchFloor", 24, 8, 512);
 		double scale = profile.shaderActive() ? 0.72D : 0.80D;
+		PauCLodGameplayProfile.Profile gameplayProfile = PauCLodGameplayProfile.current();
 		boolean queueResolved = PauCClientFpsGovernor.isBacklogResolved();
 		boolean catchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
 		boolean hordePressure = PauCVillagePerformanceDiagnostics.isHordePressureActive();
@@ -1065,6 +1117,20 @@ public final class PauCCudaWorker {
 		if (aggressiveVanillaPrefill) {
 			scale = Math.min(scale, readFloat("pauc.cuda.vanillaTerrainPrefillThresholdScale", 0.20F, 0.10F, 1.0F));
 			floor = Math.min(floor, readInt("pauc.cuda.vanillaTerrainPrefillFloor", 10, 8, 512));
+		}
+		if (!profile.shaderActive()) {
+			switch (gameplayProfile) {
+				case SHOOTER -> {
+					scale = Math.min(scale, readFloat("pauc.cuda.vanillaTerrainShooterThresholdScale", 0.18F, 0.10F, 1.0F));
+					floor = Math.min(floor, readInt("pauc.cuda.vanillaTerrainShooterFloor", 8, 8, 512));
+				}
+				case COMPETITIVE -> {
+					scale = Math.min(scale, readFloat("pauc.cuda.vanillaTerrainCompetitiveThresholdScale", 0.20F, 0.10F, 1.0F));
+					floor = Math.min(floor, readInt("pauc.cuda.vanillaTerrainCompetitiveFloor", 8, 8, 512));
+				}
+				default -> {
+				}
+			}
 		}
 		long cpuRoutes = terrainCpuRoutes(profile);
 		long cudaRoutes = terrainCudaRoutes(profile);

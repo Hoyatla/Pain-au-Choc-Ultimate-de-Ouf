@@ -8,6 +8,7 @@ import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -48,6 +49,9 @@ public final class PauCLodRenderCulling {
 	private static final String SCENE_PRESSURE_BLOCK_ENTITY_DISTANCE_TIER1_PROPERTY = "pauc.lod.cull.scenePressureBlockEntityDistanceTier1Blocks";
 	private static final String SCENE_PRESSURE_BLOCK_ENTITY_DISTANCE_TIER2_PROPERTY = "pauc.lod.cull.scenePressureBlockEntityDistanceTier2Blocks";
 	private static final String SCENE_PRESSURE_BLOCK_ENTITY_DISTANCE_TIER3_PROPERTY = "pauc.lod.cull.scenePressureBlockEntityDistanceTier3Blocks";
+	private static final String SCENE_PRESSURE_PASSIVE_ENTITY_DISTANCE_TIER1_PROPERTY = "pauc.lod.cull.scenePressurePassiveEntityDistanceTier1Blocks";
+	private static final String SCENE_PRESSURE_PASSIVE_ENTITY_DISTANCE_TIER2_PROPERTY = "pauc.lod.cull.scenePressurePassiveEntityDistanceTier2Blocks";
+	private static final String SCENE_PRESSURE_PASSIVE_ENTITY_DISTANCE_TIER3_PROPERTY = "pauc.lod.cull.scenePressurePassiveEntityDistanceTier3Blocks";
 	private static final String SCENE_PRESSURE_FOLIAGE_DISTANCE_CHUNKS_PROPERTY = "pauc.lod.cull.scenePressureFoliageDistanceChunks";
 	private static final String RUNTIME_VILLAGE_SEVERE_PRESSURE_PROPERTY = "pauc.runtime.villageSeverePressure";
 	private static final String PARTICLE_DISTANCE_BLOCKS_PROPERTY = "pauc.lod.cull.particleDistanceBlocks";
@@ -139,12 +143,16 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = distanceFromVanillaChunks(DEFAULT_ENTITY_EXTRA_CHUNKS, ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
+		int sceneTier = currentScenePressureTier();
 		if (shouldApplyVillagePressureCulling() && PauCVillagePerformanceDiagnostics.isVillageEntity(entity)) {
 			maxDistance = Math.min(maxDistance, readInt(VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256));
 		} else if (shouldApplyHordePressureCulling()) {
 			maxDistance = Math.min(maxDistance, readInt(HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS, 96, 384));
 		}
-		maxDistance = Math.min(maxDistance, scenePressureEntityDistanceBlocks(maxDistance));
+		maxDistance = Math.min(maxDistance, scenePressureEntityDistanceBlocks(maxDistance, sceneTier));
+		if (sceneTier > 0 && isPassiveEntityPressureCandidate(entity) && !PauCVillagePerformanceDiagnostics.isVillageEntity(entity)) {
+			maxDistance = Math.min(maxDistance, passiveScenePressureEntityDistanceBlocks(maxDistance, sceneTier));
+		}
 		Vec3 camera = cameraPosition(minecraft);
 		return horizontalDistanceSqr(entity.getX(), entity.getZ(), camera.x, camera.z) > maxDistance * maxDistance;
 	}
@@ -173,6 +181,7 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = distanceFromVanillaChunks(DEFAULT_BLOCK_ENTITY_EXTRA_CHUNKS, BLOCK_ENTITY_EXTRA_CHUNKS_PROPERTY, 96.0D);
+		int sceneTier = currentScenePressureTier();
 		if (shouldApplyVillagePressureCulling()) {
 			if (PauCVillagePerformanceDiagnostics.isVillageBlockEntity(blockEntity)) {
 				maxDistance = Math.min(maxDistance, readInt(VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_VILLAGE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS, 32, 256));
@@ -182,7 +191,7 @@ public final class PauCLodRenderCulling {
 		} else if (shouldApplyHordePressureCulling()) {
 			maxDistance = Math.min(maxDistance, readInt(HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS, 64, 256));
 		}
-		maxDistance = Math.min(maxDistance, scenePressureBlockEntityDistanceBlocks(maxDistance));
+		maxDistance = Math.min(maxDistance, scenePressureBlockEntityDistanceBlocks(maxDistance, sceneTier));
 		Vec3 camera = cameraPosition(minecraft);
 		BlockPos pos = blockEntity.getBlockPos();
 		return horizontalDistanceSqr(pos.getX() + 0.5D, pos.getZ() + 0.5D, camera.x, camera.z) > maxDistance * maxDistance;
@@ -199,7 +208,7 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = readInt(PARTICLE_DISTANCE_BLOCKS_PROPERTY, DEFAULT_PARTICLE_DISTANCE_BLOCKS, 32, 384);
-		boolean particlePressure = PauCFrameSpikeAbsorber.isAbsorbing() || PauCVillagePerformanceDiagnostics.isScenePressureActive();
+		boolean particlePressure = PauCFrameSpikeAbsorber.isAbsorbing() || PauCVillagePerformanceDiagnostics.isProjectedScenePressureActive();
 		if (readBoolean("pauc.lod.cull.particleAbsorbDistance", true) && particlePressure) {
 			// Pull the particle render horizon in while absorbing a spike so per-frame iteration cost stays bounded.
 			// Never below a near floor so close-range gameplay feedback is preserved.
@@ -294,10 +303,11 @@ public final class PauCLodRenderCulling {
 		}
 
 		double maxDistance = readInt(VANILLA_FOLIAGE_DISTANCE_CHUNKS_PROPERTY, defaultDistance, 3, 32) * 16.0D;
-		if (PauCVillagePerformanceDiagnostics.isScenePressureActive()) {
+		int sceneTier = currentScenePressureTier();
+		if (sceneTier > 0) {
 			int pressuredDistanceChunks = readInt(
 				SCENE_PRESSURE_FOLIAGE_DISTANCE_CHUNKS_PROPERTY,
-				PauCVillagePerformanceDiagnostics.scenePressureTier() >= 2 ? 5 : 6,
+				sceneTier >= 2 ? 5 : 6,
 				2,
 				16
 			);
@@ -538,11 +548,14 @@ public final class PauCLodRenderCulling {
 		return Math.max(minBlocks, (vanillaDistance + extraChunks) * 16.0D);
 	}
 
-	private static double scenePressureEntityDistanceBlocks(double fallbackDistance) {
-		if (!PauCVillagePerformanceDiagnostics.isScenePressureActive()) {
+	private static int currentScenePressureTier() {
+		return PauCVillagePerformanceDiagnostics.projectedScenePressureTier();
+	}
+
+	private static double scenePressureEntityDistanceBlocks(double fallbackDistance, int tier) {
+		if (tier <= 0) {
 			return fallbackDistance;
 		}
-		int tier = PauCVillagePerformanceDiagnostics.scenePressureTier();
 		int fallback = switch (tier) {
 			case 3 -> 64;
 			case 2 -> 72;
@@ -560,11 +573,31 @@ public final class PauCLodRenderCulling {
 		return readInt(property, fallback, 40, 256);
 	}
 
-	private static double scenePressureBlockEntityDistanceBlocks(double fallbackDistance) {
-		if (!PauCVillagePerformanceDiagnostics.isScenePressureActive()) {
+	private static double passiveScenePressureEntityDistanceBlocks(double fallbackDistance, int tier) {
+		if (tier <= 0) {
 			return fallbackDistance;
 		}
-		int tier = PauCVillagePerformanceDiagnostics.scenePressureTier();
+		int fallback = switch (tier) {
+			case 3 -> 48;
+			case 2 -> 64;
+			case 1 -> 80;
+			default -> (int) Math.round(fallbackDistance);
+		};
+		if (PauCVillagePerformanceDiagnostics.lastPlayerGrounded() && PauCVillagePerformanceDiagnostics.lastPlayerHorizontalSpeed() >= scenePressureMovementSpeedThreshold()) {
+			fallback = Math.max(40, fallback - 8);
+		}
+		String property = switch (tier) {
+			case 3 -> SCENE_PRESSURE_PASSIVE_ENTITY_DISTANCE_TIER3_PROPERTY;
+			case 2 -> SCENE_PRESSURE_PASSIVE_ENTITY_DISTANCE_TIER2_PROPERTY;
+			default -> SCENE_PRESSURE_PASSIVE_ENTITY_DISTANCE_TIER1_PROPERTY;
+		};
+		return readInt(property, fallback, 32, 192);
+	}
+
+	private static double scenePressureBlockEntityDistanceBlocks(double fallbackDistance, int tier) {
+		if (tier <= 0) {
+			return fallbackDistance;
+		}
 		int fallback = switch (tier) {
 			case 3 -> 48;
 			case 2 -> 64;
@@ -587,8 +620,8 @@ public final class PauCLodRenderCulling {
 		if (PauCFrameSpikeAbsorber.isAbsorbing()) {
 			scale = Math.min(scale, PauCFrameSpikeAbsorber.workScale());
 		}
-		if (PauCVillagePerformanceDiagnostics.isScenePressureActive()) {
-			scale = Math.min(scale, PauCVillagePerformanceDiagnostics.scenePressureScale());
+		if (PauCVillagePerformanceDiagnostics.isProjectedScenePressureActive()) {
+			scale = Math.min(scale, PauCVillagePerformanceDiagnostics.projectedScenePressureScale());
 			if (PauCVillagePerformanceDiagnostics.lastPlayerGrounded()
 				&& PauCVillagePerformanceDiagnostics.lastPlayerHorizontalSpeed() >= scenePressureMovementSpeedThreshold()) {
 				scale = Math.max(0.42D, scale - 0.08D);
@@ -599,6 +632,17 @@ public final class PauCLodRenderCulling {
 
 	private static double scenePressureMovementSpeedThreshold() {
 		return readFloat("pauc.lod.scenePressureMovementSpeedThreshold", 0.10F, 0.01F, 2.0F);
+	}
+
+	private static boolean isPassiveEntityPressureCandidate(Entity entity) {
+		if (entity == null || entity.hasCustomName()) {
+			return false;
+		}
+		MobCategory category = entity.getType().getCategory();
+		return switch (category) {
+			case CREATURE, AMBIENT, WATER_CREATURE, WATER_AMBIENT, UNDERGROUND_WATER_CREATURE, AXOLOTLS -> true;
+			default -> false;
+		};
 	}
 
 	private static Vec3 cameraPosition(Minecraft minecraft) {

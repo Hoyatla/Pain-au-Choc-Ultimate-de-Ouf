@@ -9,6 +9,7 @@ import com.mojang.blaze3d.vertex.VertexFormat;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ShaderInstance;
 import org.joml.Matrix4f;
@@ -254,10 +255,13 @@ public class HorizonRenderer {
 
 	private boolean currentHorizonDomeActive() {
 		PauCLodRange range = PauCLodHorizonState.currentRange();
+		boolean shaderPackInUse = PauCLodShaderContext.isShaderPackInUse();
+		boolean paucShaderpackOwnsSky = shaderPackInUse
+			&& PauCLodShaderProfiles.currentFamily() == PauCLodShaderProfiles.Family.PAUC;
 		return readBoolean(PAUC_HORIZON_DOME_PROPERTY, true)
 			&& range != null
 			&& range.enabled()
-			&& !PauCLodShaderContext.isShaderPackInUse();
+			&& (!shaderPackInUse || paucShaderpackOwnsSky);
 	}
 
 	private float currentHorizonTopY(boolean domeActive) {

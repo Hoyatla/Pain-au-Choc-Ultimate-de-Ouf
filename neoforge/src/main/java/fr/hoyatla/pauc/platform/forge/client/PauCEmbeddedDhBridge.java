@@ -24,12 +24,12 @@ import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
 import fr.hoyatla.pauc.lod.PauCTerrainGeneratorDetector;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import fr.hoyatla.pauc.lodstore.PauCLodSwapGuard;
 import fr.hoyatla.pauc.platform.forge.diagnostics.PauCLodReloadDiagnostics;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.client.Minecraft;
-import net.irisshaders.iris.api.v0.IrisApi;
 import org.slf4j.Logger;
 
 public final class PauCEmbeddedDhBridge {
@@ -47,6 +47,7 @@ public final class PauCEmbeddedDhBridge {
 	private static volatile boolean loggedDhFogConfigOverride;
 	private static volatile boolean loggedDirectGpuRendererOverride;
 	private static volatile boolean loggedRoundHorizonGenerationPolicy;
+	private static volatile Boolean lastLoggedDeferredTransparentRendering;
 	private static volatile String lastLoggedGenerationPolicy = "";
 	private static volatile String lastLoggedSeamlessTransitionPolicy = "";
 	private static volatile Boolean lastLoggedDistantCloudPolicy;
@@ -416,6 +417,7 @@ public final class PauCEmbeddedDhBridge {
 
 	private static GenerationFillPolicyState configureCoreRuntimeSettings(int targetDistance, RuntimeLodSettings runtimeSettings) {
 		configureDirectGpuRendererPath("runtime");
+		configureDeferredTransparentRendering();
 		setDhCoreConfigValueWithoutSaving(DH_DEBUGGING_CONFIG_CLASS, DH_RENDERER_MODE_FIELD, EDhApiRendererMode.DEFAULT);
 		setDhCoreConfigValueWithoutSaving(DH_WARNING_CONFIG_CLASS, DH_SHOW_UPDATE_QUEUE_OVERLOADED_CHAT_WARNING_FIELD, Boolean.FALSE);
 		setDhCoreConfigValueWithoutSaving(DH_WARNING_CONFIG_CLASS, DH_SHOW_SLOW_WORLDGEN_SETTING_WARNINGS_FIELD, Boolean.FALSE);
@@ -436,6 +438,30 @@ public final class PauCEmbeddedDhBridge {
 		setDhCoreConfigValueWithoutSaving(DH_MULTI_THREADING_CONFIG_CLASS, DH_THREAD_RUN_TIME_RATIO_FIELD, runtimeSettings.threadRuntimeRatio());
 		clearRenderCacheIfGeometryChanged(runtimeSettings);
 		return fillPolicyState;
+	}
+
+	private static void configureDeferredTransparentRendering() {
+		if (DhApi.Delayed.renderProxy == null) {
+			return;
+		}
+
+		boolean shaderRuntime = isShaderPackRuntimeInUse();
+		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
+		boolean deferTransparent = shaderRuntime && !shaderFallback;
+		try {
+			DhApi.Delayed.renderProxy.setDeferTransparentRendering(deferTransparent);
+			if (!Boolean.valueOf(deferTransparent).equals(lastLoggedDeferredTransparentRendering)) {
+				lastLoggedDeferredTransparentRendering = deferTransparent;
+				LOGGER.info(
+					"PauC embedded DH bridge configured deferred transparent LOD pass: enabled={}, shaderRuntime={}, shaderFallback={}.",
+					deferTransparent,
+					shaderRuntime,
+					shaderFallback
+				);
+			}
+		} catch (Throwable throwable) {
+			LOGGER.debug("PauC could not configure DH deferred transparent rendering.", throwable);
+		}
 	}
 
 	private static void configureDirectGpuRendererPath(String phase) {
@@ -1073,7 +1099,7 @@ public final class PauCEmbeddedDhBridge {
 
 	private static boolean isShaderPackRuntimeInUse() {
 		try {
-			return IrisApi.getInstance().isShaderPackInUse();
+			return PauCShaders.isShaderPackInUse();
 		} catch (RuntimeException | LinkageError exception) {
 			LOGGER.debug("PauC could not query Iris shader state while configuring embedded DH.", exception);
 			return PauCLodShaderContext.isShaderPackInUse();
@@ -1426,7 +1452,7 @@ public final class PauCEmbeddedDhBridge {
 			}
 
 			return switch (PauCLodShaderProfiles.currentFamily()) {
-				case BLISS, BSL, COMPLEMENTARY, PHOTON, RETHINKING, SOLAS -> EDhApiTransparency.COMPLETE;
+				case BLISS, BSL, COMPLEMENTARY, PAUC, PHOTON, RETHINKING, SOLAS -> EDhApiTransparency.COMPLETE;
 				case GENERIC -> EDhApiTransparency.FAKE;
 			};
 		}

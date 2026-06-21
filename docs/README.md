@@ -7,6 +7,10 @@ This active source tree is the Forge-only PauC Ultimate branch.
 - Public Forge mod id: `paucultimate`.
 - Release artifact: `dist/Pain_au_Choc_Ultimate_de_Ouf-0.1.0.jar`.
 - Current beta release notes: [`BETA_RELEASE_0.1.0.md`](BETA_RELEASE_0.1.0.md).
+- Current `0.5.0` shaderpack-first roadmap:
+  [`BETA_0.5.0_SHADERPACK_ROADMAP.md`](BETA_0.5.0_SHADERPACK_ROADMAP.md).
+- The abandoned standalone `PauCShaderpack` source/archive is no longer part of the active tree.
+- Active bundled shader targets are `Photon` and `Solas`.
 - Embedded long-distance terrain runtime is published under PauC-owned jar names and runtime resource names.
 - Legacy loader documentation and inherited user guides were removed from the active source tree; the preserved reference copy remains available at:
   `D:\Dev\Pain_au_Choc_Ultimate_de_Ouf - Road Beta\PauCUltimate_REFERENCE_BEFORE_PROPRIETARY_FORGE`

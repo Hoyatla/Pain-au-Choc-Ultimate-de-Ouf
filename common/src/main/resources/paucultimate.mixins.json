@@ -55,6 +55,7 @@
     "MixinVertexBuffer",
     "MixinWindow",
     "ProgramTypeAccessor",
+    "ViewAreaAccessor",
     "entity_render_context.MixinBlockEntityRenderDispatcher",
     "entity_render_context.MixinCapeLayer",
     "entity_render_context.MixinElytraLayer",

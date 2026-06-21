@@ -4,7 +4,6 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.primitives.Ints;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.irisshaders.iris.gl.blending.AlphaTest;
 import net.irisshaders.iris.gl.blending.BlendModeOverride;
 import net.irisshaders.iris.gl.blending.BufferBlendOverride;
@@ -25,6 +24,7 @@ import net.irisshaders.iris.uniforms.FrameUpdateNotifier;
 import net.irisshaders.iris.uniforms.VanillaUniforms;
 import net.irisshaders.iris.uniforms.builtin.BuiltinReplacementUniforms;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
+import net.irisshaders.iris.vertices.IrisVertexFormats;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -60,7 +60,7 @@ public class ShaderCreator {
 			source.getTessControlSource().orElse(null),
 			source.getTessEvalSource().orElse(null),
 			source.getFragmentSource().orElseThrow(RuntimeException::new),
-			alpha, isLines, true, inputs, pipeline.getTextureMap());
+			alpha, isLines, usesChunkOffset(vertexFormat), inputs, pipeline.getTextureMap());
 		String vertex = transformed.get(PatchShaderType.VERTEX);
 		String geometry = transformed.get(PatchShaderType.GEOMETRY);
 		String tessControl = transformed.get(PatchShaderType.TESS_CONTROL);
@@ -151,7 +151,7 @@ public class ShaderCreator {
 
 		// TODO: Is this check sound in newer versions?
 		boolean isLeash = vertexFormat == DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
-		String vertex = ShaderSynthesizer.vsh(true, inputs, fogMode, entityLighting, isLeash);
+		String vertex = ShaderSynthesizer.vsh(usesChunkOffset(vertexFormat), inputs, fogMode, entityLighting, isLeash);
 		String fragment = ShaderSynthesizer.fsh(inputs, fogMode, alpha, intensityTex, isLeash);
 
 
@@ -249,5 +249,9 @@ public class ShaderCreator {
 		public InputStream open() {
 			return IOUtils.toInputStream(content, StandardCharsets.UTF_8);
 		}
+	}
+
+	private static boolean usesChunkOffset(VertexFormat vertexFormat) {
+		return vertexFormat == DefaultVertexFormat.BLOCK || vertexFormat == IrisVertexFormats.TERRAIN;
 	}
 }

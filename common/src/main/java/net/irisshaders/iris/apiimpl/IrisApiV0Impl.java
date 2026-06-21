@@ -1,11 +1,10 @@
 package net.irisshaders.iris.apiimpl;
 
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.api.v0.IrisApiConfig;
 import net.irisshaders.iris.api.v0.IrisTextVertexSink;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
-import net.irisshaders.iris.pipeline.VanillaRenderingPipeline;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.irisshaders.iris.vertices.IrisTextVertexSinkImpl;
@@ -25,13 +24,7 @@ public class IrisApiV0Impl implements IrisApi {
 
 	@Override
 	public boolean isShaderPackInUse() {
-		WorldRenderingPipeline pipeline = Iris.getPipelineManager().getPipelineNullable();
-
-		if (pipeline == null) {
-			return false;
-		}
-
-		return !(pipeline instanceof VanillaRenderingPipeline);
+		return PauCShaders.isShaderPackInUse();
 	}
 
 	@Override
@@ -41,12 +34,12 @@ public class IrisApiV0Impl implements IrisApi {
 
 	@Override
 	public Object openMainIrisScreenObj(Object parent) {
-		return new ShaderPackScreen((Screen) parent);
+		return PauCShaders.createShaderConfigScreen((Screen) parent);
 	}
 
 	@Override
 	public String getMainScreenLanguageKey() {
-		return "options.iris.shaderPackSelection";
+		return PauCShaders.mainScreenLanguageKey();
 	}
 
 	@Override

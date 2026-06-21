@@ -21,7 +21,7 @@ public final class PauCLodGameplayProfile {
 			case "competitive", "competition", "vanilla", "no_shader", "no_shaders" -> Profile.COMPETITIVE;
 			case "cinematic", "shader", "shaders", "quality", "visual" -> Profile.CINEMATIC;
 			case "balanced", "safe" -> Profile.BALANCED;
-			default -> PauCLodShaderContext.isShaderPackInUse() ? Profile.CINEMATIC : Profile.COMPETITIVE;
+			default -> Profile.COMPETITIVE;
 		};
 	}
 

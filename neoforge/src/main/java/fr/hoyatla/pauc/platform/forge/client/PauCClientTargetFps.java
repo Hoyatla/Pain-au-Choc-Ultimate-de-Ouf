@@ -1,5 +1,6 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
+import fr.hoyatla.pauc.lod.PauCFrameSpikeAbsorber;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.minecraft.client.Minecraft;
 
@@ -12,6 +13,11 @@ public final class PauCClientTargetFps {
 	private static final int DEFAULT_SHADER_UNLIMITED_REFERENCE_FPS = 144;
 	private static volatile double shaderObservedFps = -1.0D;
 	private static volatile double vanillaObservedFps = -1.0D;
+	private static volatile long cachedTargetFrameSeq = Long.MIN_VALUE;
+	private static volatile Minecraft cachedTargetMinecraft;
+	private static volatile boolean cachedTargetShaderActive;
+	private static volatile String cachedTargetOverride;
+	private static volatile int cachedTargetFps = DEFAULT_VANILLA_UNLIMITED_REFERENCE_FPS;
 
 	private PauCClientTargetFps() {
 	}
@@ -22,12 +28,35 @@ public final class PauCClientTargetFps {
 
 	public static int effectiveTargetFps(Minecraft minecraft) {
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
+		long frameSeq = PauCFrameSpikeAbsorber.frameSeq();
 		String override = System.getProperty(TARGET_FPS_PROPERTY);
+		if (frameSeq == cachedTargetFrameSeq
+			&& cachedTargetMinecraft == minecraft
+			&& cachedTargetShaderActive == shaderActive
+			&& equalsNullable(cachedTargetOverride, override)) {
+			return cachedTargetFps;
+		}
+
+		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
+		int targetFps = computeTargetFps(minecraft, playerVideo, shaderActive, override);
+		cachedTargetFrameSeq = frameSeq;
+		cachedTargetMinecraft = minecraft;
+		cachedTargetShaderActive = shaderActive;
+		cachedTargetOverride = override;
+		cachedTargetFps = targetFps;
+		return targetFps;
+	}
+
+	private static int computeTargetFps(
+		Minecraft minecraft,
+		PauCPlayerVideoSettings.Snapshot playerVideo,
+		boolean shaderActive,
+		String override
+	) {
 		if (override != null) {
 			return parseTarget(override, unlimitedReferenceFps(minecraft, shaderActive));
 		}
 
-		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
 		if (playerVideo.available() && !playerVideo.fpsUnlimited()) {
 			return sanitize(playerVideo.fpsLimit());
 		}
@@ -103,5 +132,9 @@ public final class PauCClientTargetFps {
 
 	private static int sanitize(int value) {
 		return Math.max(30, Math.min(500, value));
+	}
+
+	private static boolean equalsNullable(String left, String right) {
+		return left == null ? right == null : left.equals(right);
 	}
 }

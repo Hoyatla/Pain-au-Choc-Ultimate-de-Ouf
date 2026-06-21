@@ -10,7 +10,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import fr.hoyatla.pauc.platform.forge.compat.PauCClientRenderShutdownGuard;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatManager;
 import fr.hoyatla.pauc.platform.forge.compat.PauCCompatModule;
-import net.irisshaders.iris.api.v0.IrisApi;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.chunk.ChunkStatus;
 import org.slf4j.Logger;
@@ -370,7 +370,7 @@ public final class PauCClientChunkRetentionManager {
 
 	private static boolean isShaderPipelineActive() {
 		try {
-			return IrisApi.getInstance().isShaderPackInUse();
+			return PauCShaders.isShaderPackInUse();
 		} catch (RuntimeException | LinkageError exception) {
 			LOGGER.debug("PauC could not query the shader pipeline state while gating hard chunk retention.", exception);
 			return false;

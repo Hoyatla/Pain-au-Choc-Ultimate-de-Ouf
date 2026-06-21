@@ -82,8 +82,12 @@ public final class PauCLodDiagnostics {
 	public static String compactModeLine() {
 		return "[PauC Mode] shader="
 			+ onOff(PauCLodShaderContext.isShaderPackInUse())
+			+ " | profile="
+			+ profileToken(PauCLodShaderContext.currentProfileId())
 			+ " | dh="
-			+ PauCLodShaderContext.effectiveDhMode().id()
+			+ dhModeToken(PauCLodShaderContext.effectiveDhMode())
+			+ " | p="
+			+ pressureToken(PauCLodShaderRuntime.pressure())
 			+ " | fallback="
 			+ onOff(PauCLodShaderContext.isFallbackActive())
 			+ " | fog="
@@ -93,6 +97,52 @@ public final class PauCLodDiagnostics {
 			+ "b";
 	}
 
+	public static String compactShaderCapsLine() {
+		PauCShaderFrameState shaderFrame = PauCShaderFrameState.current();
+		return "[PauC Shader] caps="
+			+ flag("tf", shaderFrame.capabilities().supportsTransitionFog())
+			+ ","
+			+ flag("dt", shaderFrame.capabilities().supportsDhTerrain())
+			+ ","
+			+ flag("ds", shaderFrame.capabilities().supportsDhShadow())
+			+ ","
+			+ flag("cl", shaderFrame.capabilities().supportsColoredLights())
+			+ ","
+			+ flag("wf", shaderFrame.capabilities().supportsWeatherFog());
+	}
+
+	public static String compactShaderTuneLine() {
+		PauCShaderFrameState shaderFrame = PauCShaderFrameState.current();
+		return "[PauC Tune] fog="
+			+ shortFloat(shaderFrame.profileFarFogStrength())
+			+ "/"
+			+ Math.round(shaderFrame.profileFarFogWidth())
+			+ " | water="
+			+ shortFloat(shaderFrame.profileWaterGradientStrength())
+			+ "/"
+			+ shortFloat(shaderFrame.profileWaterEndFogStrength())
+			+ " | sh="
+			+ Math.round(shaderFrame.profileShadowJoinNear())
+			+ "-"
+			+ Math.round(shaderFrame.profileShadowJoinFar());
+	}
+
+	public static String compactShaderPathLine() {
+		PauCShaderFrameState shaderFrame = PauCShaderFrameState.current();
+		return "[PauC Path] st="
+			+ shaderFrame.shaderStatusCode()
+			+ "/"
+			+ statusToken(shaderFrame.shaderStatusCode())
+			+ " | rc="
+			+ shaderFrame.shaderReasonCode()
+			+ "/"
+			+ reasonToken(shaderFrame.shaderReasonCode())
+			+ " | cap="
+			+ shaderFrame.shaderCapabilityStatusCode()
+			+ "/"
+			+ capabilityToken(shaderFrame.shaderCapabilityStatusCode());
+	}
+
 	private static String hudMetric(String key) {
 		String value = System.getProperty(key);
 		return value == null || value.isBlank() ? "-" : value;
@@ -100,5 +150,90 @@ public final class PauCLodDiagnostics {
 
 	private static String onOff(boolean value) {
 		return value ? "on" : "off";
+	}
+
+	private static String flag(String label, boolean enabled) {
+		return label + (enabled ? "+" : "-");
+	}
+
+	private static String shortFloat(float value) {
+		String raw = String.format(java.util.Locale.ROOT, "%.2f", value);
+		if (raw.endsWith("00")) {
+			return raw.substring(0, raw.length() - 3);
+		}
+		if (raw.endsWith("0")) {
+			return raw.substring(0, raw.length() - 1);
+		}
+		return raw;
+	}
+
+	private static String profileToken(PauCShaderProfileId profileId) {
+		return switch (profileId) {
+			case SHADER_OFF -> "off";
+			case GENERIC_COMPAT -> "gen";
+			case PHOTON_COMPAT -> "pho";
+			case SOLAS_COMPAT -> "sol";
+			case PAUC_NATIVE -> "pauc";
+		};
+	}
+
+	private static String dhModeToken(PauCLodShaderContext.DhShaderMode mode) {
+		return switch (mode) {
+			case SHADER_OFF -> "off";
+			case PENDING -> "pend";
+			case EXPLICIT_NATIVE -> "exp";
+			case SYNTHETIC_NATIVE -> "syn";
+			case FALLBACK -> "fbk";
+			case INCOMPATIBLE -> "inc";
+		};
+	}
+
+	private static String pressureToken(PauCLodShaderRuntime.Pressure pressure) {
+		return switch (pressure) {
+			case OFF -> "off";
+			case RELIEF -> "rel";
+			case BALANCED -> "bal";
+			case HEADROOM -> "head";
+		};
+	}
+
+	private static String statusToken(int code) {
+		return switch (code) {
+			case 0 -> "off";
+			case 1 -> "pend";
+			case 2 -> "n-exp";
+			case 3 -> "n-syn";
+			case 4 -> "fbk";
+			case 5 -> "inc";
+			default -> "other";
+		};
+	}
+
+	private static String reasonToken(int code) {
+		return switch (code) {
+			case 0 -> "-";
+			case 1 -> "cache-miss";
+			case 2 -> "pauc-emb";
+			case 3 -> "pack-no-dh";
+			case 4 -> "dh-miss";
+			case 5 -> "dh-terrain-miss";
+			case 6 -> "dh-native";
+			case 7 -> "dh-synth";
+			default -> "other";
+		};
+	}
+
+	private static String capabilityToken(int code) {
+		return switch (code) {
+			case 0 -> "off";
+			case 1 -> "ok";
+			case 2 -> "miss";
+			case 3 -> "invalid";
+			case 4 -> "io";
+			case 5 -> "no-dir";
+			case 6 -> "compat";
+			case 7 -> "rt-off";
+			default -> "other";
+		};
 	}
 }

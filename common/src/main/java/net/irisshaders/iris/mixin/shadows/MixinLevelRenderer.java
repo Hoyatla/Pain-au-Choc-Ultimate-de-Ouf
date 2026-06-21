@@ -7,12 +7,16 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.mixin.LevelRendererAccessor;
+import net.irisshaders.iris.mixin.ViewAreaAccessor;
 import net.irisshaders.iris.shadows.CullingDataCache;
 import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.ViewArea;
+import net.minecraft.client.renderer.chunk.ChunkRenderDispatcher;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import org.spongepowered.asm.mixin.Final;
@@ -21,7 +25,10 @@ import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 
+import java.lang.reflect.Constructor;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 
 @Mixin(LevelRenderer.class)
 public class MixinLevelRenderer implements CullingDataCache {
@@ -47,6 +54,9 @@ public class MixinLevelRenderer implements CullingDataCache {
 
 	@Unique
 	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$lastStableShadowChunks = new ObjectArrayList<>(2048);
+
+	@Unique
+	private final Map<Long, LevelRenderer.RenderChunkInfo> pauc$shadowChunkInfoCache = new HashMap<>();
 
 	@Unique
 	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$stableMainCameraShadowCandidates =
@@ -83,12 +93,22 @@ public class MixinLevelRenderer implements CullingDataCache {
 	private static boolean pauc$reportedStableShadowFallback;
 
 	@Unique
+	private static boolean pauc$reportedViewAreaShadowFallback;
+
+	@Unique
 	private static boolean pauc$reportedMainCameraShadowFallback;
+
+	@Unique
+	private static boolean pauc$reportedShadowChunkInfoConstructorFailure;
+
+	@Unique
+	private static Constructor<LevelRenderer.RenderChunkInfo> pauc$renderChunkInfoConstructor;
 
 	@Override
 	public void saveState() {
 		pauc$syncShadowCacheLevel();
 		pauc$mainRenderChunksSnapshot = new ObjectArrayList<>(renderChunksInFrustum);
+		pauc$cacheShadowChunkInfos(pauc$mainRenderChunksSnapshot);
 		pauc$saveTraversalTickState();
 		int recoveryRadiusChunks = pauc$localVanillaShadowRecoveryRadiusChunks();
 		if (pauc$shouldRefreshStableMainCameraShadowCandidates(recoveryRadiusChunks)) {
@@ -107,19 +127,20 @@ public class MixinLevelRenderer implements CullingDataCache {
 
 	@Override
 	public void useMainCameraChunksIfShadowSetupFailed() {
-		if (pauc$mainRenderChunksSnapshot.isEmpty()) {
-			// Warmup / transition frame: the main camera has not produced its visible-chunk list yet.
-			// If the shader shadow setup is also empty but we still hold a recent stable shadow set, keep
-			// using it so terrain shadows do not blink off for these few frames while the world settles.
+		pauc$syncShadowCacheLevel();
+
+		// Opt-out: if the pack drives its own shadow terrain and explicitly disables PauC's fallback,
+		// leave whatever the shadow setup produced untouched.
+		int availableChunks = pauc$viewAreaChunkCount();
+		if (availableChunks <= 0) {
+			availableChunks = pauc$mainRenderChunksSnapshot.size();
+		}
+		if (availableChunks <= 0) {
 			if (renderChunksInFrustum.isEmpty() && !pauc$lastStableShadowChunks.isEmpty()) {
 				renderChunksInFrustum = new ObjectArrayList<>(pauc$lastStableShadowChunks);
 			}
 			return;
 		}
-
-		// Opt-out: if the pack drives its own shadow terrain and explicitly disables PauC's fallback,
-		// leave whatever the shadow setup produced untouched.
-		int availableChunks = pauc$mainRenderChunksSnapshot.size();
 		if (PauCLodShaderRuntime.shadowFallbackChunkBudget(availableChunks) <= 0) {
 			return;
 		}
@@ -145,7 +166,11 @@ public class MixinLevelRenderer implements CullingDataCache {
 			&& camChunkZ == pauc$cachedFallbackCamChunkZ
 			&& budget == pauc$cachedFallbackBudget
 			&& Math.abs(availableChunks - pauc$cachedFallbackSnapshotSize) <= 8) {
-			renderChunksInFrustum = pauc$cachedFallbackResult;
+			// Hand out a FRESH COPY, never the cached list itself. After the shadow pass, invokeSetupRender repopulates
+			// (and in the no-Sodium embedded setup CLEARS) renderChunksInFrustum; if that were the cached object, the
+			// cache would be emptied every frame and the set rebuilt every frame (constant shadow flicker + a 625-chunk
+			// rebuild per frame). Keeping the cache independent makes a stationary camera reuse one stable set.
+			renderChunksInFrustum = new ObjectArrayList<>(pauc$cachedFallbackResult);
 			return;
 		}
 
@@ -155,13 +180,22 @@ public class MixinLevelRenderer implements CullingDataCache {
 		// the extra depth-only near draws stay cheap.
 		int retentionBudget = budget + (budget / 2);
 
-		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = pauc$buildStableShadowFallback(budget, retentionBudget);
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks =
+			pauc$buildStableShadowFallbackFromViewArea(budget, retentionBudget);
 		if (selectedChunks.isEmpty()) {
+			selectedChunks = pauc$buildStableShadowFallbackFromSnapshot(budget, retentionBudget);
+		}
+		if (selectedChunks.isEmpty()) {
+			if (renderChunksInFrustum.isEmpty() && !pauc$lastStableShadowChunks.isEmpty()) {
+				renderChunksInFrustum = new ObjectArrayList<>(pauc$lastStableShadowChunks);
+			}
 			return;
 		}
 
 		renderChunksInFrustum = selectedChunks;
-		pauc$cachedFallbackResult = selectedChunks;
+		// Cache an INDEPENDENT copy (not selectedChunks, which is handed to renderChunksInFrustum and later cleared by
+		// the shadow setup) so the cache survives across frames and hits while the camera stays in the same chunk.
+		pauc$cachedFallbackResult = new ObjectArrayList<>(selectedChunks);
 		pauc$cachedFallbackCamChunkX = camChunkX;
 		pauc$cachedFallbackCamChunkZ = camChunkZ;
 		pauc$cachedFallbackBudget = budget;
@@ -170,7 +204,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 		if (!pauc$reportedShadowCullingFallback) {
 			pauc$reportedShadowCullingFallback = true;
 			Iris.logger.info(
-				"PauC rebuilt {} shadow terrain chunks from {} stable main-camera chunks after shader shadow terrain setup returned empty; {}",
+				"PauC rebuilt {} shadow terrain chunks from {} loaded render chunks after shader shadow terrain setup returned empty; {}",
 				renderChunksInFrustum.size(),
 				availableChunks,
 				PauCLodShaderRuntime.describe()
@@ -187,6 +221,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 
 		pauc$shadowCacheLevel = currentLevel;
 		pauc$lastStableShadowChunks.clear();
+		pauc$shadowChunkInfoCache.clear();
 		pauc$stableMainCameraShadowCandidates.clear();
 		pauc$stableMainCameraShadowCameraX = Double.NaN;
 		pauc$stableMainCameraShadowCameraZ = Double.NaN;
@@ -224,6 +259,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 		if (chunkCount <= 0 || chunks == null || chunks.isEmpty()) {
 			return;
 		}
+		pauc$cacheShadowChunkInfos(chunks);
 		pauc$lastStableShadowChunks = new ObjectArrayList<>(chunks);
 	}
 
@@ -233,6 +269,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 			return;
 		}
 
+		pauc$cacheShadowChunkInfos(source);
 		pauc$refreshSortCamera();
 		ObjectArrayList<LevelRenderer.RenderChunkInfo> merged =
 			new ObjectArrayList<>(source.size() + pauc$stableMainCameraShadowCandidates.size());
@@ -250,7 +287,94 @@ public class MixinLevelRenderer implements CullingDataCache {
 	}
 
 	@Unique
-	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildStableShadowFallback(int budget, int retentionBudget) {
+	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildStableShadowFallbackFromViewArea(int budget, int retentionBudget) {
+		if (!((Object) this instanceof LevelRendererAccessor accessor)) {
+			return new ObjectArrayList<>(0);
+		}
+
+		ViewArea viewArea = accessor.getViewArea();
+		if (!(viewArea instanceof ViewAreaAccessor viewAreaAccessor)) {
+			return new ObjectArrayList<>(0);
+		}
+
+		ChunkRenderDispatcher.RenderChunk[] renderChunks = viewAreaAccessor.getChunks();
+		if (renderChunks == null || renderChunks.length == 0) {
+			return new ObjectArrayList<>(0);
+		}
+
+		Vec3 fallbackCamera = pauc$mainCameraPosition();
+		int camChunkX = Mth.floor(fallbackCamera.x) >> 4;
+		int camChunkZ = Mth.floor(fallbackCamera.z) >> 4;
+		int primaryRadiusChunks = pauc$vanillaShadowZoneRadiusChunks();
+		int retentionRadiusChunks = Math.max(primaryRadiusChunks + 2, pauc$localVanillaShadowRecoveryRadiusChunks());
+
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> primaryChunks =
+			new ObjectArrayList<>(Math.min(budget, renderChunks.length));
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> retainedChunks =
+			new ObjectArrayList<>(Math.min(retentionBudget, renderChunks.length));
+		for (ChunkRenderDispatcher.RenderChunk renderChunk : renderChunks) {
+			if (renderChunk == null) {
+				continue;
+			}
+
+			BlockPos origin = renderChunk.getOrigin();
+			if (origin == null) {
+				continue;
+			}
+
+			int chunkX = origin.getX() >> 4;
+			int chunkZ = origin.getZ() >> 4;
+			int chunkDistance = Math.max(Math.abs(chunkX - camChunkX), Math.abs(chunkZ - camChunkZ));
+			if (chunkDistance > retentionRadiusChunks) {
+				continue;
+			}
+
+			LevelRenderer.RenderChunkInfo chunkInfo = pauc$getOrCreateShadowChunkInfo(renderChunk);
+			if (chunkInfo == null) {
+				continue;
+			}
+
+			if (chunkDistance <= primaryRadiusChunks) {
+				primaryChunks.add(chunkInfo);
+			} else {
+				retainedChunks.add(chunkInfo);
+			}
+		}
+
+		if (primaryChunks.isEmpty() && retainedChunks.isEmpty()) {
+			return new ObjectArrayList<>(0);
+		}
+
+		pauc$refreshSortCamera();
+		primaryChunks.sort(Comparator.comparingDouble(this::pauc$shadowFallbackDistanceScore));
+		retainedChunks.sort(Comparator.comparingDouble(this::pauc$shadowFallbackDistanceScore));
+
+		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks =
+			new ObjectArrayList<>(Math.min(retentionBudget, primaryChunks.size() + retainedChunks.size() + pauc$lastStableShadowChunks.size()));
+		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(16, retentionBudget * 2));
+		boolean usedViewAreaPrimary = pauc$appendUniqueShadowChunks(selectedChunks, seenOrigins, primaryChunks, budget);
+		boolean usedViewAreaRetention = pauc$appendUniqueShadowChunks(selectedChunks, seenOrigins, retainedChunks, retentionBudget);
+		boolean usedLastStableShadow = pauc$appendClosestShadowChunks(
+			selectedChunks,
+			seenOrigins,
+			pauc$lastStableShadowChunks,
+			retentionBudget
+		);
+
+		if (usedViewAreaPrimary && !pauc$reportedViewAreaShadowFallback) {
+			pauc$reportedViewAreaShadowFallback = true;
+			Iris.logger.info("PauC shadow fallback rebuilt a stable shadow terrain set from loaded ViewArea chunks around the player.");
+		}
+		if ((usedViewAreaRetention || usedLastStableShadow) && !pauc$reportedStableShadowFallback) {
+			pauc$reportedStableShadowFallback = true;
+			Iris.logger.info("PauC shadow fallback backfilled the stable shadow terrain set from retained chunks while the loaded view area refreshed.");
+		}
+
+		return selectedChunks;
+	}
+
+	@Unique
+	private ObjectArrayList<LevelRenderer.RenderChunkInfo> pauc$buildStableShadowFallbackFromSnapshot(int budget, int retentionBudget) {
 		pauc$refreshSortCamera();
 		ObjectArrayList<LevelRenderer.RenderChunkInfo> selectedChunks = new ObjectArrayList<>(retentionBudget);
 		LongOpenHashSet seenOrigins = new LongOpenHashSet(Math.max(16, retentionBudget * 2));
@@ -293,6 +417,98 @@ public class MixinLevelRenderer implements CullingDataCache {
 		}
 
 		return selectedChunks;
+	}
+
+	@Unique
+	private int pauc$viewAreaChunkCount() {
+		if (!((Object) this instanceof LevelRendererAccessor accessor)) {
+			return 0;
+		}
+
+		ViewArea viewArea = accessor.getViewArea();
+		if (!(viewArea instanceof ViewAreaAccessor viewAreaAccessor)) {
+			return 0;
+		}
+
+		ChunkRenderDispatcher.RenderChunk[] renderChunks = viewAreaAccessor.getChunks();
+		return renderChunks != null ? renderChunks.length : 0;
+	}
+
+	@Unique
+	private void pauc$cacheShadowChunkInfos(ObjectArrayList<LevelRenderer.RenderChunkInfo> source) {
+		if (source == null || source.isEmpty()) {
+			return;
+		}
+
+		for (LevelRenderer.RenderChunkInfo chunkInfo : source) {
+			if (chunkInfo == null || chunkInfo.chunk == null) {
+				continue;
+			}
+
+			BlockPos origin = chunkInfo.chunk.getOrigin();
+			if (origin != null) {
+				pauc$shadowChunkInfoCache.put(origin.asLong(), chunkInfo);
+			}
+		}
+	}
+
+	@Unique
+	private LevelRenderer.RenderChunkInfo pauc$getOrCreateShadowChunkInfo(ChunkRenderDispatcher.RenderChunk renderChunk) {
+		if (renderChunk == null) {
+			return null;
+		}
+
+		BlockPos origin = renderChunk.getOrigin();
+		if (origin == null) {
+			return null;
+		}
+
+		long originKey = origin.asLong();
+		LevelRenderer.RenderChunkInfo cachedChunkInfo = pauc$shadowChunkInfoCache.get(originKey);
+		if (cachedChunkInfo != null && cachedChunkInfo.chunk == renderChunk) {
+			return cachedChunkInfo;
+		}
+
+		Constructor<LevelRenderer.RenderChunkInfo> constructor = pauc$renderChunkInfoConstructor();
+		if (constructor == null) {
+			return null;
+		}
+
+		try {
+			LevelRenderer.RenderChunkInfo createdChunkInfo = constructor.newInstance(renderChunk, null, 0);
+			pauc$shadowChunkInfoCache.put(originKey, createdChunkInfo);
+			return createdChunkInfo;
+		} catch (ReflectiveOperationException exception) {
+			if (!pauc$reportedShadowChunkInfoConstructorFailure) {
+				pauc$reportedShadowChunkInfoConstructorFailure = true;
+				Iris.logger.warn("PauC failed to instantiate RenderChunkInfo for stable shader shadow fallback.", exception);
+			}
+			return null;
+		}
+	}
+
+	@Unique
+	private Constructor<LevelRenderer.RenderChunkInfo> pauc$renderChunkInfoConstructor() {
+		if (pauc$renderChunkInfoConstructor != null) {
+			return pauc$renderChunkInfoConstructor;
+		}
+
+		try {
+			Constructor<LevelRenderer.RenderChunkInfo> constructor = LevelRenderer.RenderChunkInfo.class.getDeclaredConstructor(
+				ChunkRenderDispatcher.RenderChunk.class,
+				Direction.class,
+				int.class
+			);
+			constructor.setAccessible(true);
+			pauc$renderChunkInfoConstructor = constructor;
+			return constructor;
+		} catch (ReflectiveOperationException exception) {
+			if (!pauc$reportedShadowChunkInfoConstructorFailure) {
+				pauc$reportedShadowChunkInfoConstructorFailure = true;
+				Iris.logger.warn("PauC failed to access RenderChunkInfo constructor for stable shader shadow fallback.", exception);
+			}
+			return null;
+		}
 	}
 
 	@Unique
@@ -355,6 +571,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 		int junctionExtensionChunks = switch (PauCLodShaderProfiles.currentFamily()) {
 			case SOLAS -> 3;
 			case PHOTON -> 2;
+			case PAUC -> 1;
 			default -> 0;
 		};
 		int expandedRadius = configuredRadius + junctionExtensionChunks;
@@ -408,15 +625,20 @@ public class MixinLevelRenderer implements CullingDataCache {
 	// snapshot size), so it does not shrink during a pitch swing — keeping coverage stable there too.
 	@Unique
 	private int pauc$vanillaShadowZoneBudget() {
+		int radiusChunks = pauc$vanillaShadowZoneRadiusChunks();
+		int squareEstimate = (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
+		return Math.min(2048, squareEstimate);
+	}
+
+	@Unique
+	private int pauc$vanillaShadowZoneRadiusChunks() {
 		Minecraft minecraft = Minecraft.getInstance();
 		int renderDistanceChunks = minecraft != null && minecraft.options != null
 			? minecraft.options.getEffectiveRenderDistance()
 			: 8;
 		// Render distance plus a two-chunk junction margin: the outer vanilla ring that meets the LOD horizon
 		// is where coverage gaps appeared, so the shadow zone reaches a little past the vanilla edge.
-		int radiusChunks = Math.max(2, renderDistanceChunks) + 2;
-		int squareEstimate = (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
-		return Math.min(2048, squareEstimate);
+		return Math.max(2, renderDistanceChunks) + 2;
 	}
 
 	@Unique

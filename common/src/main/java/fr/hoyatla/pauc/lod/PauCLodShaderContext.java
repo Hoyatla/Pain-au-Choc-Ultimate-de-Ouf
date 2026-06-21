@@ -1,5 +1,7 @@
 package fr.hoyatla.pauc.lod;
 
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -21,6 +23,8 @@ public final class PauCLodShaderContext {
 	private static final Map<String, Boolean> INCOMPATIBLE_SHADER_PACKS = new ConcurrentHashMap<>();
 	private static volatile String shaderPackName = "(off)";
 	private static volatile String shaderPackKey = "(off)";
+	private static volatile PauCShaderProfileId shaderProfileId = PauCShaderProfileId.SHADER_OFF;
+	private static volatile PauCShaderCapabilities shaderCapabilities = PauCShaderCapabilities.shaderOff();
 	private static volatile ShaderPackDhScan dhScan = ShaderPackDhScan.unavailable("shader-off");
 	private static volatile boolean shaderPackInUse;
 	private static volatile boolean dhNativeShaderAvailable;
@@ -46,6 +50,10 @@ public final class PauCLodShaderContext {
 		shaderPackName = normalizedName;
 		shaderPackKey = normalizedKey;
 		shaderPackInUse = inUse;
+		shaderCapabilities = inUse
+			? PauCShaderCapabilitiesLoader.load(shaderDirectory, normalizedName)
+			: PauCShaderCapabilities.shaderOff();
+		shaderProfileId = shaderCapabilities.profileId();
 		dhScan = inUse ? scanShaderPackDhCapabilities(shaderDirectory) : ShaderPackDhScan.unavailable("shader-off");
 		if (!inUse) {
 			dhNativeShaderAvailable = false;
@@ -76,7 +84,13 @@ public final class PauCLodShaderContext {
 		if (changed) {
 			armTransitionHold();
 		}
-		PauCLodShaderRuntime.onShaderPackStateChanged(shaderPackInUse, PauCLodShaderProfiles.familyForKey(shaderPackKey), effectiveDhMode);
+		PauCLodShaderRuntime.onShaderPackStateChanged(
+			shaderPackInUse,
+			shaderProfileId,
+			shaderCapabilities,
+			PauCLodShaderProfiles.currentFamily(),
+			effectiveDhMode
+		);
 	}
 
 	public static void markDhShaderCompatibility(boolean nativeShaderAvailable, String reason) {
@@ -133,7 +147,13 @@ public final class PauCLodShaderContext {
 		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable || previousMode != effectiveDhMode) {
 			armTransitionHold();
 		}
-		PauCLodShaderRuntime.onShaderPackStateChanged(shaderPackInUse, PauCLodShaderProfiles.familyForKey(shaderPackKey), effectiveDhMode);
+		PauCLodShaderRuntime.onShaderPackStateChanged(
+			shaderPackInUse,
+			shaderProfileId,
+			shaderCapabilities,
+			PauCLodShaderProfiles.currentFamily(),
+			effectiveDhMode
+		);
 	}
 
 	public static void markDhShaderRuntimeFallback(String reason) {
@@ -159,7 +179,13 @@ public final class PauCLodShaderContext {
 		if (previousFallback != fallbackActive || previousNative != dhNativeShaderAvailable || previousMode != effectiveDhMode) {
 			armTransitionHold();
 		}
-		PauCLodShaderRuntime.onShaderPackStateChanged(shaderPackInUse, PauCLodShaderProfiles.familyForKey(shaderPackKey), effectiveDhMode);
+		PauCLodShaderRuntime.onShaderPackStateChanged(
+			shaderPackInUse,
+			shaderProfileId,
+			shaderCapabilities,
+			PauCLodShaderProfiles.currentFamily(),
+			effectiveDhMode
+		);
 	}
 
 	public static boolean shouldForceFallbackForCurrentPack() {
@@ -174,6 +200,9 @@ public final class PauCLodShaderContext {
 		if (!shaderPackInUse) {
 			return false;
 		}
+		if (shaderProfileId == PauCShaderProfileId.PAUC_NATIVE) {
+			return false;
+		}
 		return switch (PauCLodShaderProfiles.currentFamily()) {
 			case BLISS, BSL, COMPLEMENTARY, RETHINKING -> true;
 			default -> false;
@@ -181,11 +210,11 @@ public final class PauCLodShaderContext {
 	}
 
 	public static boolean hasScannedDhTerrainProgram() {
-		return shaderPackInUse && dhScan.available() && dhScan.terrainProgram();
+		return shaderPackInUse && ((dhScan.available() && dhScan.terrainProgram()) || shaderCapabilities.supportsDhTerrain());
 	}
 
 	public static boolean hasScannedDhShadowProgram() {
-		return shaderPackInUse && dhScan.available() && dhScan.shadowProgram();
+		return shaderPackInUse && ((dhScan.available() && dhScan.shadowProgram()) || shaderCapabilities.supportsDhShadow());
 	}
 
 	public static boolean shouldUseConservativeEmbeddedShaderFallback() {
@@ -216,6 +245,18 @@ public final class PauCLodShaderContext {
 		return effectiveDhMode;
 	}
 
+	public static PauCShaderProfileId currentProfileId() {
+		return shaderProfileId;
+	}
+
+	public static PauCShaderCapabilities currentCapabilities() {
+		return shaderCapabilities;
+	}
+
+	public static boolean isPaucNativeActive() {
+		return shaderPackInUse && shaderProfileId == PauCShaderProfileId.PAUC_NATIVE;
+	}
+
 	public static String shaderPackKey() {
 		return shaderPackKey;
 	}
@@ -238,13 +279,53 @@ public final class PauCLodShaderContext {
 		return transitionHoldFrames > 0;
 	}
 
+	public static String currentStatus() {
+		return status;
+	}
+
+	public static String currentStatusReason() {
+		int separatorIndex = status.indexOf(':');
+		return separatorIndex >= 0 && separatorIndex + 1 < status.length()
+			? status.substring(separatorIndex + 1)
+			: "";
+	}
+
+	public static int currentStatusCode() {
+		return switch (effectiveDhMode) {
+			case SHADER_OFF -> 0;
+			case PENDING -> 1;
+			case EXPLICIT_NATIVE -> 2;
+			case SYNTHETIC_NATIVE -> 3;
+			case FALLBACK -> 4;
+			case INCOMPATIBLE -> 5;
+		};
+	}
+
+	public static int currentStatusReasonCode() {
+		return switch (currentStatusReason()) {
+			case "" -> 0;
+			case "cached-missing-dh-shader" -> 1;
+			case "pauc-conservative-embedded-dh" -> 2;
+			case "missing-pack-dh-terrain-shader" -> 3;
+			case "missing-dh-shader" -> 4;
+			case "missing-dh-terrain-shader" -> 5;
+			case "native-dh-terrain-shader" -> 6;
+			case "synthetic-dh-terrain-shader" -> 7;
+			default -> 15;
+		};
+	}
+
 	public static String describe() {
 		return "shaderContext[pack="
-			+ shaderPackName
+			+ BundledShaderpackInstaller.displayPackName(shaderPackName)
+			+ ", profile="
+			+ shaderProfileId.id()
 			+ ", cachedIncompatible="
 			+ isCurrentPackCachedIncompatible()
 			+ ", inUse="
 			+ shaderPackInUse
+			+ ", "
+			+ shaderCapabilities.describe()
 			+ ", "
 			+ dhScan.describe()
 			+ ", dhMode="
@@ -371,7 +452,15 @@ public final class PauCLodShaderContext {
 					shadow[0] |= isProgramFile(fileName, "dh_shadow") || isProgramFile(relativeName, "dh_shadow");
 					markers[0] |= containsDhMarker(path, fileName);
 				});
-			return new ShaderPackDhScan(true, terrain[0], water[0], shadow[0], markers[0], scannedFiles[0], "ok");
+			return new ShaderPackDhScan(
+				true,
+				terrain[0] || shaderCapabilities.supportsDhTerrain(),
+				water[0],
+				shadow[0] || shaderCapabilities.supportsDhShadow(),
+				markers[0],
+				scannedFiles[0],
+				"ok"
+			);
 		} catch (IOException | SecurityException exception) {
 			return ShaderPackDhScan.unavailable("scan-error");
 		}
@@ -396,6 +485,8 @@ public final class PauCLodShaderContext {
 		return fileName.endsWith(".vsh")
 			|| fileName.endsWith(".fsh")
 			|| fileName.endsWith(".gsh")
+			|| fileName.endsWith(".csh")
+			|| fileName.endsWith(".glsl")
 			|| fileName.endsWith(".tcs")
 			|| fileName.endsWith(".tes");
 	}

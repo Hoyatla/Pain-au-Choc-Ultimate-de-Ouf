@@ -7,6 +7,7 @@ import com.sun.jna.platform.linux.LibC;
 import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
 import fr.hoyatla.pauc.PauCIdentity;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.irisshaders.iris.compat.dh.DHCompat;
 import net.irisshaders.iris.config.IrisConfig;
@@ -24,6 +25,7 @@ import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.shaderpack.DimensionId;
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.shaderpack.discovery.ShaderpackDirectoryManager;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 import net.irisshaders.iris.shaderpack.materialmap.NamespacedId;
 import net.irisshaders.iris.shaderpack.option.OptionSet;
 import net.irisshaders.iris.shaderpack.option.Profile;
@@ -146,7 +148,7 @@ public class Iris {
 			} catch (Exception e) {
 				logger.error("Error while reloading Shaders for Iris!", e);
 			}
-		} else if (toggleShadersKeybind.consumeClick()) {
+		} else if (toggleShadersKeybind != null && toggleShadersKeybind.consumeClick()) {
 			try {
 				toggleShaders(minecraft, !irisConfig.areShadersEnabled());
 			} catch (Exception e) {
@@ -154,8 +156,8 @@ public class Iris {
 				setShadersDisabled();
 				fallback = true;
 			}
-		} else if (shaderpackScreenKeybind.consumeClick()) {
-			minecraft.setScreen(new ShaderPackScreen(null));
+		} else if (shaderpackScreenKeybind != null && shaderpackScreenKeybind.consumeClick()) {
+			minecraft.setScreen(PauCShaders.createShaderConfigScreen(minecraft.screen));
 		} else if (wireframeKeybind.consumeClick() && irisConfig.areDebugOptionsEnabled() && !Minecraft.getInstance().isLocalServer()) {
 			logger.debug("Ignoring wireframe keybind outside singleplayer.");
 		}
@@ -191,7 +193,17 @@ public class Iris {
 		}
 
 		// Attempt to load an external shaderpack if it is available
-		Optional<String> externalName = irisConfig.getShaderPackName();
+		Optional<String> configuredPack = irisConfig.getShaderPackName();
+		Optional<String> externalName = configuredPack.map(BundledShaderpackInstaller::canonicalizePackName);
+
+		if (configuredPack.isPresent() && externalName.isPresent() && !configuredPack.get().equals(externalName.get())) {
+			irisConfig.setShaderPackName(externalName.get());
+			try {
+				irisConfig.save();
+			} catch (IOException exception) {
+				logger.warn("Failed to persist the normalized bundled shaderpack id for {}.", externalName.get(), exception);
+			}
+		}
 
 		if (externalName.isEmpty()) {
 			logger.info("Shaders are disabled because no valid shaderpack is selected");
@@ -212,13 +224,23 @@ public class Iris {
 	private static boolean loadExternalShaderpack(String name) {
 		Path shaderPackRoot;
 		Path shaderPackConfigTxt;
+		BundledShaderpackInstaller.ResolvedBundledShaderpack bundledPack;
 
 		try {
-			shaderPackRoot = getShaderpacksDirectory().resolve(name);
-			shaderPackConfigTxt = getShaderpacksDirectory().resolve(name + ".txt");
+			bundledPack = BundledShaderpackInstaller.resolveBundledPack(name, getShaderpacksDirectory());
+			if (bundledPack != null) {
+				shaderPackRoot = bundledPack.zipFile();
+				shaderPackConfigTxt = bundledPack.configFile();
+			} else {
+				shaderPackRoot = getShaderpacksDirectory().resolve(name);
+				shaderPackConfigTxt = getShaderpacksDirectory().resolve(name + ".txt");
+			}
 		} catch (InvalidPathException e) {
 			logger.error("Failed to load the shaderpack \"{}\" because it contains invalid characters in its path", name);
 
+			return false;
+		} catch (IOException e) {
+			logger.error("Failed to prepare the bundled shaderpack \"{}\".", name, e);
 			return false;
 		}
 
@@ -304,7 +326,7 @@ public class Iris {
 		currentPackName = name;
 		PauCLodShaderContext.markShaderPackSelected(currentPackName, true, shaderPackPath);
 
-		logger.info("Using shaderpack: " + name);
+		logger.info("Using shaderpack: {}", BundledShaderpackInstaller.displayPackName(name));
 
 		return true;
 	}
@@ -315,25 +337,7 @@ public class Iris {
 
 		// Should only be one root directory for a zip shaderpack
 		Path root = zipSystem.getRootDirectories().iterator().next();
-
-		Path potentialShaderDir = zipSystem.getPath("shaders");
-
-		// If the shaders dir was immediately found return it
-		// Otherwise, manually search through each directory path until it ends with "shaders"
-		if (Files.exists(potentialShaderDir)) {
-			return Optional.of(potentialShaderDir);
-		}
-
-		// Sometimes shaderpacks have their shaders directory within another folder in the shaderpack
-		// For example Sildurs-Vibrant-Shaders.zip/shaders
-		// While other packs have Trippy-Shaderpack-master.zip/Trippy-Shaderpack-master/shaders
-		// This makes it hard to determine what is the actual shaders dir
-		try (Stream<Path> stream = Files.walk(root)) {
-			return stream
-				.filter(Files::isDirectory)
-				.filter(path -> path.endsWith("shaders"))
-				.findFirst();
-		}
+		return findShaderDirectory(root);
 	}
 
 	private static void setShadersDisabled() {
@@ -417,13 +421,12 @@ public class Iris {
 			if (pack.equals(getShaderpacksDirectory())) {
 				return false;
 			}
-			try (Stream<Path> stream = Files.walk(pack)) {
-				return stream
-					.filter(Files::isDirectory)
+			try {
+				return findShaderDirectory(pack)
 					// Prevent a pack simply named "shaders" from being
 					// identified as a valid pack
 					.filter(path -> !path.equals(pack))
-					.anyMatch(path -> path.endsWith("shaders"));
+					.isPresent();
 			} catch (IOException ignored) {
 				// ignored, not a valid shader pack.
 				return false;
@@ -433,11 +436,7 @@ public class Iris {
 		if (pack.toString().endsWith(".zip")) {
 			try (FileSystem zipSystem = FileSystems.newFileSystem(pack, Iris.class.getClassLoader())) {
 				Path root = zipSystem.getRootDirectories().iterator().next();
-				try (Stream<Path> stream = Files.walk(root)) {
-					return stream
-						.filter(Files::isDirectory)
-						.anyMatch(path -> path.endsWith("shaders"));
-				}
+				return findShaderDirectory(root).isPresent();
 			} catch (ZipError zipError) {
 				// Java 8 seems to throw a ZipError instead of a subclass of IOException
 				Iris.logger.warn("The ZIP at " + pack + " is corrupt");
@@ -447,6 +446,27 @@ public class Iris {
 		}
 
 		return false;
+	}
+
+	private static Optional<Path> findShaderDirectory(Path root) throws IOException {
+		try (Stream<Path> stream = Files.walk(root)) {
+			return stream
+				.map(Iris::toShaderDirectory)
+				.flatMap(Optional::stream)
+				.findFirst();
+		}
+	}
+
+	private static Optional<Path> toShaderDirectory(Path path) {
+		Path current = Files.isDirectory(path) ? path : path.getParent();
+		while (current != null) {
+			Path fileName = current.getFileName();
+			if (fileName != null && "shaders".equals(fileName.toString())) {
+				return Optional.of(current);
+			}
+			current = current.getParent();
+		}
+		return Optional.empty();
 	}
 
 	public static Map<String, String> getShaderPackOptionQueue() {
@@ -724,8 +744,8 @@ public class Iris {
 		updateChecker = new UpdateChecker(IRIS_VERSION);
 
 		reloadKeybind = IrisPlatformHelpers.getInstance().registerKeyBinding(new KeyMapping("iris.keybind.reload", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_R, "iris.keybinds"));
-		toggleShadersKeybind = IrisPlatformHelpers.getInstance().registerKeyBinding(new KeyMapping("iris.keybind.toggleShaders", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_K, "iris.keybinds"));
-		shaderpackScreenKeybind = IrisPlatformHelpers.getInstance().registerKeyBinding(new KeyMapping("iris.keybind.shaderPackSelection", InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_O, "iris.keybinds"));
+		toggleShadersKeybind = null;
+		shaderpackScreenKeybind = null;
 		wireframeKeybind = IrisPlatformHelpers.getInstance().registerKeyBinding(new KeyMapping("iris.keybind.wireframe", InputConstants.Type.KEYSYM, getUnboundKeyCode(), "iris.keybinds"));
 
 		DHCompat.run();
@@ -734,6 +754,7 @@ public class Iris {
 			if (!Files.exists(getShaderpacksDirectory())) {
 				Files.createDirectories(getShaderpacksDirectory());
 			}
+			BundledShaderpackInstaller.ensureBundledShaderpacksPresent(getShaderpacksDirectory());
 		} catch (IOException e) {
 			logger.warn("Failed to create the shaderpacks directory!");
 			logger.warn("", e);

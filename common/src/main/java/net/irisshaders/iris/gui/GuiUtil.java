@@ -22,6 +22,7 @@ import net.minecraft.sounds.SoundEvents;
  * some code that will be changed.
  */
 public final class GuiUtil {
+	public static final ResourceLocation VANILLA_WIDGETS_TEX = new ResourceLocation("minecraft", "textures/gui/widgets.png");
 	public static final ResourceLocation IRIS_WIDGETS_TEX = new ResourceLocation("iris", "textures/gui/widgets.png");
 	private static final Component ELLIPSIS = Component.literal("...");
 
@@ -33,11 +34,11 @@ public final class GuiUtil {
 	}
 
 	/**
-	 * Binds Iris's widgets texture to be
-	 * used for succeeding draw calls.
+	 * Binds the vanilla widgets texture to be
+	 * used for succeeding button draw calls.
 	 */
 	public static void bindIrisWidgetsTexture() {
-		RenderSystem.setShaderTexture(0, IRIS_WIDGETS_TEX);
+		RenderSystem.setShaderTexture(0, VANILLA_WIDGETS_TEX);
 	}
 
 	/**
@@ -65,13 +66,13 @@ public final class GuiUtil {
 		RenderSystem.enableBlend();
 
 		// Top left section
-		guiGraphics.blit(IRIS_WIDGETS_TEX, x, y, 0, vOffset, halfWidth, halfHeight, 256, 256);
+		guiGraphics.blit(VANILLA_WIDGETS_TEX, x, y, 0, vOffset, halfWidth, halfHeight, 256, 256);
 		// Top right section
-		guiGraphics.blit(IRIS_WIDGETS_TEX, x + halfWidth, y, 200 - (width - halfWidth), vOffset, width - halfWidth, halfHeight, 256, 256);
+		guiGraphics.blit(VANILLA_WIDGETS_TEX, x + halfWidth, y, 200 - (width - halfWidth), vOffset, width - halfWidth, halfHeight, 256, 256);
 		// Bottom left section
-		guiGraphics.blit(IRIS_WIDGETS_TEX, x, y + halfHeight, 0, vOffset + (20 - (height - halfHeight)), halfWidth, height - halfHeight, 256, 256);
+		guiGraphics.blit(VANILLA_WIDGETS_TEX, x, y + halfHeight, 0, vOffset + (20 - (height - halfHeight)), halfWidth, height - halfHeight, 256, 256);
 		// Bottom right section
-		guiGraphics.blit(IRIS_WIDGETS_TEX, x + halfWidth, y + halfHeight, 200 - (width - halfWidth), vOffset + (20 - (height - halfHeight)), width - halfWidth, height - halfHeight, 256, 256);
+		guiGraphics.blit(VANILLA_WIDGETS_TEX, x + halfWidth, y + halfHeight, 200 - (width - halfWidth), vOffset + (20 - (height - halfHeight)), width - halfWidth, height - halfHeight, 256, 256);
 	}
 
 	/**

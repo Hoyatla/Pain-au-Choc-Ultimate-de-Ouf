@@ -4,8 +4,8 @@ import com.google.common.collect.Lists;
 import com.mojang.blaze3d.platform.GlUtil;
 import com.mojang.blaze3d.shaders.Program;
 import com.mojang.blaze3d.vertex.PoseStack;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
 import fr.hoyatla.pauc.compat.PauCRenderLifecycle;
 import net.irisshaders.iris.gl.program.IrisProgramTypes;
 import net.irisshaders.iris.pathways.HandRenderer;
@@ -14,7 +14,6 @@ import net.irisshaders.iris.pipeline.WorldRenderingPhase;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
 import net.irisshaders.iris.pipeline.programs.ShaderKey;
 import net.irisshaders.iris.shadows.ShadowRenderer;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.uniforms.CapturedRenderingState;
 import net.irisshaders.iris.uniforms.SystemTimeUniforms;
 import net.minecraft.client.Minecraft;
@@ -342,15 +341,7 @@ public class MixinGameRenderer {
 		"getPositionColorTexLightmapShader"
 	}, at = @At("HEAD"), cancellable = true)
 	private static void iris$overrideTextShader(CallbackInfoReturnable<ShaderInstance> cir) {
-		if (ShadowRenderer.ACTIVE) {
-			override(ShaderKey.SHADOW_TEXT, cir);
-		} else if (HandRenderer.INSTANCE.isActive()) {
-			override(ShaderKey.HAND_TEXT, cir);
-		} else if (isBlockEntities()) {
-			override(ShaderKey.TEXT_BE, cir);
-		} else if (shouldOverrideShaders()) {
-			override(ShaderKey.TEXT, cir);
-		}
+		// Keep text on the vanilla path until PauC's glyph-format route is rebuilt end-to-end.
 	}
 
 	@Inject(method = {
@@ -358,11 +349,7 @@ public class MixinGameRenderer {
 		"getRendertypeTextBackgroundSeeThroughShader"
 	}, at = @At("HEAD"), cancellable = true)
 	private static void iris$overrideTextBackgroundShader(CallbackInfoReturnable<ShaderInstance> cir) {
-		if (ShadowRenderer.ACTIVE) {
-			override(ShaderKey.SHADOW_TEXT_BG, cir);
-		} else {
-			override(ShaderKey.TEXT_BG, cir);
-		}
+		// Keep text on the vanilla path until PauC's glyph-format route is rebuilt end-to-end.
 	}
 
 	@Inject(method = {
@@ -370,15 +357,7 @@ public class MixinGameRenderer {
 		"getRendertypeTextIntensitySeeThroughShader"
 	}, at = @At("HEAD"), cancellable = true)
 	private static void iris$overrideTextIntensityShader(CallbackInfoReturnable<ShaderInstance> cir) {
-		if (ShadowRenderer.ACTIVE) {
-			override(ShaderKey.SHADOW_TEXT_INTENSITY, cir);
-		} else if (HandRenderer.INSTANCE.isActive()) {
-			override(ShaderKey.HAND_TEXT_INTENSITY, cir);
-		} else if (isBlockEntities()) {
-			override(ShaderKey.TEXT_INTENSITY_BE, cir);
-		} else if (shouldOverrideShaders()) {
-			override(ShaderKey.TEXT_INTENSITY, cir);
-		}
+		// Keep text on the vanilla path until PauC's glyph-format route is rebuilt end-to-end.
 	}
 
 	@Inject(method = {
@@ -462,7 +441,7 @@ public class MixinGameRenderer {
 
 	@Redirect(method = "renderItemInHand", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;Lnet/minecraft/client/player/LocalPlayer;I)V"))
 	private void iris$disableVanillaHandRendering(ItemInHandRenderer itemInHandRenderer, float tickDelta, PoseStack poseStack, BufferSource bufferSource, LocalPlayer localPlayer, int light) {
-		if (IrisApi.getInstance().isShaderPackInUse()) {
+		if (PauCShaders.isShaderPackInUse()) {
 			return;
 		}
 

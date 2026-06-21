@@ -104,6 +104,9 @@ public class SliderElementWidget extends StringElementWidget {
 
 		this.queue();
 		this.navigation.refresh();
+		if (this.screen.shouldApplyImmediately()) {
+			this.screen.applyChanges();
+		}
 
 		GuiUtil.playButtonClickSound();
 	}

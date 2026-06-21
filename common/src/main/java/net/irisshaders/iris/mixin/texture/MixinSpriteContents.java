@@ -2,6 +2,7 @@ package net.irisshaders.iris.mixin.texture;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import net.irisshaders.iris.Iris;
+import net.irisshaders.iris.texture.PauCThrottledSpriteTicker;
 import net.irisshaders.iris.texture.SpriteContentsExtension;
 import net.irisshaders.iris.texture.mipmap.CustomMipmapGenerator;
 import net.minecraft.client.renderer.texture.MipmapGenerator;
@@ -36,11 +37,17 @@ public class MixinSpriteContents implements SpriteContentsExtension {
 		return MipmapGenerator.generateMipLevels(nativeImages, mipLevel);
 	}
 
-	@Inject(method = "createTicker()Lnet/minecraft/client/renderer/texture/SpriteTicker;", at = @At("RETURN"))
+	@Inject(method = "createTicker()Lnet/minecraft/client/renderer/texture/SpriteTicker;", at = @At("RETURN"), cancellable = true)
 	private void onReturnCreateTicker(CallbackInfoReturnable<SpriteTicker> cir) {
 		SpriteTicker ticker = cir.getReturnValue();
+		if (ticker == null) {
+			return;
+		}
 		if (ticker instanceof SpriteContents.Ticker innerTicker) {
 			createdTicker = innerTicker;
+		}
+		if (!(ticker instanceof PauCThrottledSpriteTicker)) {
+			cir.setReturnValue(new PauCThrottledSpriteTicker(ticker));
 		}
 	}
 

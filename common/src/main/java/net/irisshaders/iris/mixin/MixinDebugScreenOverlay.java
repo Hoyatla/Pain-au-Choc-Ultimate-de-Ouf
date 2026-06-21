@@ -1,6 +1,7 @@
 package net.irisshaders.iris.mixin;
 
 import fr.hoyatla.pauc.lod.PauCLodDiagnostics;
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gui.option.IrisVideoSettings;
 import net.minecraft.client.gui.components.DebugScreenOverlay;
@@ -107,6 +108,11 @@ public abstract class MixinDebugScreenOverlay {
 		if (PauCLodDiagnostics.enabled()) {
 			messages.add(PauCLodDiagnostics.compactOverviewLine());
 			messages.add(PauCLodDiagnostics.compactModeLine());
+			if (PauCLodShaderContext.isShaderPackInUse()) {
+				messages.add(PauCLodDiagnostics.compactShaderCapsLine());
+				messages.add(PauCLodDiagnostics.compactShaderTuneLine());
+				messages.add(PauCLodDiagnostics.compactShaderPathLine());
+			}
 		}
 		iris$sanitizeLegacyRendererLabels(messages);
 	}

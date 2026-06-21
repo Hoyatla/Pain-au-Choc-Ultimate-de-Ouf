@@ -8,7 +8,7 @@ import net.caffeinemc.mods.sodium.api.util.ColorABGR;
 import net.caffeinemc.mods.sodium.api.util.ColorU8;
 import net.caffeinemc.mods.sodium.api.vertex.buffer.VertexBufferWriter;
 import net.caffeinemc.mods.sodium.api.vertex.format.common.ModelVertex;
-import net.irisshaders.iris.api.v0.IrisApi;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.compat.sodium.impl.vertex_format.entity_xhfp.EntityVertex;
 import net.irisshaders.iris.vertices.ImmediateState;
 import org.joml.Matrix3f;
@@ -96,6 +96,6 @@ public class MixinModelVertex {
 	}
 
 	private static boolean shouldBeExtended() {
-		return IrisApi.getInstance().isShaderPackInUse() && ImmediateState.renderWithExtendedVertexFormat;
+		return PauCShaders.isShaderPackInUse() && ImmediateState.renderWithExtendedVertexFormat;
 	}
 }

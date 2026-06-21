@@ -28,10 +28,6 @@ public class MixinVertexFormat {
 				IrisVertexFormats.TERRAIN.setupBufferState();
 
 				ci.cancel();
-			} else if ((Object) this == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-				IrisVertexFormats.GLYPH.setupBufferState();
-
-				ci.cancel();
 			} else if ((Object) this == DefaultVertexFormat.NEW_ENTITY) {
 				IrisVertexFormats.ENTITY.setupBufferState();
 
@@ -49,10 +45,6 @@ public class MixinVertexFormat {
 		if (WorldRenderingSettings.INSTANCE.shouldUseExtendedVertexFormat() && ImmediateState.renderWithExtendedVertexFormat) {
 			if ((Object) this == DefaultVertexFormat.BLOCK) {
 				IrisVertexFormats.TERRAIN.clearBufferState();
-
-				ci.cancel();
-			} else if ((Object) this == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-				IrisVertexFormats.GLYPH.clearBufferState();
 
 				ci.cancel();
 			} else if ((Object) this == DefaultVertexFormat.NEW_ENTITY) {

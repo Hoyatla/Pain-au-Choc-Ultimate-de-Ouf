@@ -3,7 +3,7 @@ package net.irisshaders.iris.compat.sodium.mixin.vertex_format.entity;
 import net.caffeinemc.mods.sodium.api.math.MatrixHelper;
 import net.caffeinemc.mods.sodium.api.util.ColorABGR;
 import net.caffeinemc.mods.sodium.api.vertex.format.common.ModelVertex;
-import net.irisshaders.iris.api.v0.IrisApi;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.compat.sodium.impl.vertex_format.entity_xhfp.EntityVertex;
 import net.irisshaders.iris.vertices.ImmediateState;
 import net.irisshaders.iris.vertices.NormI8;
@@ -42,7 +42,7 @@ public class MixinEntityRenderDispatcher {
 	}
 
 	private static boolean shouldBeExtended() {
-		return IrisApi.getInstance().isShaderPackInUse() && ImmediateState.renderWithExtendedVertexFormat;
+		return PauCShaders.isShaderPackInUse() && ImmediateState.renderWithExtendedVertexFormat;
 	}
 
 	private static int getTangent(int normal, float x0, float y0, float z0, float u0, float v0, float x1, float y1, float z1, float u1, float v1, float x2, float y2, float z2, float u2, float v2) {

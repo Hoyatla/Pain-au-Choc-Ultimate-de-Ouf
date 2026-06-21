@@ -34,12 +34,18 @@ public final class PauCDynamicResolution {
 		}
 		PauCDynamicResolutionMode mode = readMode();
 		lastMode = mode;
+		// FULL render quality under shaders (PauC core principle): resizing Minecraft's main render target fights the
+		// Iris shader pipeline's gbuffer + temporal/TAAU framebuffers, which are resolution-locked. Changing the target
+		// resolution under them desyncs the immediate-mode gbuffer geometry (entities/hand/items/hitboxes) from the
+		// composite, which renders them visibly offset. So resolution scaling is gated OUT whenever a shader pack is
+		// active — fps under shaders is recovered by efficiency, never by dropping resolution.
+		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		if (mode == PauCDynamicResolutionMode.OFF
 			|| !readBoolean(ENABLED_PROPERTY, mode != PauCDynamicResolutionMode.OFF)
 			|| minecraft == null
 			|| minecraft.level == null
-			|| !PauCLodShaderContext.isShaderPackInUse()) {
-			resetToNative("inactive");
+			|| shaderActive) {
+			resetToNative(shaderActive ? "inactive-shaders-full-quality" : "inactive");
 			return;
 		}
 		if (disabledTicks > 0) {

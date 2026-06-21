@@ -6,8 +6,10 @@ public final class PauCLodHorizonState {
 	private static final String FOG_END_MARGIN_PROPERTY = "pauc.lod.vanillaFogEndMargin";
 	private static final String SHADERLESS_FOG_START_BEFORE_TARGET_PROPERTY = "pauc.lod.shaderlessFogStartBeforeTarget";
 	private static final String SHADERLESS_FOG_END_MARGIN_PROPERTY = "pauc.lod.shaderlessFogEndMargin";
-	private static final int DEFAULT_FOG_START_BEFORE_TARGET_CHUNKS = 2;
-	private static final int DEFAULT_FOG_END_MARGIN_CHUNKS = 0;
+	// Native shader presentation needs a wider fog span than the fallback path to
+	// avoid a hard visible strip at the round-horizon boundary.
+	private static final int DEFAULT_FOG_START_BEFORE_TARGET_CHUNKS = 8;
+	private static final int DEFAULT_FOG_END_MARGIN_CHUNKS = 2;
 	private static final int DEFAULT_SHADERLESS_FOG_START_BEFORE_TARGET_CHUNKS = 4;
 	private static final int DEFAULT_SHADERLESS_FOG_END_MARGIN_CHUNKS = 2;
 	private static volatile PauCLodRange currentRange = PauCLodRange.disabled(2, PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS);

@@ -2,7 +2,8 @@ package net.irisshaders.iris.gui.element;
 
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.gui.GuiUtil;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
+import fr.hoyatla.pauc.shader.PauCShaders;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -16,6 +17,7 @@ import net.minecraft.network.chat.MutableComponent;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 public class ShaderPackQuickAccessWidget extends AbstractWidget {
@@ -26,8 +28,8 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 	private static final int BUTTON_GAP = 4;
 	private static final int MIN_BUTTON_WIDTH = 76;
 	private static final int MAX_BUTTON_WIDTH = 170;
-	private static final Component TITLE = Component.translatable("options.iris.shaderPackSelection");
-	private static final Component EMPTY = Component.translatable("options.iris.shaders.nonePresent").withStyle(ChatFormatting.GRAY);
+	private static final Component TITLE = Component.translatable(PauCShaders.mainScreenLanguageKey());
+	private static final Component EMPTY = Component.translatable("options.pauc.shaders.nonePresent").withStyle(ChatFormatting.GRAY);
 	private static final Component PREVIOUS = Component.literal("<");
 	private static final Component NEXT = Component.literal(">");
 
@@ -47,15 +49,45 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 
 	private static List<String> readShaderPackNames() {
 		try {
-			return Iris.getShaderpacksDirectoryManager().enumerate();
+			List<String> packNames = new ArrayList<>(Iris.getShaderpacksDirectoryManager().enumerate());
+			packNames.sort(
+				Comparator.comparingInt(ShaderPackQuickAccessWidget::packPriority)
+					.thenComparing(ShaderPackQuickAccessWidget::displayPackName, String.CASE_INSENSITIVE_ORDER)
+			);
+			return packNames;
 		} catch (Throwable e) {
 			Iris.logger.error("Error reading shaderpacks while constructing video settings quick access", e);
 			return List.of();
 		}
 	}
 
+	private static int packPriority(String packName) {
+		String normalized = packName.toLowerCase(java.util.Locale.ROOT);
+		if (normalized.contains("photon")) {
+			return 0;
+		}
+		if (normalized.contains("solas")) {
+			return 1;
+		}
+		return 2;
+	}
+
+	private static String displayPackName(String packName) {
+		String normalized = packName.toLowerCase(java.util.Locale.ROOT);
+		if (normalized.contains("photon")) {
+			return "Photon";
+		}
+		if (normalized.contains("solas")) {
+			return "Solas";
+		}
+		if (normalized.endsWith(".zip")) {
+			return packName.substring(0, packName.length() - 4);
+		}
+		return packName;
+	}
+
 	private void centerOnCurrentPack() {
-		String currentPackName = Iris.getIrisConfig().getShaderPackName().orElse(null);
+		String currentPackName = BundledShaderpackInstaller.canonicalizePackName(Iris.getIrisConfig().getShaderPackName().orElse(null));
 		if (currentPackName == null) {
 			return;
 		}
@@ -182,7 +214,9 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 		for (PackButton packButton : this.visibleButtons) {
 			if (packButton.hovered(mouseX, mouseY)) {
 				GuiUtil.playButtonClickSound();
-				Minecraft.getInstance().setScreen(ShaderPackScreen.openShaderPackOptionsDirectly(this.parent, packButton.packName));
+				Iris.getIrisConfig().setShaderPackName(packButton.packName);
+				PauCShaders.setShadersEnabledAndApply(true);
+				Minecraft.getInstance().setScreen(PauCShaders.createShaderConfigScreen(this.parent));
 				return true;
 			}
 		}
@@ -226,7 +260,7 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 			this.width = width;
 			this.height = height;
 			Font font = Minecraft.getInstance().font;
-			String displayName = packName;
+			String displayName = displayPackName(packName);
 			boolean shortened = false;
 
 			if (font.width(displayName) > width - 12) {
@@ -240,7 +274,8 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 
 		private void render(GuiGraphics guiGraphics, Font font, int mouseX, int mouseY) {
 			boolean hovered = hovered(mouseX, mouseY);
-			boolean active = Iris.getIrisConfig().areShadersEnabled() && packName.equals(Iris.getCurrentPackName());
+			boolean active = Iris.getIrisConfig().areShadersEnabled()
+				&& packName.equals(BundledShaderpackInstaller.canonicalizePackName(Iris.getCurrentPackName()));
 			GuiUtil.drawButton(guiGraphics, x, y, width, height, hovered, false);
 			MutableComponent text = this.label.copy();
 			int color = active ? 0xFFF263 : 0xFFFFFF;

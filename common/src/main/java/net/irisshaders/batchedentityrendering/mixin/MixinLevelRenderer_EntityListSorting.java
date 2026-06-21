@@ -5,6 +5,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.Reference2ObjectOpenHashMap;
+import net.irisshaders.batchedentityrendering.impl.BatchedEntityRenderingPolicy;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.world.entity.Entity;
@@ -53,6 +54,10 @@ public class MixinLevelRenderer_EntityListSorting {
 
 	@WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = "Ljava/lang/Iterable;iterator()Ljava/util/Iterator;"))
 	private Iterator<Entity> batchedentityrendering$sortEntityList(Iterable<Entity> instance, Operation<Iterator<Entity>> original) {
+		if (!BatchedEntityRenderingPolicy.isEnabled()) {
+			return original.call(instance);
+		}
+
 		int sortBatchThreshold = pauc$readInt(SORT_BATCH_THRESHOLD_PROPERTY, 24, 0, 2048);
 		if (!PauCVillagePerformanceDiagnostics.isScenePressureActive()
 			&& instance instanceof Collection<?> collection

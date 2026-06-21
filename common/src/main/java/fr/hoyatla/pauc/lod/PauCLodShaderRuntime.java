@@ -53,8 +53,6 @@ public final class PauCLodShaderRuntime {
 
 		state = new State(
 			true,
-			family == null ? PauCLodShaderProfiles.Family.GENERIC : family,
-			shaderMode,
 			pressure,
 			fps,
 			targetFps,
@@ -68,6 +66,8 @@ public final class PauCLodShaderRuntime {
 
 	public static void onShaderPackStateChanged(
 		boolean shaderInUse,
+		PauCShaderProfileId profileId,
+		PauCShaderCapabilities capabilities,
 		PauCLodShaderProfiles.Family family,
 		PauCLodShaderContext.DhShaderMode shaderMode
 	) {
@@ -76,23 +76,16 @@ public final class PauCLodShaderRuntime {
 			return;
 		}
 
-		State snapshot = state;
-		PauCLodShaderProfiles.Family resolvedFamily = family == null ? PauCLodShaderProfiles.Family.GENERIC : family;
-		PauCLodShaderContext.DhShaderMode resolvedMode =
-			shaderMode == null ? PauCLodShaderContext.DhShaderMode.PENDING : shaderMode;
-		boolean preservePerformance = snapshot.active() && snapshot.family() == resolvedFamily;
 		state = new State(
-			preservePerformance,
-			resolvedFamily,
-			resolvedMode,
-			preservePerformance ? snapshot.pressure() : Pressure.OFF,
-			preservePerformance ? snapshot.fps() : -1,
-			preservePerformance ? snapshot.targetFps() : -1,
-			preservePerformance ? snapshot.ratio() : 0.0D,
-			preservePerformance ? snapshot.heapPressure() : 0.0D,
-			preservePerformance && snapshot.nvidiaMeshPath(),
-			preservePerformance && snapshot.multiDrawIndirect(),
-			preservePerformance && snapshot.bindlessIndirect()
+			false,
+			Pressure.OFF,
+			-1,
+			-1,
+			0.0D,
+			0.0D,
+			false,
+			false,
+			false
 		);
 	}
 
@@ -266,12 +259,15 @@ public final class PauCLodShaderRuntime {
 
 	public static String describe() {
 		State snapshot = state;
+		PauCShaderCapabilities capabilities = currentCapabilities();
 		return "shaderRuntime[active="
 			+ isActive()
 			+ ", family="
 			+ currentFamily().name().toLowerCase(Locale.ROOT)
+			+ ", profile="
+			+ currentProfileId().id()
 			+ ", mode="
-			+ snapshot.shaderMode().id()
+			+ PauCLodShaderContext.effectiveDhMode().id()
 			+ ", pressure="
 			+ pressure().id
 			+ ", fps="
@@ -290,11 +286,23 @@ public final class PauCLodShaderRuntime {
 			+ shouldKeepPauCLodCloudsVisible()
 			+ ", nativeDhShadow="
 			+ shouldRenderNativeDhShadowThisFrame()
+			+ ", declaredDhTerrain="
+			+ capabilities.supportsDhTerrain()
+			+ ", declaredDhShadow="
+			+ capabilities.supportsDhShadow()
 			+ "]";
 	}
 
+	private static PauCShaderProfileId currentProfileId() {
+		return PauCLodShaderContext.currentProfileId();
+	}
+
 	private static PauCLodShaderProfiles.Family currentFamily() {
-		return state.active() ? state.family() : PauCLodShaderProfiles.currentFamily();
+		return PauCLodShaderProfiles.currentFamily();
+	}
+
+	private static PauCShaderCapabilities currentCapabilities() {
+		return PauCLodShaderContext.currentCapabilities();
 	}
 
 	private static boolean usesSyntheticShaderShadowFallback() {
@@ -344,8 +352,6 @@ public final class PauCLodShaderRuntime {
 
 	private record State(
 		boolean active,
-		PauCLodShaderProfiles.Family family,
-		PauCLodShaderContext.DhShaderMode shaderMode,
 		Pressure pressure,
 		int fps,
 		int targetFps,
@@ -358,8 +364,6 @@ public final class PauCLodShaderRuntime {
 		static State off() {
 			return new State(
 				false,
-				PauCLodShaderProfiles.Family.GENERIC,
-				PauCLodShaderContext.DhShaderMode.SHADER_OFF,
 				Pressure.OFF,
 				-1,
 				-1,

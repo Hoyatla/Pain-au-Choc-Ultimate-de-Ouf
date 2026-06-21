@@ -21,6 +21,10 @@ public final class PauCClientFpsGovernor {
 	private static final String ALLOW_DISTANCE_REDUCTION_PROPERTY = "pauc.client.allowFpsGovernorDistanceReduction";
 	private static final String ALLOW_GENERATION_REDUCTION_PROPERTY = "pauc.client.allowFpsGovernorGenerationReduction";
 	private static final String PRESERVE_CONFIGURED_TARGET_DISTANCE_VANILLA_PROPERTY = "pauc.lod.preserveConfiguredTargetDistanceInVanilla";
+	// Honor the player's configured LOD distance identically with shaders ON or OFF, so toggling a shader never changes
+	// the view distance. Defaults true (falls back to the legacy vanilla-only flag if set). Full-quality principle:
+	// never shrink the configured LOD distance for fps.
+	private static final String PRESERVE_CONFIGURED_TARGET_DISTANCE_PROPERTY = "pauc.lod.preserveConfiguredTargetDistance";
 	private static final String DYNAMIC_TARGET_DISTANCE_PROPERTY = "pauc.lod.dynamicTargetDistance";
 	private static final String DYNAMIC_RETENTION_MARGIN_PROPERTY = "pauc.lod.dynamicRetentionMarginChunks";
 	private static final String DYNAMIC_GENERATION_RATE_PROPERTY = "pauc.lod.dynamicGenerationRequestRateLimit";
@@ -666,9 +670,10 @@ public final class PauCClientFpsGovernor {
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
 		int configuredTarget = PauCLodClientSettings.configuredTargetDistanceChunks();
 		boolean dynamicDistanceAllowed = readBoolean(ALLOW_DISTANCE_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicTargetDistanceReduction());
-		boolean preserveConfiguredTargetInVanilla = !shaderActive && readBoolean(PRESERVE_CONFIGURED_TARGET_DISTANCE_VANILLA_PROPERTY, true);
+		boolean preserveConfiguredTarget = readBoolean(PRESERVE_CONFIGURED_TARGET_DISTANCE_PROPERTY,
+			readBoolean(PRESERVE_CONFIGURED_TARGET_DISTANCE_VANILLA_PROPERTY, true));
 		int targetDistance = configuredTarget;
-		if (preserveConfiguredTargetInVanilla) {
+		if (preserveConfiguredTarget) {
 			targetDistance = configuredTarget;
 		} else if (dynamicDistanceAllowed) {
 			int policyTargetDistance = Math.min(configuredTarget, policy.targetDistanceChunks);
@@ -960,7 +965,8 @@ public final class PauCClientFpsGovernor {
 		double queuePressure,
 		boolean movementCatchup
 	) {
-		if (!PauCLodShaderContext.isShaderPackInUse() && readBoolean(PRESERVE_CONFIGURED_TARGET_DISTANCE_VANILLA_PROPERTY, true)) {
+		if (readBoolean(PRESERVE_CONFIGURED_TARGET_DISTANCE_PROPERTY,
+				readBoolean(PRESERVE_CONFIGURED_TARGET_DISTANCE_VANILLA_PROPERTY, true))) {
 			appliedTargetDistance = configuredTargetDistance;
 			clearPendingTargetDistance();
 			return configuredTargetDistance;

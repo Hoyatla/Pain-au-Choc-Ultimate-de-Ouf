@@ -6,8 +6,8 @@ import java.nio.ByteBuffer;
 import java.util.function.IntFunction;
 
 /**
- * The entry point to the Iris API, major version 0. This is currently the latest
- * version of the API.
+ * The entry point to the shader compatibility API, major version 0.
+ * In PauC this API is backed by the integrated PauC shader runtime.
  * <p>
  * To access the API, use {@link #getInstance()}.
  */
@@ -23,7 +23,7 @@ public interface IrisApi {
 	 * Gets the minor revision of this API. This is incremented when
 	 * new methods are added without breaking API. Mods can check this
 	 * if they wish to check whether given API calls are available on
-	 * the currently installed Iris version.
+	 * the currently installed PauC shader runtime version.
 	 *
 	 * @return The current minor revision. Currently, revision 2.
 	 */
@@ -59,13 +59,13 @@ public interface IrisApi {
 	 * <p>Naturally, this function can only return true if
 	 * {@link #isShaderPackInUse()} returns true.
 	 *
-	 * @return Whether Iris is currently rendering the shadow pass.
+	 * @return Whether the PauC shader runtime is currently rendering the shadow pass.
 	 * @since API v0.0
 	 */
 	boolean isRenderingShadowPass();
 
 	/**
-	 * Opens the main Iris GUI screen. It's up to Iris to decide
+	 * Opens the main shader GUI screen. It's up to the runtime to decide
 	 * what this screen is, but generally this is the shader selection
 	 * screen.
 	 * <p>
@@ -77,14 +77,14 @@ public interface IrisApi {
 	 *
 	 * @param parent The parent screen, an instance of the appropriate
 	 *               {@code Screen} class.
-	 * @return A {@code Screen} class for the main Iris GUI screen.
+	 * @return A {@code Screen} class for the main shader GUI screen.
 	 * @since API v0.0
 	 */
 	Object openMainIrisScreenObj(Object parent);
 
 	/**
 	 * Gets the language key of the main screen. Currently, this
-	 * is "options.iris.shaderPackSelection".
+	 * is "options.pauc.shaderPackSelection".
 	 *
 	 * @return the language key, for use with {@code TranslatableText}
 	 * / {@code TranslatableComponent}
@@ -93,7 +93,7 @@ public interface IrisApi {
 	String getMainScreenLanguageKey();
 
 	/**
-	 * Gets a config object that can edit the Iris configuration.
+	 * Gets a config object that can edit the shader runtime configuration.
 	 *
 	 * @since API v0.0
 	 */

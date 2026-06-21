@@ -1,8 +1,8 @@
 package net.irisshaders.iris.gui.screen;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.NavigationController;
 import net.irisshaders.iris.gui.OldImageButton;
@@ -12,6 +12,7 @@ import net.irisshaders.iris.gui.element.widget.AbstractElementWidget;
 import net.irisshaders.iris.gui.element.widget.CommentedElementWidget;
 import net.irisshaders.iris.platform.IrisPlatformHelpers;
 import net.irisshaders.iris.shaderpack.ShaderPack;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -42,14 +43,14 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
-public class ShaderPackScreen extends Screen implements HudHideable {
+public class ShaderPackScreen extends Screen implements HudHideable, ShaderPackHost {
 	/**
 	 * Queue rendering to happen on top of all elements. Useful for tooltips or dialogs.
 	 */
 	public static final Set<Runnable> TOP_LAYER_RENDER_QUEUE = new HashSet<>();
 
-	private static final Component SELECT_TITLE = Component.translatable("pack.iris.select.title").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
-	private static final Component CONFIGURE_TITLE = Component.translatable("pack.iris.configure.title").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
+	private static final Component SELECT_TITLE = Component.translatable("pack.pauc.select.title").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
+	private static final Component CONFIGURE_TITLE = Component.translatable("pack.pauc.configure.title").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
 	private static final int COMMENT_PANEL_WIDTH = 314;
 	private static final String development = "Development Environment";
 	private final Screen parent;
@@ -76,12 +77,16 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 	private Button openFolderButton;
 	private boolean initialPackApplied = false;
 
+	private static boolean pauc$externalShaderpacksDisabled() {
+		return !BundledShaderpackInstaller.allowExternalPackSelection();
+	}
+
 	public ShaderPackScreen(Screen parent) {
 		this(parent, null, false, false);
 	}
 
 	public ShaderPackScreen(Screen parent, @Nullable String initialPackName, boolean openOptionsDirectly, boolean transparentInWorld) {
-		super(Component.translatable("options.iris.shaderPackSelection.title"));
+		super(Component.translatable(PauCShaders.mainScreenTitleLanguageKey()));
 
 		this.parent = parent;
 		this.initialPackName = initialPackName;
@@ -248,17 +253,23 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 				this.addRenderableWidget(Button.builder(CommonComponents.GUI_DONE, button -> onClose()).bounds(bottomCenter + 104, this.height - 27, 100, 20
 				).build());
 
-				this.addRenderableWidget(Button.builder(Component.translatable("options.iris.apply"), button -> this.applyChanges()).bounds(bottomCenter, this.height - 27, 100, 20
+				this.addRenderableWidget(Button.builder(Component.translatable("options.pauc.apply"), button -> this.applyChanges()).bounds(bottomCenter, this.height - 27, 100, 20
 				).build());
 
 				this.addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> this.dropChangesAndClose()).bounds(bottomCenter - 104, this.height - 27, 100, 20
 				).build());
 
-				this.openFolderButton = Button.builder(Component.translatable("options.iris.openShaderPackFolder"), button -> openShaderPackFolder()).bounds(topCenter - 78, this.height - 51, 152, 20
+				this.openFolderButton = Button.builder(
+					pauc$externalShaderpacksDisabled()
+						? Component.translatable("options.pauc.shaderPackSelection.bundledOnly")
+						: Component.translatable("options.pauc.openShaderPackFolder"),
+					button -> openShaderPackFolder()
+				).bounds(topCenter - 78, this.height - 51, 152, 20
 				).build();
+				this.openFolderButton.active = !pauc$externalShaderpacksDisabled();
 				this.addRenderableWidget(openFolderButton);
 
-				this.screenSwitchButton = this.addRenderableWidget(Button.builder(Component.translatable("options.iris.shaderPackList"), button -> {
+				this.screenSwitchButton = this.addRenderableWidget(Button.builder(Component.translatable("options.pauc.shaderPackList"), button -> {
 						this.optionMenuOpen = !this.optionMenuOpen;
 
 						// UX: Apply changes before switching screens to avoid unintuitive behavior
@@ -279,8 +290,8 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 
 		if (inWorld && !directOptionsMode) {
 			Component showOrHide = this.guiHidden
-				? Component.translatable("options.iris.gui.show")
-				: Component.translatable("options.iris.gui.hide");
+				? Component.translatable("options.pauc.gui.show")
+				: Component.translatable("options.pauc.gui.hide");
 
 			float endOfLastButton = this.width / 2.0f + 154.0f;
 			float freeSpace = this.width - endOfLastButton;
@@ -329,11 +340,17 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 		int x = (this.width - rowWidth) / 2;
 		int y = this.height - 27;
 
-		this.openFolderButton = Button.builder(Component.translatable("options.iris.openShaderPackFolder"), button -> openShaderPackFolder()).bounds(x, y, buttonWidth, 20
+		this.openFolderButton = Button.builder(
+			pauc$externalShaderpacksDisabled()
+				? Component.translatable("options.pauc.shaderPackSelection.bundledOnly")
+				: Component.translatable("options.pauc.openShaderPackFolder"),
+			button -> openShaderPackFolder()
+		).bounds(x, y, buttonWidth, 20
 		).build();
+		this.openFolderButton.active = !pauc$externalShaderpacksDisabled();
 		this.addRenderableWidget(openFolderButton);
 
-		this.addRenderableWidget(Button.builder(Component.translatable("options.iris.apply"), button -> this.applyChangesAndClose()).bounds(x + buttonWidth + gap, y, buttonWidth, 20
+		this.addRenderableWidget(Button.builder(Component.translatable("options.pauc.apply"), button -> this.applyChangesAndClose()).bounds(x + buttonWidth + gap, y, buttonWidth, 20
 		).build());
 
 		this.addRenderableWidget(Button.builder(CommonComponents.GUI_CANCEL, button -> this.dropChangesAndClose()).bounds(x + (buttonWidth + gap) * 2, y, buttonWidth, 20
@@ -379,8 +396,8 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 		if (this.screenSwitchButton != null) {
 			this.screenSwitchButton.setMessage(
 				optionMenuOpen ?
-					Component.translatable("options.iris.shaderPackList")
-					: Component.translatable("options.iris.shaderPackSettings")
+					Component.translatable("options.pauc.shaderPackList")
+					: Component.translatable("options.pauc.shaderPackSettings")
 			);
 			this.screenSwitchButton.active = optionMenuOpen || shaderPackList.getTopButtonRow().shadersEnabled;
 		}
@@ -456,6 +473,11 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 	}
 
 	public void onPackListFilesDrop(List<Path> paths) {
+		if (pauc$externalShaderpacksDisabled()) {
+			displayNotification(Component.translatable("options.pauc.shaderPackSelection.externalDisabled").withStyle(ChatFormatting.RED));
+			return;
+		}
+
 		List<Path> packs = paths.stream().filter(Iris::isValidShaderpack).toList();
 
 		for (Path pack : packs) {
@@ -465,7 +487,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 				Iris.getShaderpacksDirectoryManager().copyPackIntoDirectory(fileName, pack);
 			} catch (FileAlreadyExistsException e) {
 				this.notificationDialog = Component.translatable(
-					"options.iris.shaderPackSelection.copyErrorAlreadyExists",
+					"options.pauc.shaderPackSelection.copyErrorAlreadyExists",
 					fileName
 				).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED);
 
@@ -477,7 +499,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 				Iris.logger.warn("Error copying dragged shader pack", e);
 
 				this.notificationDialog = Component.translatable(
-					"options.iris.shaderPackSelection.copyError",
+					"options.pauc.shaderPackSelection.copyError",
 					fileName
 				).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED);
 
@@ -500,14 +522,14 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 				String fileName = paths.get(0).getFileName().toString();
 
 				this.notificationDialog = Component.translatable(
-					"options.iris.shaderPackSelection.failedAddSingle",
+					"options.pauc.shaderPackSelection.failedAddSingle",
 					fileName
 				).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED);
 			} else {
 				// Otherwise, show a generic message.
 
 				this.notificationDialog = Component.translatable(
-					"options.iris.shaderPackSelection.failedAdd"
+					"options.pauc.shaderPackSelection.failedAdd"
 				).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED);
 			}
 
@@ -516,7 +538,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 			String packName = packs.get(0).getFileName().toString();
 
 			this.notificationDialog = Component.translatable(
-				"options.iris.shaderPackSelection.addedPack",
+				"options.pauc.shaderPackSelection.addedPack",
 				packName
 			).withStyle(ChatFormatting.ITALIC, ChatFormatting.YELLOW);
 
@@ -527,7 +549,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 			// We also support multiple packs being dragged and dropped at a time. Just show a generic success message
 			// in that case.
 			this.notificationDialog = Component.translatable(
-				"options.iris.shaderPackSelection.addedPacks",
+				"options.pauc.shaderPackSelection.addedPacks",
 				packs.size()
 			).withStyle(ChatFormatting.ITALIC, ChatFormatting.YELLOW);
 		}
@@ -546,7 +568,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 		// as only one option file should be imported at a time
 		if (paths.size() != 1) {
 			this.notificationDialog = Component.translatable(
-				"options.iris.shaderPackOptions.tooManyFiles"
+				"options.pauc.shaderPackOptions.tooManyFiles"
 			).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED);
 			this.notificationDialogTimer = 100; // 5 seconds (100 ticks)
 
@@ -564,7 +586,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 			Iris.queueShaderPackOptionsFromProperties(properties);
 
 			this.notificationDialog = Component.translatable(
-				"options.iris.shaderPackOptions.importedSettings",
+				"options.pauc.shaderPackOptions.importedSettings",
 				settingFile.getFileName().toString()
 			).withStyle(ChatFormatting.ITALIC, ChatFormatting.YELLOW);
 			this.notificationDialogTimer = 100; // 5 seconds (100 ticks)
@@ -578,7 +600,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 			Iris.logger.error("Error importing shader settings file \"" + settingFile.toString() + "\"", e);
 
 			this.notificationDialog = Component.translatable(
-				"options.iris.shaderPackOptions.failedImport",
+				"options.pauc.shaderPackOptions.failedImport",
 				settingFile.getFileName().toString()
 			).withStyle(ChatFormatting.ITALIC, ChatFormatting.RED);
 			this.notificationDialogTimer = 100; // 5 seconds (100 ticks)
@@ -625,7 +647,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 		boolean previousShadersEnabled = Iris.getIrisConfig().areShadersEnabled();
 
 		if (enabled != previousShadersEnabled) {
-			IrisApi.getInstance().getConfig().setShadersEnabledAndApply(enabled);
+			PauCShaders.setShadersEnabledAndApply(enabled);
 		}
 
 		if (!(base instanceof ShaderPackSelectionList.ShaderPackEntry entry)) {
@@ -647,7 +669,7 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 		// Only reload if the pack would be different from before, or shaders were toggled, or options were changed, or if we're about to reset options.
 		if (!name.equals(previousPackName) || !Iris.getShaderPackOptionQueue().isEmpty() || Iris.shouldResetShaderPackOptionsOnNextReload()) {
 			Iris.getIrisConfig().setShaderPackName(name);
-			IrisApi.getInstance().getConfig().setShadersEnabledAndApply(enabled);
+			PauCShaders.setShadersEnabledAndApply(enabled);
 		}
 
 		refreshForChangedPack();
@@ -658,6 +680,11 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 	}
 
 	private void openShaderPackFolder() {
+		if (pauc$externalShaderpacksDisabled()) {
+			displayNotification(Component.translatable("options.pauc.shaderPackSelection.externalDisabled").withStyle(ChatFormatting.RED));
+			return;
+		}
+
 		CompletableFuture.runAsync(() -> {
 			Util.getPlatform().openUri(Iris.getShaderpacksDirectoryManager().getDirectoryUri());
 		});
@@ -711,5 +738,10 @@ public class ShaderPackScreen extends Screen implements HudHideable {
 
 	public Button getBottomRowOption() {
 		return openFolderButton;
+	}
+
+	@Override
+	public void queueTopLayerRender(Runnable render) {
+		TOP_LAYER_RENDER_QUEUE.add(render);
 	}
 }

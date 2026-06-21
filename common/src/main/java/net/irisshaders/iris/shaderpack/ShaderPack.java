@@ -8,8 +8,8 @@ import com.google.gson.stream.JsonReader;
 import it.unimi.dsi.fastutil.objects.Object2ObjectArrayMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.iris.Iris;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.features.FeatureFlags;
 import net.irisshaders.iris.gl.texture.TextureDefinition;
 import net.irisshaders.iris.gui.FeatureMissingErrorScreen;
@@ -24,6 +24,7 @@ import net.irisshaders.iris.shaderpack.materialmap.NamespacedId;
 import net.irisshaders.iris.shaderpack.option.OrderBackedProperties;
 import net.irisshaders.iris.shaderpack.option.ProfileSet;
 import net.irisshaders.iris.shaderpack.option.ShaderPackOptions;
+import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 import net.irisshaders.iris.shaderpack.option.menu.OptionMenuContainer;
 import net.irisshaders.iris.shaderpack.option.values.MutableOptionValues;
 import net.irisshaders.iris.shaderpack.option.values.OptionValues;
@@ -171,6 +172,7 @@ public class ShaderPack {
 			}
 		}
 		this.shaderProperties = loadProperties(root, "shaders.properties")
+			.map(ShaderPack::sanitizeBundledShaderProperties)
 			.map(source -> new ShaderProperties(source, shaderPackOptions, finalEnvironmentDefines))
 			.orElseGet(ShaderProperties::empty);
 
@@ -208,7 +210,7 @@ public class ShaderPack {
 				}
 				Minecraft.getInstance().setScreen(new FeatureMissingErrorScreen(Minecraft.getInstance().screen, Component.translatable("iris.unsupported.pack"), component));
 			}
-			IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);
+			PauCShaders.setShadersEnabledAndApply(false);
 		}
 		List<StringPair> newEnvDefines = new ArrayList<>(environmentDefines);
 
@@ -372,6 +374,63 @@ public class ShaderPack {
 		}
 
 		return Optional.of(properties);
+	}
+
+	private static String sanitizeBundledShaderProperties(String source) {
+		if (source == null || source.isBlank()) {
+			return source;
+		}
+
+		String configuredPack = BundledShaderpackInstaller.canonicalizePackName(
+			Iris.getIrisConfig().getShaderPackName().orElse(Iris.getCurrentPackName())
+		);
+		if (!BundledShaderpackInstaller.PHOTON_ID.equals(configuredPack)) {
+			return source;
+		}
+
+		String[] lines = source.split("\\R", -1);
+		StringBuilder sanitized = new StringBuilder(source.length());
+		for (int index = 0; index < lines.length; index++) {
+			sanitized.append(sanitizeBundledPhotonPropertiesLine(lines[index]));
+			if (index + 1 < lines.length) {
+				sanitized.append('\n');
+			}
+		}
+		return sanitized.toString();
+	}
+
+	private static String sanitizeBundledPhotonPropertiesLine(String line) {
+		int separatorIndex = line.indexOf('=');
+		if (separatorIndex < 0) {
+			return line;
+		}
+
+		String key = line.substring(0, separatorIndex).trim();
+		if (!(key.startsWith("profile.") || key.startsWith("screen.") || key.equals("sliders"))) {
+			return line;
+		}
+
+		String prefix = line.substring(0, separatorIndex + 1);
+		String suffix = line.substring(separatorIndex + 1).trim();
+		if (suffix.isEmpty()) {
+			return line;
+		}
+
+		List<String> normalizedTokens = new ArrayList<>();
+		for (String token : suffix.split("\\s+")) {
+			switch (token) {
+				case "WATER_REFRACTION_INTENSITY" -> normalizedTokens.add("REFRACTION_INTENSITY");
+				case "WATER_REFRACTION" -> normalizedTokens.add("REFRACTION");
+				case "CLOUDS_DAILY_WEATHER", "CLOUDS_CUMULUS_CONGESTUS_PRIMARY_STEPS_Z" -> {
+				}
+				case "CLOUDS_CUMULUS_CONGESTUS_PRIMARY_STEPS_H" ->
+					normalizedTokens.add("CLOUDS_CUMULUS_CONGESTUS_PRIMARY_STEPS");
+				case "!GTAO" -> normalizedTokens.add("SHADER_AO=SHADER_AO_SSAO");
+				case "GTAO" -> normalizedTokens.add("SHADER_AO=SHADER_AO_GTAO");
+				default -> normalizedTokens.add(token);
+			}
+		}
+		return prefix + " " + String.join(" ", normalizedTokens);
 	}
 
 	private static Map<NamespacedId, String> parseDimensionMap(Properties properties, String keyPrefix, String fileName) {

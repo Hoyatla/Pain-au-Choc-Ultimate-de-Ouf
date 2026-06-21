@@ -1,8 +1,8 @@
 package net.irisshaders.iris.pathways;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import fr.hoyatla.pauc.shader.PauCShaders;
 import net.irisshaders.batchedentityrendering.impl.FullyBufferedMultiBufferSource;
-import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.mixin.GameRendererAccessor;
 import net.irisshaders.iris.pipeline.WorldRenderingPhase;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
@@ -71,7 +71,7 @@ public class HandRenderer {
 	}
 
 	public void renderSolid(PoseStack poseStack, float tickDelta, Camera camera, GameRenderer gameRenderer, WorldRenderingPipeline pipeline) {
-		if (!canRender(camera, gameRenderer) || !IrisApi.getInstance().isShaderPackInUse()) {
+		if (!canRender(camera, gameRenderer) || !PauCShaders.isShaderPackInUse()) {
 			return;
 		}
 
@@ -106,7 +106,7 @@ public class HandRenderer {
 	}
 
 	public void renderTranslucent(PoseStack poseStack, float tickDelta, Camera camera, GameRenderer gameRenderer, WorldRenderingPipeline pipeline) {
-		if (!canRender(camera, gameRenderer) || !isAnyHandTranslucent() || !IrisApi.getInstance().isShaderPackInUse()) {
+		if (!canRender(camera, gameRenderer) || !isAnyHandTranslucent() || !PauCShaders.isShaderPackInUse()) {
 			return;
 		}
 
