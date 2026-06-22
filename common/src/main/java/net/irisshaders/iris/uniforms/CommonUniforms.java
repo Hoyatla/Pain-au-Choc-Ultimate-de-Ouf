@@ -2,6 +2,7 @@ package net.irisshaders.iris.uniforms;
 
 import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
+import fr.hoyatla.pauc.lod.PauCPhotonShadowCoverage;
 import fr.hoyatla.pauc.lod.PauCShaderFrameState;
 import fr.hoyatla.pauc.lod.PauCLodShaderPresentation;
 import net.irisshaders.iris.compat.dh.DHCompat;
@@ -200,6 +201,9 @@ public final class CommonUniforms {
 			.uniform1i(PER_FRAME, "paucLodTransitionWidth", PauCShaderFrameState::currentTransitionWidthBlocks)
 			.uniform1i(PER_FRAME, "paucVanillaFogStartDistance", PauCShaderFrameState::currentVanillaFogStartDistanceBlocks)
 			.uniform1i(PER_FRAME, "paucVanillaFogEndDistance", PauCShaderFrameState::currentVanillaFogEndDistanceBlocks)
+			.uniform1i(PER_FRAME, "paucPhotonShadowRequestedDistance", PauCPhotonShadowCoverage::requestedShadowCoverageDistanceBlocks)
+			.uniform1i(PER_FRAME, "paucPhotonShadowCoverageDistance", PauCPhotonShadowCoverage::requestedShadowCoverageDistanceBlocks)
+			.uniform1i(PER_FRAME, "paucPhotonShadowEffectiveDistance", PauCPhotonShadowCoverage::effectiveShadowCoverageDistanceBlocks)
 			.uniform1f(PER_FRAME, "paucShaderProfileDoFogMix", PauCShaderFrameState::currentProfileDoFogMix)
 			.uniform1f(PER_FRAME, "paucShaderProfileRgbFogMix", PauCShaderFrameState::currentProfileRgbFogMix)
 			.uniform1f(PER_FRAME, "paucShaderProfileCommonFogMix", PauCShaderFrameState::currentProfileCommonFogMix)

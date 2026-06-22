@@ -882,7 +882,9 @@ public final class PauCCudaWorker {
 	}
 
 	private static boolean shouldRouteSmallBatchToCpu(int count, TerrainProfile profile) {
-		return profile.routeSmallBatchToCpu() && count < smallBatchCpuThreshold(profile);
+		return profile.routeSmallBatchToCpu()
+			&& !shouldPreferGpuOffloadForSmallBatches(profile)
+			&& count < smallBatchCpuThreshold(profile);
 	}
 
 	private static boolean shouldPreferGpuOffloadForVanilla(TerrainProfile profile) {
@@ -902,6 +904,33 @@ public final class PauCCudaWorker {
 			|| !PauCClientFpsGovernor.isBacklogResolved();
 	}
 
+	private static boolean shouldPreferGpuOffloadForSmallBatches(TerrainProfile profile) {
+		if (shouldPreferGpuOffloadForVanilla(profile)) {
+			return true;
+		}
+		if (!profile.shaderActive()) {
+			return false;
+		}
+		PauCLodShaderContext.DhShaderMode shaderMode = PauCLodShaderContext.effectiveDhMode();
+		if (shaderMode != PauCLodShaderContext.DhShaderMode.EXPLICIT_NATIVE
+			&& shaderMode != PauCLodShaderContext.DhShaderMode.SYNTHETIC_NATIVE) {
+			return false;
+		}
+		if (PauCClientChunkPriorityScorer.isMovementCatchupActive()
+			|| PauCClientFrontierWarmupManager.hasNearCoverageDebt()
+			|| PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
+			|| PauCClientFrontierWarmupManager.isHotRestoreActive()) {
+			return true;
+		}
+		PauCWorkloadState.Snapshot workload = PauCWorkloadState.lastSnapshot();
+		if (!workload.queueAvailable() || workload.paucResolved()) {
+			return false;
+		}
+		return workload.pendingChunks() >= readInt("pauc.cuda.shaderTerrainForceGpuPendingChunks", 768, 64, 32768)
+			|| workload.backlogTasks() >= readInt("pauc.cuda.shaderTerrainForceGpuBacklogTasks", 48, 4, 8192)
+			|| PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() >= readFloat("pauc.cuda.shaderTerrainForceGpuQueuePressure", 0.14F, 0.0F, 1.0F);
+	}
+
 	private static void recordTerrainCost(int count, long cudaMicros, long cpuMicros, TerrainProfile profile) {
 		TERRAIN_COST_SAMPLES.incrementAndGet();
 		TERRAIN_CUDA_COST_MICROS.addAndGet(Math.max(1L, cudaMicros));
@@ -909,7 +938,7 @@ public final class PauCCudaWorker {
 		if (count > profile.minUsefulBatch()) {
 			return;
 		}
-		if (shouldPreferGpuOffloadForVanilla(profile)) {
+		if (shouldPreferGpuOffloadForSmallBatches(profile)) {
 			return;
 		}
 
@@ -930,7 +959,7 @@ public final class PauCCudaWorker {
 	}
 
 	private static boolean isTerrainAutoDisabledForBatch(int count, TerrainProfile profile) {
-		if (shouldPreferGpuOffloadForVanilla(profile)) {
+		if (shouldPreferGpuOffloadForSmallBatches(profile)) {
 			return false;
 		}
 		return TERRAIN_AUTO_DISABLED_PROFILES.contains(profile.id()) && count <= profile.minUsefulBatch();

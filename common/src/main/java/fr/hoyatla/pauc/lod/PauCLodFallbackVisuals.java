@@ -159,7 +159,7 @@ public final class PauCLodFallbackVisuals {
 		float rescueStrength = lateRender
 			? Math.min(PauCLodScreenFogColor.rescueStrength(presentationFogColor), maxLateRescueStrength())
 			: 0.0F;
-		int visualEndChunk = range.roundHorizonEndChunk();
+		int visualEndChunk = PauCLodHorizonState.visualEndChunk();
 		int defaultVeilBeforeEndChunks = lateRender
 			? LATE_HORIZON_VEIL_START_BEFORE_END_CHUNKS
 			: STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS;

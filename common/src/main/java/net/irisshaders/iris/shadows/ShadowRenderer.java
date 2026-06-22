@@ -266,6 +266,20 @@ public class ShadowRenderer {
 		IrisRenderSystem.texParameteri(texture, GL20C.GL_TEXTURE_2D, GL20C.GL_TEXTURE_MIN_FILTER, filteringMode);
 	}
 
+	private static int pauc$blocksToChunks(double blocks) {
+		return (int) Math.max(0L, (long) Math.ceil(blocks / 16.0D));
+	}
+
+	private void pauc$updateShadowTerrainDistanceInfo(double requestedDistanceBlocks, double effectiveDistanceBlocks) {
+		int requestedDistanceChunks = pauc$blocksToChunks(requestedDistanceBlocks);
+		int effectiveDistanceChunks = pauc$blocksToChunks(effectiveDistanceBlocks);
+		ShadowRenderingState.updateShadowTerrainDistanceInfo(
+			requestedDistanceChunks,
+			effectiveDistanceChunks,
+			effectiveDistanceChunks < requestedDistanceChunks
+		);
+	}
+
 	private FrustumHolder createShadowFrustum(float renderMultiplier, FrustumHolder holder) {
 		// PauC shader GPU floor: when fps is below the pack's floor (GPU-bound), pull the shadow render distance in to
 		// recover GPU time. renderMultiplier < 0 is a "use user shadow distance" sentinel and is left untouched.
@@ -275,6 +289,7 @@ public class ShadowRenderer {
 		// TODO: Cull entities / block entities with Advanced Frustum Culling even if voxelization is detected.
 		String distanceInfo;
 		String cullingInfo;
+		double vanillaRenderDistanceBlocks = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16.0D;
 		if ((packCullingState == ShadowCullState.DEFAULT && packHasVoxelization) || packCullingState == ShadowCullState.DISTANCE) {
 			double distance = halfPlaneLength * renderMultiplier;
 
@@ -286,13 +301,15 @@ public class ShadowRenderer {
 				reason = "(voxelization detected)";
 			}
 
-			if (distance <= 0 || distance > Minecraft.getInstance().options.getEffectiveRenderDistance() * 16) {
+			if (distance <= 0 || distance > vanillaRenderDistanceBlocks) {
+				pauc$updateShadowTerrainDistanceInfo(distance, vanillaRenderDistanceBlocks);
 				distanceInfo = "render distance = " + Minecraft.getInstance().options.getEffectiveRenderDistance() * 16
 					+ " blocks ";
 				distanceInfo += Minecraft.getInstance().isLocalServer() ? "(capped by normal render distance)" : "(capped by normal/server render distance)";
 				cullingInfo = "disabled " + reason;
 				return holder.setInfo(new NonCullingFrustum(), distanceInfo, cullingInfo);
 			} else {
+				pauc$updateShadowTerrainDistanceInfo(distance, distance);
 				distanceInfo = distance + " blocks (set by shader pack)";
 				cullingInfo = "distance only " + reason;
 				BoxCuller boxCuller = new BoxCuller(distance);
@@ -314,12 +331,14 @@ public class ShadowRenderer {
 				setter = "(set by user)";
 			}
 
-			if (distance >= Minecraft.getInstance().options.getEffectiveRenderDistance() * 16 && !isReversed) {
+			if (distance >= vanillaRenderDistanceBlocks && !isReversed) {
+				pauc$updateShadowTerrainDistanceInfo(distance, vanillaRenderDistanceBlocks);
 				distanceInfo = "render distance = " + Minecraft.getInstance().options.getEffectiveRenderDistance() * 16
 					+ " blocks ";
 				distanceInfo += Minecraft.getInstance().isLocalServer() ? "(capped by normal render distance)" : "(capped by normal/server render distance)";
 				boxCuller = null;
 			} else {
+				pauc$updateShadowTerrainDistanceInfo(distance, Math.max(0.0D, distance));
 				distanceInfo = distance + " blocks " + setter;
 
 				if (distance == 0.0 && !isReversed) {
@@ -358,6 +377,7 @@ public class ShadowRenderer {
 
 	public void renderShadows(LevelRendererAccessor levelRenderer, Camera playerCamera) {
 		if (IrisVideoSettings.getOverriddenShadowDistance(IrisVideoSettings.shadowDistance) == 0) {
+			ShadowRenderingState.resetShadowTerrainDistanceInfo();
 			return;
 		}
 

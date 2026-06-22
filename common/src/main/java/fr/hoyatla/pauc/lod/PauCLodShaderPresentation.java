@@ -42,7 +42,7 @@ public final class PauCLodShaderPresentation {
 		}
 
 		int realDhRenderDistanceChunks = blocksToChunksCeil(realDhRenderDistanceBlocks);
-		int visualEndChunk = range.roundHorizonEndChunk();
+		int visualEndChunk = PauCLodHorizonState.visualEndChunk();
 		int minimumDistanceChunks = Math.max(visualEndChunk, realDhRenderDistanceChunks);
 		int fallbackDistanceChunks = Math.max(
 			DEFAULT_PRESENTATION_DISTANCE_CHUNKS,
@@ -83,7 +83,7 @@ public final class PauCLodShaderPresentation {
 		}
 
 		PauCLodRange range = currentRange();
-		int startChunk = range.roundHorizonEndChunk() + readInt(
+		int startChunk = PauCLodHorizonState.visualEndChunk() + readInt(
 			FOG_START_MARGIN_PROPERTY,
 			DEFAULT_FALLBACK_SHADER_FOG_START_MARGIN_CHUNKS,
 			0,
@@ -99,7 +99,7 @@ public final class PauCLodShaderPresentation {
 
 		PauCLodRange range = currentRange();
 		float startBlocks = shaderFogStartBlocks(realFogEndBlocks);
-		int endChunk = range.roundHorizonEndChunk() + readInt(
+		int endChunk = PauCLodHorizonState.visualEndChunk() + readInt(
 			FOG_END_MARGIN_PROPERTY,
 			DEFAULT_FALLBACK_SHADER_FOG_END_MARGIN_CHUNKS,
 			0,
@@ -175,7 +175,7 @@ public final class PauCLodShaderPresentation {
 
 	public static int lodEndDistanceBlocks() {
 		PauCLodRange range = currentRange();
-		return range.enabled() ? chunksToBlocks(range.roundHorizonEndChunk()) : 0;
+		return range.enabled() ? chunksToBlocks(PauCLodHorizonState.visualEndChunk()) : 0;
 	}
 
 	public static int shaderPresentationEnabled() {
@@ -188,7 +188,14 @@ public final class PauCLodShaderPresentation {
 	}
 
 	private static boolean defaultLateFallbackRender() {
-		return false;
+		if (!PauCLodShaderContext.isFallbackActive()) {
+			return false;
+		}
+
+		return switch (PauCLodShaderProfiles.currentFamily()) {
+			case PHOTON, SOLAS -> true;
+			default -> false;
+		};
 	}
 
 	private static int shaderPresentationDistanceBlocks(int realRenderDistanceBlocks) {
@@ -198,7 +205,7 @@ public final class PauCLodShaderPresentation {
 		}
 
 		int realDistanceChunks = blocksToChunksCeil(realRenderDistanceBlocks);
-		int visualEndChunk = range.roundHorizonEndChunk();
+		int visualEndChunk = PauCLodHorizonState.visualEndChunk();
 		int minimumDistanceChunks = Math.max(visualEndChunk, realDistanceChunks);
 		int fallbackDistanceChunks = Math.max(
 			DEFAULT_PRESENTATION_DISTANCE_CHUNKS,

@@ -23,6 +23,7 @@ import java.util.Optional;
 import java.util.function.Function;
 
 public class ProgramSet implements ProgramSetInterface {
+	private static final EnumMap<ProgramId, List<String>> LEGACY_PROGRAM_ALIASES = createLegacyProgramAliases();
 	private final PackDirectives packDirectives;
 
 	private final ComputeSource[] shadowCompute;
@@ -67,7 +68,7 @@ public class ProgramSet implements ProgramSetInterface {
 		}
 
 		for (ProgramId programId : ProgramId.values()) {
-			gbufferPrograms.put(programId, readProgramSource(directory, sourceProvider, programId.getSourceName(), this, shaderProperties, programId.getBlendModeOverride(), readTesselation));
+			gbufferPrograms.put(programId, readProgramSourceWithAliases(directory, sourceProvider, programId, this, shaderProperties, readTesselation));
 		}
 
 		this.finalCompute = readComputeArray(directory, sourceProvider, "final", shaderProperties);
@@ -126,6 +127,55 @@ public class ProgramSet implements ProgramSetInterface {
 
 		return new ProgramSource(program, vertexSource, geometrySource, tessControlSource, tessEvalSource, fragmentSource, programSet, properties,
 			defaultBlendModeOverride);
+	}
+
+	private static ProgramSource readProgramSourceWithAliases(
+		AbsolutePackPath directory,
+		Function<AbsolutePackPath, String> sourceProvider,
+		ProgramId programId,
+		ProgramSet programSet,
+		ShaderProperties properties,
+		boolean readTesselation
+	) {
+		ProgramSource primary = readProgramSource(
+			directory,
+			sourceProvider,
+			programId.getSourceName(),
+			programSet,
+			properties,
+			programId.getBlendModeOverride(),
+			readTesselation
+		);
+		if (primary != null && primary.isValid()) {
+			return primary;
+		}
+
+		for (String legacyName : LEGACY_PROGRAM_ALIASES.getOrDefault(programId, List.of())) {
+			ProgramSource legacy = readProgramSource(
+				directory,
+				sourceProvider,
+				legacyName,
+				programSet,
+				properties,
+				programId.getBlendModeOverride(),
+				readTesselation
+			);
+			if (legacy != null && legacy.isValid()) {
+				Iris.logger.info("PauC resolved legacy shaderpack program alias {} -> {}.", legacyName, programId.getSourceName());
+				return legacy;
+			}
+		}
+
+		return primary;
+	}
+
+	private static EnumMap<ProgramId, List<String>> createLegacyProgramAliases() {
+		EnumMap<ProgramId, List<String>> aliases = new EnumMap<>(ProgramId.class);
+		aliases.put(ProgramId.DhTerrain, List.of("pl_terrain"));
+		aliases.put(ProgramId.DhWater, List.of("pl_water"));
+		aliases.put(ProgramId.DhGeneric, List.of("pl_generic"));
+		aliases.put(ProgramId.DhShadow, List.of("pl_shadow"));
+		return aliases;
 	}
 
 	private static ComputeSource readComputeSource(AbsolutePackPath directory,

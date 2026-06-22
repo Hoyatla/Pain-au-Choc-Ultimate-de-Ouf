@@ -978,6 +978,13 @@ public class IrisRenderingPipeline implements WorldRenderingPipeline, ShaderRend
 		main.bindWrite(true);
 		isMainBound = true;
 
+		// PauC: force the viewport to the actual main-target framebuffer size. bindWrite() above sets the viewport from
+		// viewWidth/viewHeight, which under PauC dynamic resolution can remain the window size while the framebuffer
+		// (main.width/height) is resized smaller (e.g. 0.65x). That mismatch makes immediate-mode gbuffer geometry
+		// (entities/hand/items/hitboxes) rasterize into an oversized viewport on the smaller gbuffer — the off-center
+		// offset. Matching the viewport to main.width/height keeps geometry aligned with the gbuffer at any scale.
+		com.mojang.blaze3d.systems.RenderSystem.viewport(0, 0, main.width, main.height);
+
 		if (changed) {
 			boolean hasRun = false;
 

@@ -1,5 +1,6 @@
 package net.irisshaders.iris.mixin.shadows;
 
+import fr.hoyatla.pauc.lod.PauCPhotonShadowCoverage;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
@@ -165,6 +166,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 			&& camChunkX == pauc$cachedFallbackCamChunkX
 			&& camChunkZ == pauc$cachedFallbackCamChunkZ
 			&& budget == pauc$cachedFallbackBudget
+			&& !ShadowRenderingState.shouldRebuildShadowTerrainGraph()
 			&& Math.abs(availableChunks - pauc$cachedFallbackSnapshotSize) <= 8) {
 			// Hand out a FRESH COPY, never the cached list itself. After the shadow pass, invokeSetupRender repopulates
 			// (and in the no-Sodium embedded setup CLEARS) renderChunksInFrustum; if that were the cached object, the
@@ -305,7 +307,7 @@ public class MixinLevelRenderer implements CullingDataCache {
 		Vec3 fallbackCamera = pauc$mainCameraPosition();
 		int camChunkX = Mth.floor(fallbackCamera.x) >> 4;
 		int camChunkZ = Mth.floor(fallbackCamera.z) >> 4;
-		int primaryRadiusChunks = pauc$vanillaShadowZoneRadiusChunks();
+		int primaryRadiusChunks = pauc$shadowTerrainPrimaryRadiusChunks();
 		int retentionRadiusChunks = Math.max(primaryRadiusChunks + 2, pauc$localVanillaShadowRecoveryRadiusChunks());
 
 		ObjectArrayList<LevelRenderer.RenderChunkInfo> primaryChunks =
@@ -564,9 +566,8 @@ public class MixinLevelRenderer implements CullingDataCache {
 		int vanillaDistanceChunks = minecraft != null && minecraft.options != null
 			? minecraft.options.getEffectiveRenderDistance()
 			: 8;
-		int shadowDistanceChunks = Math.max(0, ShadowRenderingState.getRenderDistance());
-		int configuredRadius = shadowDistanceChunks > 0
-			? Math.min(vanillaDistanceChunks, shadowDistanceChunks)
+		int configuredRadius = PauCPhotonShadowCoverage.usesFallbackPhotonShadowCoverage()
+			? PauCPhotonShadowCoverage.effectiveShadowCoverageRadiusChunks()
 			: vanillaDistanceChunks;
 		int junctionExtensionChunks = switch (PauCLodShaderProfiles.currentFamily()) {
 			case SOLAS -> 3;
@@ -575,8 +576,8 @@ public class MixinLevelRenderer implements CullingDataCache {
 			default -> 0;
 		};
 		int expandedRadius = configuredRadius + junctionExtensionChunks;
-		if (shadowDistanceChunks > 0) {
-			expandedRadius = Math.min(shadowDistanceChunks, expandedRadius);
+		if (PauCPhotonShadowCoverage.usesFallbackPhotonShadowCoverage()) {
+			expandedRadius = Math.min(PauCPhotonShadowCoverage.vanillaShadowCoverageRadiusChunks(), expandedRadius);
 		}
 		return Math.max(4, expandedRadius);
 	}
@@ -588,6 +589,9 @@ public class MixinLevelRenderer implements CullingDataCache {
 		}
 		if (!PauCLodShaderContext.isShaderPackInUse() || PauCLodShaderContext.hasScannedDhShadowProgram()) {
 			return false;
+		}
+		if (ShadowRenderingState.shouldRebuildShadowTerrainGraph()) {
+			return true;
 		}
 		if (pauc$stableMainCameraShadowCandidates.isEmpty() || recoveryRadiusChunks != pauc$stableMainCameraShadowRadiusChunks) {
 			return true;
@@ -625,20 +629,24 @@ public class MixinLevelRenderer implements CullingDataCache {
 	// snapshot size), so it does not shrink during a pitch swing — keeping coverage stable there too.
 	@Unique
 	private int pauc$vanillaShadowZoneBudget() {
-		int radiusChunks = pauc$vanillaShadowZoneRadiusChunks();
+		int radiusChunks = pauc$shadowTerrainPrimaryRadiusChunks();
 		int squareEstimate = (2 * radiusChunks + 1) * (2 * radiusChunks + 1);
 		return Math.min(2048, squareEstimate);
 	}
 
 	@Unique
+	private int pauc$shadowTerrainPrimaryRadiusChunks() {
+		if (PauCPhotonShadowCoverage.usesFallbackPhotonShadowCoverage()) {
+			return PauCPhotonShadowCoverage.effectiveShadowCoverageRadiusChunks();
+		}
+		return pauc$vanillaShadowZoneRadiusChunks();
+	}
+
+	@Unique
 	private int pauc$vanillaShadowZoneRadiusChunks() {
-		Minecraft minecraft = Minecraft.getInstance();
-		int renderDistanceChunks = minecraft != null && minecraft.options != null
-			? minecraft.options.getEffectiveRenderDistance()
-			: 8;
 		// Render distance plus a two-chunk junction margin: the outer vanilla ring that meets the LOD horizon
 		// is where coverage gaps appeared, so the shadow zone reaches a little past the vanilla edge.
-		return Math.max(2, renderDistanceChunks) + 2;
+		return PauCPhotonShadowCoverage.vanillaShadowCoverageRadiusChunks();
 	}
 
 	@Unique

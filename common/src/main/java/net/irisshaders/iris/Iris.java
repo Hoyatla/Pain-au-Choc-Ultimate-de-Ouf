@@ -229,7 +229,7 @@ public class Iris {
 		try {
 			bundledPack = BundledShaderpackInstaller.resolveBundledPack(name, getShaderpacksDirectory());
 			if (bundledPack != null) {
-				shaderPackRoot = bundledPack.zipFile();
+				shaderPackRoot = bundledPack.packRoot();
 				shaderPackConfigTxt = bundledPack.configFile();
 			} else {
 				shaderPackRoot = getShaderpacksDirectory().resolve(name);

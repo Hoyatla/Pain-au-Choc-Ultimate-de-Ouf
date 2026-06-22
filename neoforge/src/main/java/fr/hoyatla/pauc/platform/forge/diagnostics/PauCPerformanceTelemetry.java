@@ -30,13 +30,17 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 
 public final class PauCPerformanceTelemetry {
 	private static final Logger LOGGER = LogUtils.getLogger();
-	private static final DateTimeFormatter FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneOffset.UTC);
+	private static final ZoneId SESSION_TIME_ZONE = ZoneId.systemDefault();
+	private static final DateTimeFormatter FILE_TIMESTAMP =
+		DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(SESSION_TIME_ZONE);
+	private static final DateTimeFormatter ISO_OFFSET_TIMESTAMP = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
 	private static final String DETAIL_CAPTURE_INTERVAL_MS_PROPERTY = "pauc.telemetry.detailCaptureIntervalMs";
 	private static final long LOG_INTERVAL_MS = 5_000L;
 	private static long sessionStartedAtMs;
@@ -222,11 +226,17 @@ public final class PauCPerformanceTelemetry {
 		captureDetailLines();
 		String fileSessionId = sessionId == null || sessionId.isBlank() ? FILE_TIMESTAMP.format(Instant.now()) : sessionId;
 		Path reportPath = reportDir.resolve("performance-" + fileSessionId + ".json");
+		Instant sessionStartedAt = Instant.ofEpochMilli(sessionStartedAtMs);
+		String sessionStartedAtLocal = ISO_OFFSET_TIMESTAMP.format(sessionStartedAt.atZone(SESSION_TIME_ZONE));
+		String sessionStartedAtUtc = ISO_OFFSET_TIMESTAMP.format(sessionStartedAt.atZone(ZoneOffset.UTC));
 		String json = "{\n"
 			+ "  \"buildId\": \"" + json(PauCIdentity.buildId()) + "\",\n"
 			+ "  \"buildVersion\": \"" + json(PauCIdentity.runtimeVersion()) + "\",\n"
 			+ "  \"buildGitHash\": \"" + json(PauCIdentity.buildGitHash()) + "\",\n"
 			+ "  \"sessionId\": \"" + json(fileSessionId) + "\",\n"
+			+ "  \"sessionTimeZone\": \"" + json(SESSION_TIME_ZONE.getId()) + "\",\n"
+			+ "  \"sessionStartedAtLocal\": \"" + json(sessionStartedAtLocal) + "\",\n"
+			+ "  \"sessionStartedAtUtc\": \"" + json(sessionStartedAtUtc) + "\",\n"
 			+ "  \"reason\": \"" + json(reason) + "\",\n"
 			+ "  \"terrainContext\": \"" + json(lastTerrainLine) + "\",\n"
 			+ "  \"durationMs\": " + Math.max(0L, System.currentTimeMillis() - sessionStartedAtMs) + ",\n"

@@ -1,5 +1,6 @@
 package fr.hoyatla.pauc.lod;
 
+import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.irisshaders.iris.shaderpack.discovery.BundledShaderpackInstaller;
 
 import java.io.IOException;
@@ -83,6 +84,11 @@ public final class PauCLodShaderContext {
 
 		if (changed) {
 			armTransitionHold();
+		}
+		if (inUse) {
+			ShadowRenderingState.markShadowTerrainGraphDirty();
+		} else {
+			ShadowRenderingState.resetShadowTerrainDistanceInfo();
 		}
 		PauCLodShaderRuntime.onShaderPackStateChanged(
 			shaderPackInUse,
@@ -447,9 +453,18 @@ public final class PauCLodShaderContext {
 					scannedFiles[0]++;
 					String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
 					String relativeName = shaderDirectory.relativize(path).toString().toLowerCase(Locale.ROOT).replace('\\', '/');
-					terrain[0] |= isProgramFile(fileName, "dh_terrain") || isProgramFile(relativeName, "dh_terrain");
-					water[0] |= isProgramFile(fileName, "dh_water") || isProgramFile(relativeName, "dh_water");
-					shadow[0] |= isProgramFile(fileName, "dh_shadow") || isProgramFile(relativeName, "dh_shadow");
+					terrain[0] |= isProgramFile(fileName, "dh_terrain")
+						|| isProgramFile(relativeName, "dh_terrain")
+						|| isProgramFile(fileName, "pl_terrain")
+						|| isProgramFile(relativeName, "pl_terrain");
+					water[0] |= isProgramFile(fileName, "dh_water")
+						|| isProgramFile(relativeName, "dh_water")
+						|| isProgramFile(fileName, "pl_water")
+						|| isProgramFile(relativeName, "pl_water");
+					shadow[0] |= isProgramFile(fileName, "dh_shadow")
+						|| isProgramFile(relativeName, "dh_shadow")
+						|| isProgramFile(fileName, "pl_shadow")
+						|| isProgramFile(relativeName, "pl_shadow");
 					markers[0] |= containsDhMarker(path, fileName);
 				});
 			return new ShaderPackDhScan(

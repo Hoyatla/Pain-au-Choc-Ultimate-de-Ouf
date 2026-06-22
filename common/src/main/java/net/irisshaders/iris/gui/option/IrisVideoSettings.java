@@ -3,6 +3,7 @@ package net.irisshaders.iris.gui.option;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.pathways.colorspace.ColorSpace;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
+import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.network.chat.Component;
@@ -52,6 +53,7 @@ public class IrisVideoSettings {
 		getOverriddenShadowDistance(shadowDistance),
 		integer -> {
 			shadowDistance = sanitizeShadowDistance(integer);
+			ShadowRenderingState.markShadowTerrainGraphDirty();
 			if (loadingFromConfig) {
 				return;
 			}
@@ -67,6 +69,7 @@ public class IrisVideoSettings {
 		loadingFromConfig = true;
 		try {
 			shadowDistance = sanitizeShadowDistance(distance);
+			ShadowRenderingState.markShadowTerrainGraphDirty();
 			RENDER_DISTANCE.set(shadowDistance);
 		} finally {
 			loadingFromConfig = false;

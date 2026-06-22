@@ -74,8 +74,8 @@ public final class PauCShaderCapabilitiesLoader {
 		PauCLodShaderProfiles.Family family
 	) {
 		String normalizedPackId = BundledShaderpackInstaller.canonicalizePackName(packName);
-		boolean dhTerrain = containsProgram(shaderDirectory, "dh_terrain");
-		boolean dhShadow = containsProgram(shaderDirectory, "dh_shadow");
+		boolean dhTerrain = containsProgram(shaderDirectory, "dh_terrain", "pl_terrain");
+		boolean dhShadow = containsProgram(shaderDirectory, "dh_shadow", "pl_shadow");
 		boolean transitionFog = family == PauCLodShaderProfiles.Family.PAUC;
 		boolean coloredLights = family == PauCLodShaderProfiles.Family.PHOTON
 			|| family == PauCLodShaderProfiles.Family.SOLAS
@@ -108,17 +108,17 @@ public final class PauCShaderCapabilitiesLoader {
 		);
 	}
 
-	private static boolean containsProgram(Path shaderDirectory, String programName) {
+	private static boolean containsProgram(Path shaderDirectory, String... programNames) {
 		try (var stream = Files.walk(shaderDirectory, 6)) {
 			return stream
 				.filter(Files::isRegularFile)
-				.anyMatch(path -> isProgramFile(path, programName));
+				.anyMatch(path -> isProgramFile(path, programNames));
 		} catch (IOException | SecurityException exception) {
 			return false;
 		}
 	}
 
-	private static boolean isProgramFile(Path path, String programName) {
+	private static boolean isProgramFile(Path path, String... programNames) {
 		String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
 		if (!(fileName.endsWith(".vsh")
 			|| fileName.endsWith(".fsh")
@@ -128,10 +128,15 @@ public final class PauCShaderCapabilitiesLoader {
 			return false;
 		}
 
-		return fileName.equals(programName + ".vsh")
-			|| fileName.equals(programName + ".fsh")
-			|| fileName.equals(programName + ".gsh")
-			|| fileName.equals(programName + ".csh")
-			|| fileName.equals(programName + ".glsl");
+		for (String programName : programNames) {
+			if (fileName.equals(programName + ".vsh")
+				|| fileName.equals(programName + ".fsh")
+				|| fileName.equals(programName + ".gsh")
+				|| fileName.equals(programName + ".csh")
+				|| fileName.equals(programName + ".glsl")) {
+				return true;
+			}
+		}
+		return false;
 	}
 }

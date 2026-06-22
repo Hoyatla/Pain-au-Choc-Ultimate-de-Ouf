@@ -140,6 +140,17 @@ public class MixinLevelRenderer {
 			return;
 		}
 
+		// PauC dynamic resolution: the main render target is resized smaller (e.g. 0.65x), but its viewWidth/viewHeight
+		// can remain at the window size. Every RenderTarget.bindWrite(true) then sets an oversized viewport on the smaller
+		// framebuffer, so immediate-mode gbuffer geometry (entities/hand/items/hitboxes) rasterizes off-center. Realign
+		// viewWidth/viewHeight to the actual framebuffer size each frame so all downstream binds use the correct viewport.
+		com.mojang.blaze3d.pipeline.RenderTarget paucMainTarget = Minecraft.getInstance().getMainRenderTarget();
+		if (paucMainTarget != null
+			&& (paucMainTarget.viewWidth != paucMainTarget.width || paucMainTarget.viewHeight != paucMainTarget.height)) {
+			paucMainTarget.viewWidth = paucMainTarget.width;
+			paucMainTarget.viewHeight = paucMainTarget.height;
+		}
+
 		DHCompat.checkFrame();
 
 		IrisTimeUniforms.updateTime();

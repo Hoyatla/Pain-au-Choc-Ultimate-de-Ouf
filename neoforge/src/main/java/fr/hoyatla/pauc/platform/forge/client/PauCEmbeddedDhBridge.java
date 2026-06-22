@@ -15,6 +15,12 @@ import com.seibel.distanthorizons.api.enums.rendering.EDhApiTransparency;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiDistantGeneratorMode;
 import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfig;
 import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfigValue;
+import com.seibel.distanthorizons.common.wrappers.world.ClientLevelWrapper_forge;
+import com.seibel.distanthorizons.core.api.internal.SharedApi;
+import com.seibel.distanthorizons.core.level.IDhClientLevel;
+import com.seibel.distanthorizons.core.pos.DhSectionPos;
+import com.seibel.distanthorizons.core.world.IDhClientWorld;
+import com.seibel.distanthorizons.core.wrapperInterfaces.world.IClientLevelWrapper;
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
@@ -36,6 +42,8 @@ public final class PauCEmbeddedDhBridge {
 	private static final Logger LOGGER = LogUtils.getLogger();
 	private static volatile BridgeState state = BridgeState.unavailable("not-configured");
 	private static volatile int lastConfiguredTarget = -1;
+	private static volatile int lastConfiguredFillTargetDistance = -1;
+	private static volatile long lastConfiguredFillTargetChangedAtMillis;
 	private static volatile LodRenderGeometrySignature lastRenderGeometrySignature;
 	private static volatile boolean loggedWaitingForDh;
 	private static volatile boolean loggedFarClipFadeOverride;
@@ -53,7 +61,15 @@ public final class PauCEmbeddedDhBridge {
 	private static volatile Boolean lastLoggedDistantCloudPolicy;
 	private static volatile Boolean lastLoggedDistantCloudShaderFallback;
 	private static volatile boolean loggedMissingCoreConfigOverride;
+	private static volatile boolean loggedLocalWorldGenSessionRecovery;
+	private static volatile String lastLoggedLocalWorldGenGate = "";
+	private static volatile long lastLocalWorldgenSeedAtMillis;
+	private static volatile long lastLocalWorldgenSeedKey;
+	private static volatile long lastLocalWorldgenRangeKey = Long.MIN_VALUE;
+	private static volatile int lastLocalWorldgenCenterSectionX = Integer.MIN_VALUE;
+	private static volatile int lastLocalWorldgenCenterSectionZ = Integer.MIN_VALUE;
 	private static volatile boolean disabledRenderingApplied;
+	private static final Object LOCAL_WORLDGEN_SEED_LOCK = new Object();
 	private static volatile DhGpuUploadState cachedGpuUploadState;
 	private static volatile long cachedGpuUploadStateAtMillis;
 	private static final String FAST_THREADS_PROPERTY = "pauc.lod.generationThreads";
@@ -91,6 +107,10 @@ public final class PauCEmbeddedDhBridge {
 	private static final String ROUND_HORIZON_FOG_DENSITY_PROPERTY = "pauc.lod.roundHorizonFogDensity";
 	private static final String DIRECT_GPU_OPENGL_RENDERER_PROPERTY = "pauc.lod.directGpuOpenGlRenderer";
 	private static final String DIRECT_GPU_UPLOAD_STATE_CACHE_MS_PROPERTY = "pauc.lod.directGpuUploadStateCacheMs";
+	private static final String LOCAL_WORLDGEN_SESSION_RECOVERY_PROPERTY = "pauc.lod.localWorldgenSessionRecovery";
+	private static final String LOCAL_WORLDGEN_SEED_RECOVERY_PROPERTY = "pauc.lod.localWorldgenSeedRecovery";
+	private static final String LOCAL_WORLDGEN_SEED_INTERVAL_MS_PROPERTY = "pauc.lod.localWorldgenSeedIntervalMs";
+	private static final String LOCAL_WORLDGEN_SEED_MAX_REQUESTS_PROPERTY = "pauc.lod.localWorldgenSeedMaxRequests";
 	private static final float DEFAULT_ROUND_HORIZON_FOG_START_RATIO = 0.82F;
 	private static final float DEFAULT_ROUND_HORIZON_FOG_MIN = 0.0F;
 	private static final float DEFAULT_ROUND_HORIZON_FOG_MAX = 1.0F;
@@ -148,6 +168,7 @@ public final class PauCEmbeddedDhBridge {
 	private static final String DH_RENDERING_API_FIELD = "renderingApi";
 	private static final String COARSE_FIRST_FILL_PROPERTY = "pauc.lod.coarseFirstFill";
 	private static final String COARSE_FILL_REQUEST_RATE_PROPERTY = "pauc.lod.coarseFillRequestRate";
+	private static final String LOCAL_WORLDGEN_BUSY_TOP_UP_MAX_REQUESTS_PROPERTY = "pauc.lod.localWorldgenBusyTopUpMaxRequests";
 	private static final String FOG_PRELOAD_EXTRA_CHUNKS_PROPERTY = "pauc.lod.fogPreloadGenerationExtraChunks";
 	private static final String MAX_GENERATION_REQUEST_BLOCKS_PROPERTY = "pauc.lod.maxGenerationRequestBlocks";
 	private static final String COARSE_FILL_RENDER_REFRESH_PROPERTY = "pauc.lod.coarseFillRenderRefresh";
@@ -250,6 +271,8 @@ public final class PauCEmbeddedDhBridge {
 	public static void reset() {
 		state = BridgeState.unavailable("reset");
 		lastConfiguredTarget = -1;
+		lastConfiguredFillTargetDistance = -1;
+		lastConfiguredFillTargetChangedAtMillis = 0L;
 		lastRenderGeometrySignature = null;
 		lastStableRuntimeSettings = null;
 		pendingRuntimeSettings = null;
@@ -259,6 +282,11 @@ public final class PauCEmbeddedDhBridge {
 		lastLoggedDistantCloudShaderFallback = null;
 		lastLoggedGenerationPolicy = "";
 		disabledRenderingApplied = false;
+		lastLocalWorldgenSeedAtMillis = 0L;
+		lastLocalWorldgenSeedKey = 0L;
+		lastLocalWorldgenRangeKey = Long.MIN_VALUE;
+		lastLocalWorldgenCenterSectionX = Integer.MIN_VALUE;
+		lastLocalWorldgenCenterSectionZ = Integer.MIN_VALUE;
 	}
 
 	public static void resetPresentationStability(String reason) {
@@ -412,6 +440,13 @@ public final class PauCEmbeddedDhBridge {
 			LOGGER.info("PauC embedded DH bridge disabled LOD rendering: {}.", status);
 		}
 		lastConfiguredTarget = -1;
+		lastConfiguredFillTargetDistance = -1;
+		lastConfiguredFillTargetChangedAtMillis = 0L;
+		lastLocalWorldgenSeedAtMillis = 0L;
+		lastLocalWorldgenSeedKey = 0L;
+		lastLocalWorldgenRangeKey = Long.MIN_VALUE;
+		lastLocalWorldgenCenterSectionX = Integer.MIN_VALUE;
+		lastLocalWorldgenCenterSectionZ = Integer.MIN_VALUE;
 		state = BridgeState.unavailable(status);
 	}
 
@@ -436,6 +471,7 @@ public final class PauCEmbeddedDhBridge {
 		GenerationFillPolicyState fillPolicyState = configureGenerationFillPolicy(targetDistance);
 		setDhCoreConfigValueWithoutSaving(DH_MULTI_THREADING_CONFIG_CLASS, DH_NUMBER_OF_THREADS_FIELD, runtimeSettings.threadCount());
 		setDhCoreConfigValueWithoutSaving(DH_MULTI_THREADING_CONFIG_CLASS, DH_THREAD_RUN_TIME_RATIO_FIELD, runtimeSettings.threadRuntimeRatio());
+		stabilizeEmbeddedLocalWorldGenSession();
 		clearRenderCacheIfGeometryChanged(runtimeSettings);
 		return fillPolicyState;
 	}
@@ -615,13 +651,22 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	private static GenerationFillPolicyState configureGenerationFillPolicy(int targetDistance) {
-		int requestRateLimit = PauCLodClientSettings.generationRequestRateLimit();
+		int baseRequestRateLimit = PauCLodClientSettings.generationRequestRateLimit();
+		int requestRateLimit = baseRequestRateLimit;
 		boolean directFill = PauCClientFrontierWarmupManager.isDirectHorizonFillActive(targetDistance);
 		boolean activeTravelFill = PauCClientFrontierWarmupManager.isActiveTravelFill();
 		boolean fpsFirstVanilla = PauCClientChunkPriorityScorer.isFpsFirstVanillaMode();
 		boolean shaderRuntime = isShaderPackRuntimeInUse();
 		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
 		boolean queueBackedUp = isDirectFillQueueBackedUp();
+		double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.backlogPressure()
+			: 0.0D;
+		double measuredThroughput = PauCEmbeddedLodRuntimeDiagnostics.completionsPerSecond();
+		boolean nearCoverageDebt = PauCClientFrontierWarmupManager.hasNearCoverageDebt();
+		boolean coverageDebt = nearCoverageDebt || PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt();
+		int fillTargetDistance = effectiveGenerationTargetDistanceChunks(targetDistance, shaderFallback);
+		lastConfiguredFillTargetDistance = fillTargetDistance;
 		boolean coarseFillCatchup = shaderFallback
 			|| directFill
 			|| PauCClientChunkPriorityScorer.isMovementCatchupActive()
@@ -657,12 +702,21 @@ public final class PauCEmbeddedDhBridge {
 			4096,
 			32768
 		);
-		int activeFillRadius = PauCClientFrontierWarmupManager.activeFillRadiusChunks(targetDistance);
-		int requestedFillRadius = PauCClientFrontierWarmupManager.requestedFillRadiusChunks(targetDistance);
-		int backgroundFillRadius = PauCClientFrontierWarmupManager.backgroundFillRadiusChunks(targetDistance);
+		int activeFillRadius = PauCClientFrontierWarmupManager.activeFillRadiusChunks(fillTargetDistance);
+		int requestedFillRadius = PauCClientFrontierWarmupManager.requestedFillRadiusChunks(fillTargetDistance);
+		int backgroundFillRadius = PauCClientFrontierWarmupManager.backgroundFillRadiusChunks(fillTargetDistance);
+		boolean fillBackpressure = queueBackedUp || (measuredThroughput > 0.5D && backlogPressure >= 0.18D);
+		if (directFill && fillBackpressure && !nearCoverageDebt) {
+			int requestLead = readInt("pauc.lod.directHorizonBacklogRequestedLeadChunks", activeTravelFill ? 2 : 1, 0, 12);
+			int backgroundLead = readInt("pauc.lod.directHorizonBacklogBackgroundLeadChunks", queueBackedUp ? 0 : 1, 0, 8);
+			int preloadCeiling = readInt("pauc.lod.directHorizonBacklogPreloadCeilingChunks", activeTravelFill ? 10 : 6, 0, 48);
+			requestedFillRadius = Math.min(requestedFillRadius, Math.max(activeFillRadius, activeFillRadius + requestLead));
+			backgroundFillRadius = Math.min(backgroundFillRadius, Math.max(requestedFillRadius, requestedFillRadius + backgroundLead));
+			preloadExtraChunks = Math.min(preloadExtraChunks, preloadCeiling);
+		}
 		int requestRadiusChunks = directFill
 			? Math.max(activeFillRadius, requestedFillRadius)
-			: Math.min(targetDistance, Math.max(requestedFillRadius, PauCLodHorizonState.currentRange().lodStartChunk()));
+			: Math.min(fillTargetDistance, Math.max(requestedFillRadius, PauCLodHorizonState.currentRange().lodStartChunk()));
 		int requestDistanceBlocks = clampInt((requestRadiusChunks + preloadExtraChunks) * 16, 256, maxRequestBlocks);
 		if (directFill && fpsFirstVanilla && queueBackedUp) {
 			int backlogLeadChunks = readInt("pauc.lod.directHorizonBacklogRequestLeadChunks", activeTravelFill ? 12 : 6, 0, 48);
@@ -688,14 +742,27 @@ public final class PauCEmbeddedDhBridge {
 			);
 			requestRateLimit = Math.max(requestRateLimit, directFillRate);
 		}
+		int adaptiveFillRateCeiling = adaptiveFillRequestRateCeiling(
+			baseRequestRateLimit,
+			directFill,
+			activeTravelFill,
+			shaderRuntime,
+			queueBackedUp,
+			coverageDebt,
+			measuredThroughput
+		);
+		requestRateLimit = Math.max(baseRequestRateLimit, Math.min(requestRateLimit, adaptiveFillRateCeiling));
 		boolean coarseFirstFill = readBoolean(COARSE_FIRST_FILL_PROPERTY, true);
 		boolean fillHoles = PauCLodClientSettings.fillLodHoles();
 		boolean nSizedGeneration = PauCLodClientSettings.enableNSizeGeneration();
+		PauCLodHorizonState.setShaderFallbackVisualEndChunk(shaderFallback ? fillTargetDistance : -1);
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_CONFIG_CLASS, DH_GENERATION_REQUEST_RATE_LIMIT_FIELD, requestRateLimit);
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_CONFIG_CLASS, DH_MAX_GENERATION_REQUEST_DISTANCE_FIELD, requestDistanceBlocks);
 		setDhCoreConfigValueWithoutSaving(DH_SERVER_EXPERIMENTAL_CONFIG_CLASS, DH_ENABLE_N_SIZE_GENERATION_FIELD, nSizedGeneration);
 		setDhCoreConfigValueWithoutSaving(DH_LOD_BUILDING_EXPERIMENTAL_CONFIG_CLASS, DH_UPSAMPLE_LOWER_DETAIL_LODS_FIELD, fillHoles);
 		String generationPolicySignature = targetDistance
+			+ ":"
+			+ fillTargetDistance
 			+ ":"
 			+ activeFillRadius
 			+ ":"
@@ -716,8 +783,9 @@ public final class PauCEmbeddedDhBridge {
 			loggedRoundHorizonGenerationPolicy = true;
 			lastLoggedGenerationPolicy = generationPolicySignature;
 			LOGGER.info(
-				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, activeFillBand={} chunks, generationRequest={} blocks, preloadExtra={} chunks, requestRate={}/s, nSized={}, fillHoles={}, coarseFirst={}, queueBackedUp={}.",
+				"PauC embedded DH bridge keeps the round LOD horizon filled: renderRadius={} chunks, fillTarget={} chunks, activeFillBand={} chunks, generationRequest={} blocks, preloadExtra={} chunks, requestRate={}/s, nSized={}, fillHoles={}, coarseFirst={}, queueBackedUp={}.",
 				targetDistance,
+				fillTargetDistance,
 				activeFillRadius,
 				requestDistanceBlocks,
 				preloadExtraChunks,
@@ -748,6 +816,63 @@ public final class PauCEmbeddedDhBridge {
 		);
 	}
 
+	private static int adaptiveFillRequestRateCeiling(
+		int baseRequestRateLimit,
+		boolean directFill,
+		boolean activeTravelFill,
+		boolean shaderRuntime,
+		boolean queueBackedUp,
+		boolean coverageDebt,
+		double measuredThroughput
+	) {
+		if (measuredThroughput > 0.5D) {
+			double headroom = readDouble(
+				queueBackedUp ? "pauc.lod.fillThroughputBacklogHeadroom" : "pauc.lod.fillThroughputHeadroom",
+				queueBackedUp
+					? 1.25D
+					: directFill
+						? coverageDebt ? 2.40D : activeTravelFill ? 2.10D : 1.80D
+						: 1.55D,
+				1.0D,
+				6.0D
+			);
+			int minRate = readInt(
+				"pauc.lod.fillThroughputFloor",
+				coverageDebt
+					? shaderRuntime ? 224 : 288
+					: shaderRuntime ? 128 : 160,
+				32,
+				2048
+			);
+			int maxRate = readInt(
+				"pauc.lod.fillThroughputCeiling",
+				directFill
+					? shaderRuntime ? 640 : 1024
+					: shaderRuntime ? 448 : 768,
+				64,
+				4096
+			);
+			int adaptive = clampInt((int) Math.ceil(measuredThroughput * headroom), minRate, maxRate);
+			return Math.max(baseRequestRateLimit, adaptive);
+		}
+
+		int startupCeiling = readInt(
+			directFill
+				? queueBackedUp ? "pauc.lod.directHorizonBacklogStartupRateCap" : "pauc.lod.directHorizonStartupRateCap"
+				: "pauc.lod.coarseFillStartupRateCap",
+			directFill
+				? queueBackedUp
+					? shaderRuntime ? 256 : 320
+					: coverageDebt || activeTravelFill
+						? shaderRuntime ? 512 : 768
+						: shaderRuntime ? 384 : 512
+				: shaderRuntime ? 256 : 320,
+			64,
+			4096
+		);
+		return Math.max(baseRequestRateLimit, startupCeiling);
+	}
+
 	private static void configureDistantCloudRendering() {
 		boolean shaderFallback = isShaderPackRuntimeInUse() && PauCLodShaderContext.isFallbackActive();
 		boolean genericLods = readBoolean(GENERIC_RENDERING_PROPERTY, true)
@@ -770,10 +895,13 @@ public final class PauCEmbeddedDhBridge {
 		boolean shaderRuntime = isShaderPackRuntimeInUse();
 		boolean shaderFallback = shaderRuntime && PauCLodShaderContext.isFallbackActive();
 		boolean keepUnderVanilla = PauCLodNearClipOverride.shouldKeepLodsUnderVanilla();
-		boolean coverageRecovery = !shaderRuntime
-			&& !keepUnderVanilla
+		boolean travelRecovery = shaderRuntime
+			&& PauCClientFrontierWarmupManager.isActiveTravelFill()
+			&& !PauCEmbeddedLodRuntimeDiagnostics.canReleaseFillPresentationDuringCoverageDebt();
+		boolean coverageRecovery = !keepUnderVanilla
 			&& (PauCClientFrontierWarmupManager.hasNearCoverageDebt()
-				|| PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage());
+				|| PauCClientFrontierWarmupManager.shouldHoldPresentationForCoverage()
+				|| travelRecovery);
 		float overdrawPrevention = (float) readDouble(
 			shaderFallback ? SHADER_FALLBACK_OVERDRAW_PREVENTION_PROPERTY : shaderRuntime ? SHADER_OVERDRAW_PREVENTION_PROPERTY : RELIEF_OVERDRAW_PREVENTION_PROPERTY,
 			keepUnderVanilla || shaderFallback ? -1.0D : shaderRuntime ? 0.80D : 0.88D,
@@ -795,11 +923,11 @@ public final class PauCEmbeddedDhBridge {
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_OVERDRAW_PREVENTION_FIELD, overdrawPrevention)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD, Boolean.FALSE);
 
-		String transitionSignature = shaderRuntime + ":" + shaderFallback + ":" + keepUnderVanilla + ":" + coverageRecovery + ":" + fadeMode + ":" + overdrawPrevention;
+		String transitionSignature = shaderRuntime + ":" + shaderFallback + ":" + keepUnderVanilla + ":" + coverageRecovery + ":" + travelRecovery + ":" + fadeMode + ":" + overdrawPrevention;
 		if (configured && (!loggedSeamlessTransitionOverride || !transitionSignature.equals(lastLoggedSeamlessTransitionPolicy))) {
 			loggedSeamlessTransitionOverride = true;
 			lastLoggedSeamlessTransitionPolicy = transitionSignature;
-			LOGGER.info("PauC embedded DH bridge configured vanilla-to-LOD boundary: shaderRuntime={}, shaderFallback={}, keepUnderVanilla={}, coverageRecovery={}, vanillaFade={}, overdraw={}, fastMovementOverdraw=false.", shaderRuntime, shaderFallback, keepUnderVanilla, coverageRecovery, fadeMode, overdrawPrevention);
+			LOGGER.info("PauC embedded DH bridge configured vanilla-to-LOD boundary: shaderRuntime={}, shaderFallback={}, keepUnderVanilla={}, coverageRecovery={}, travelRecovery={}, vanillaFade={}, overdraw={}, fastMovementOverdraw=false.", shaderRuntime, shaderFallback, keepUnderVanilla, coverageRecovery, travelRecovery, fadeMode, overdrawPrevention);
 		}
 	}
 
@@ -1051,6 +1179,550 @@ public final class PauCEmbeddedDhBridge {
 		}
 	}
 
+	private static void stabilizeEmbeddedLocalWorldGenSession() {
+		stabilizeEmbeddedLocalWorldGenSession(false);
+	}
+
+	private static void stabilizeEmbeddedLocalWorldGenSession(boolean queueDrivenRecovery) {
+		if (!readBoolean(LOCAL_WORLDGEN_SESSION_RECOVERY_PROPERTY, true)) {
+			return;
+		}
+
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null || !minecraft.isLocalServer()) {
+			return;
+		}
+
+		try {
+			IDhClientWorld clientWorld = SharedApi.tryGetDhClientWorld();
+			IClientLevelWrapper levelWrapper = ClientLevelWrapper_forge.getWrapperIfDifferent(null, minecraft.level);
+			IDhClientLevel dhLevel = clientWorld != null && levelWrapper != null ? clientWorld.getClientLevel(levelWrapper) : null;
+			if (dhLevel == null) {
+				return;
+			}
+
+			String gateState = describeEmbeddedWorldGenGate(dhLevel);
+			if (!gateState.equals(lastLoggedLocalWorldGenGate)) {
+				lastLoggedLocalWorldGenGate = gateState;
+				LOGGER.info("PauC embedded local PL worldgen gate: {}.", gateState);
+			}
+
+			if (!dhLevel.isRendering()) {
+				return;
+			}
+
+			forceEmbeddedLocalWorldGenWritable();
+
+			Object networkState = getFieldValue(dhLevel, "networkState");
+			if (networkState != null && !readBooleanFieldValue(networkState, "configReceived")) {
+				Object sessionConfig = getFieldValue(networkState, "sessionConfig");
+				if (sessionConfig == null) {
+					java.lang.reflect.Field sessionConfigField = findField(networkState.getClass(), "sessionConfig");
+					if (sessionConfigField != null) {
+						sessionConfig = sessionConfigField.getType().getDeclaredConstructor().newInstance();
+						sessionConfigField.setAccessible(true);
+						sessionConfigField.set(networkState, sessionConfig);
+					}
+				}
+
+				setEnumFieldIfPresent(networkState, "serverSupportStatus", "FULL");
+				setBooleanFieldValue(networkState, "configReceived", true);
+				if (!loggedLocalWorldGenSessionRecovery) {
+					loggedLocalWorldGenSessionRecovery = true;
+					LOGGER.info("PauC re-armed the embedded PL local session so distant worldgen can start without waiting for the hidden local handshake.");
+				}
+			}
+
+			if (!queueDrivenRecovery && PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+				return;
+			}
+
+			seedEmbeddedLocalWorldGenRequests(dhLevel);
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			LOGGER.debug("PauC could not stabilize the embedded PL local worldgen session.", throwable);
+		}
+	}
+
+	public static void recoverEmbeddedLocalWorldGenSessionFromQueue(String source) {
+		if (source == null || source.isBlank()) {
+			source = "queue";
+		}
+		try {
+			stabilizeEmbeddedLocalWorldGenSession(true);
+		} catch (RuntimeException throwable) {
+			LOGGER.debug("PauC could not recover the embedded PL local worldgen session from {}.", source, throwable);
+		}
+	}
+
+	private static void forceEmbeddedLocalWorldGenWritable() {
+		try {
+			Class<?> worldProxyClass = Class.forName("com.seibel.distanthorizons.core.world.PlApiWorldProxy");
+			java.lang.reflect.Field instanceField = worldProxyClass.getDeclaredField("INSTANCE");
+			instanceField.setAccessible(true);
+			Object worldProxy = instanceField.get(null);
+			if (worldProxy == null) {
+				return;
+			}
+			worldProxy.getClass().getMethod("setReadOnly", boolean.class, boolean.class).invoke(worldProxy, false, false);
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			LOGGER.debug("PauC could not force the embedded PL world proxy back to writable mode.", throwable);
+		}
+	}
+
+	private static void seedEmbeddedLocalWorldGenRequests(IDhClientLevel dhLevel) {
+		if (!readBoolean(LOCAL_WORLDGEN_SEED_RECOVERY_PROPERTY, true)) {
+			return;
+		}
+		if (!PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return;
+		}
+
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.player == null) {
+			return;
+		}
+
+		PauCLodRange range = PauCLodHorizonState.currentRange();
+		if (range == null || !range.enabled()) {
+			return;
+		}
+
+		Object serverSide = getFieldValue(dhLevel, "serverside");
+		Object fullDataFileHandler = getFieldValue(serverSide, "fullDataFileHandler");
+		if (fullDataFileHandler == null) {
+			return;
+		}
+
+		synchronized (LOCAL_WORLDGEN_SEED_LOCK) {
+			byte rootDetailLevel = invokeByteMethod(fullDataFileHandler, "lowestDataDetailLevel", (byte) 6);
+			int cellWidthBlocks = Math.max(16, DhSectionPos.getDetailLevelWidthInBlocks(rootDetailLevel));
+			int centerSectionX = Math.floorDiv((int) Math.floor(minecraft.player.getX()), cellWidthBlocks);
+			int centerSectionZ = Math.floorDiv((int) Math.floor(minecraft.player.getZ()), cellWidthBlocks);
+			int requestRadiusChunks = stableGenerationTargetDistanceChunks(range);
+			int requestRadiusBlocks = Math.max(16, requestRadiusChunks * 16);
+			int radiusSections = Math.max(1, (requestRadiusBlocks + cellWidthBlocks - 1) / cellWidthBlocks);
+			double requestRadiusChunksWithIntersection = requestRadiusBlocks / 16.0D;
+			boolean queueBusy = PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() > 0
+				|| PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() > 0
+				|| PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() > 0;
+			long rangeKey = 1469598103934665603L;
+			rangeKey = mixSeedKey(rangeKey, Byte.toUnsignedInt(rootDetailLevel));
+			rangeKey = mixSeedKey(rangeKey, requestRadiusChunks);
+			rangeKey = mixSeedKey(rangeKey, radiusSections);
+			rangeKey = mixSeedKey(rangeKey, range.lodStartChunk());
+			rangeKey = mixSeedKey(rangeKey, range.lodEndChunk());
+			long seedKey = rangeKey;
+			seedKey = mixSeedKey(seedKey, centerSectionX);
+			seedKey = mixSeedKey(seedKey, centerSectionZ);
+			long now = System.currentTimeMillis();
+			double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
+			boolean rangeChanged = rangeKey != lastLocalWorldgenRangeKey;
+			int centerStepDistanceSections = sectionStepDistance(
+				centerSectionX,
+				centerSectionZ,
+				lastLocalWorldgenCenterSectionX,
+				lastLocalWorldgenCenterSectionZ
+			);
+			long intervalMs = readInt(LOCAL_WORLDGEN_SEED_INTERVAL_MS_PROPERTY, 1_000, 100, 10_000);
+			long busyIntervalMs = readInt(
+				"pauc.lod.localWorldgenBusyTopUpIntervalMs",
+				backlogPressure >= 0.55D ? 2_500 : 1_500,
+				250,
+				30_000
+			);
+			int busyStrideSections = readInt(
+				"pauc.lod.localWorldgenBusyTopUpStrideSections",
+				backlogPressure >= 0.75D ? 3 : backlogPressure >= 0.35D ? 2 : 1,
+				1,
+				16
+			);
+			if (!rangeChanged) {
+				long requiredIntervalMs = queueBusy ? busyIntervalMs : intervalMs;
+				if (now - lastLocalWorldgenSeedAtMillis < requiredIntervalMs) {
+					return;
+				}
+				if (queueBusy && centerStepDistanceSections < busyStrideSections) {
+					return;
+				}
+			}
+
+			int maxRequests = readInt(LOCAL_WORLDGEN_SEED_MAX_REQUESTS_PROPERTY, 512, 32, 4096);
+			if (queueBusy) {
+				int queuePressureTopUpBudget = readInt(
+					LOCAL_WORLDGEN_BUSY_TOP_UP_MAX_REQUESTS_PROPERTY,
+					backlogPressure >= 0.75D ? 48 : backlogPressure >= 0.55D ? 64 : 96,
+					16,
+					1024
+				);
+				maxRequests = Math.min(maxRequests, queuePressureTopUpBudget);
+			}
+			int queuedRequests = 0;
+			int directRootRequests = 0;
+			int discoveredRequests = 0;
+			for (int ring = 0; ring <= radiusSections && queuedRequests < maxRequests; ring++) {
+				if (ring == 0) {
+					long rootPos = DhSectionPos.encode(rootDetailLevel, centerSectionX, centerSectionZ);
+					SeedQueueResult result = queueEmbeddedLocalWorldGenRoot(fullDataFileHandler, rootPos, maxRequests - queuedRequests);
+					queuedRequests += result.queuedRequests();
+					directRootRequests += result.directRootRequests();
+					discoveredRequests += result.discoveredRequests();
+					continue;
+				}
+
+				for (int dz = -ring; dz <= ring && queuedRequests < maxRequests; dz++) {
+					if (Math.abs(dz) == ring) {
+						for (int dx = -ring; dx <= ring && queuedRequests < maxRequests; dx++) {
+							if (!shouldSeedLocalWorldgenRoot(dx, dz, requestRadiusChunksWithIntersection, cellWidthBlocks)) {
+								continue;
+							}
+							long rootPos = DhSectionPos.encode(rootDetailLevel, centerSectionX + dx, centerSectionZ + dz);
+							SeedQueueResult result = queueEmbeddedLocalWorldGenRoot(fullDataFileHandler, rootPos, maxRequests - queuedRequests);
+							queuedRequests += result.queuedRequests();
+							directRootRequests += result.directRootRequests();
+							discoveredRequests += result.discoveredRequests();
+						}
+						continue;
+					}
+
+					for (int edge = 0; edge < 2 && queuedRequests < maxRequests; edge++) {
+						int dx = edge == 0 ? -ring : ring;
+						if (!shouldSeedLocalWorldgenRoot(dx, dz, requestRadiusChunksWithIntersection, cellWidthBlocks)) {
+							continue;
+						}
+						long rootPos = DhSectionPos.encode(rootDetailLevel, centerSectionX + dx, centerSectionZ + dz);
+						SeedQueueResult result = queueEmbeddedLocalWorldGenRoot(fullDataFileHandler, rootPos, maxRequests - queuedRequests);
+						queuedRequests += result.queuedRequests();
+						directRootRequests += result.directRootRequests();
+						discoveredRequests += result.discoveredRequests();
+					}
+				}
+			}
+
+			lastLocalWorldgenSeedKey = seedKey;
+			lastLocalWorldgenRangeKey = rangeKey;
+			lastLocalWorldgenCenterSectionX = centerSectionX;
+			lastLocalWorldgenCenterSectionZ = centerSectionZ;
+			lastLocalWorldgenSeedAtMillis = now;
+			if (queuedRequests > 0) {
+				LOGGER.info(
+					"PauC re-seeded embedded PL local worldgen requests: queued={}, discovered={}, directRoots={}, detail={}, cell={} blocks, radius={} sections around player section ({}, {}), busy={}, requestRadius={} chunks.",
+					queuedRequests,
+					discoveredRequests,
+					directRootRequests,
+					Byte.toUnsignedInt(rootDetailLevel),
+					cellWidthBlocks,
+					radiusSections,
+					centerSectionX,
+					centerSectionZ,
+					queueBusy,
+					requestRadiusChunks
+				);
+			} else {
+				LOGGER.info(
+					"PauC embedded PL local worldgen reseed found no retrieval positions: detail={}, cell={} blocks, radius={} sections around player section ({}, {}), busy={}, requestRadius={} chunks.",
+					Byte.toUnsignedInt(rootDetailLevel),
+					cellWidthBlocks,
+					radiusSections,
+					centerSectionX,
+					centerSectionZ,
+					queueBusy,
+					requestRadiusChunks
+				);
+			}
+		}
+	}
+
+	private static SeedQueueResult queueEmbeddedLocalWorldGenRoot(Object fullDataFileHandler, long rootPos, int remainingBudget) {
+		if (fullDataFileHandler == null || remainingBudget <= 0) {
+			return SeedQueueResult.NONE;
+		}
+
+		Object positions = invokeObjectMethod(fullDataFileHandler, "getPositionsToRetrieve", new Class<?>[] { long.class }, rootPos);
+		int positionCount = invokeIntMethod(positions, "size", 0);
+		if (positionCount > 0) {
+			int queuedRequests = 0;
+			for (int index = 0; index < positionCount && queuedRequests < remainingBudget; index++) {
+				long requestPos = invokeLongMethod(positions, "getLong", new Class<?>[] { int.class }, index, Long.MIN_VALUE);
+				if (requestPos == Long.MIN_VALUE) {
+					continue;
+				}
+				Object future = invokeObjectMethod(fullDataFileHandler, "queuePositionForRetrieval", new Class<?>[] { Long.class }, Long.valueOf(requestPos));
+				if (future != null) {
+					queuedRequests++;
+				}
+			}
+			return new SeedQueueResult(queuedRequests, 0, positionCount);
+		}
+
+		Object future = invokeObjectMethod(fullDataFileHandler, "queuePositionForRetrieval", new Class<?>[] { Long.class }, Long.valueOf(rootPos));
+		return future != null ? new SeedQueueResult(1, 1, 0) : SeedQueueResult.NONE;
+	}
+
+	private static long mixSeedKey(long seedKey, int value) {
+		long mixed = seedKey ^ (value & 0xFFFFFFFFL);
+		return mixed * 1099511628211L;
+	}
+
+	private static int effectiveGenerationTargetDistanceChunks(int targetDistance, boolean shaderFallback) {
+		PauCLodRange range = PauCLodHorizonState.currentRange();
+		if (range == null || !range.enabled()) {
+			return Math.max(PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, targetDistance);
+		}
+
+		int clampedTarget = Math.max(range.lodStartChunk(), targetDistance);
+		if (!shaderFallback) {
+			return clampedTarget;
+		}
+
+		int absoluteTarget = Math.max(range.lodStartChunk(), range.lodEndChunk());
+		if (clampedTarget <= absoluteTarget) {
+			return absoluteTarget;
+		}
+
+		int overflow = clampedTarget - absoluteTarget;
+		int defaultLeadChunks = PauCClientFrontierWarmupManager.isActiveTravelFill() ? 8 : 4;
+		if (PauCClientChunkPriorityScorer.isMovementCatchupActive()) {
+			defaultLeadChunks = Math.max(defaultLeadChunks, 6);
+		}
+		if (PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.backlogPressure();
+			if (backlogPressure >= 0.55D) {
+				defaultLeadChunks = Math.min(defaultLeadChunks, 2);
+			} else if (backlogPressure >= 0.35D) {
+				defaultLeadChunks = Math.min(defaultLeadChunks, 4);
+			}
+		}
+		int leadChunks = readInt("pauc.lod.shaderFallbackGenerationLeadChunks", defaultLeadChunks, 0, overflow);
+		leadChunks = stabilizeShaderFallbackLeadChunks(absoluteTarget, overflow, leadChunks);
+		return clampInt(absoluteTarget + leadChunks, absoluteTarget, clampedTarget);
+	}
+
+	private static int stabilizeShaderFallbackLeadChunks(int absoluteTarget, int overflow, int desiredLeadChunks) {
+		int clampedDesiredLead = clampInt(desiredLeadChunks, 0, overflow);
+		if (overflow <= 0) {
+			lastConfiguredFillTargetDistance = absoluteTarget;
+			lastConfiguredFillTargetChangedAtMillis = System.currentTimeMillis();
+			return 0;
+		}
+
+		int previousFillTargetDistance = lastConfiguredFillTargetDistance;
+		if (previousFillTargetDistance < absoluteTarget) {
+			int initialLead = clampedDesiredLead;
+			lastConfiguredFillTargetDistance = absoluteTarget + initialLead;
+			lastConfiguredFillTargetChangedAtMillis = System.currentTimeMillis();
+			return initialLead;
+		}
+
+		int previousLeadChunks = clampInt(previousFillTargetDistance - absoluteTarget, 0, overflow);
+		long now = System.currentTimeMillis();
+		long cooldownMs = readInt("pauc.lod.shaderFallbackLeadChangeCooldownMs", 2_500, 0, 30_000);
+		double backlogPressure = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.backlogPressure()
+			: 0.0D;
+		double shrinkPressure = readDouble("pauc.lod.shaderFallbackLeadShrinkPressure", 0.62D, 0.0D, 1.0D);
+		double growPressure = readDouble("pauc.lod.shaderFallbackLeadGrowPressure", 0.24D, 0.0D, 1.0D);
+		int stabilizedLeadChunks = previousLeadChunks;
+		if (clampedDesiredLead < previousLeadChunks) {
+			if (backlogPressure >= shrinkPressure && now - lastConfiguredFillTargetChangedAtMillis >= cooldownMs) {
+				stabilizedLeadChunks = clampedDesiredLead;
+			}
+		} else if (clampedDesiredLead > previousLeadChunks) {
+			if (backlogPressure <= growPressure && now - lastConfiguredFillTargetChangedAtMillis >= cooldownMs) {
+				stabilizedLeadChunks = clampedDesiredLead;
+			}
+		}
+
+		int stabilizedFillTargetDistance = absoluteTarget + stabilizedLeadChunks;
+		if (stabilizedFillTargetDistance != previousFillTargetDistance) {
+			lastConfiguredFillTargetDistance = stabilizedFillTargetDistance;
+			lastConfiguredFillTargetChangedAtMillis = now;
+		}
+		return stabilizedLeadChunks;
+	}
+
+	private static int stableGenerationTargetDistanceChunks(PauCLodRange range) {
+		if (range == null || !range.enabled()) {
+			return Math.max(PauCLodRange.MIN_RENDER_DISTANCE_CHUNKS, lastConfiguredFillTargetDistance);
+		}
+
+		int configuredTargetDistance = lastConfiguredFillTargetDistance;
+		if (configuredTargetDistance >= range.lodEndChunk()) {
+			return clampInt(configuredTargetDistance, range.lodEndChunk(), range.roundHorizonEndChunk());
+		}
+
+		boolean shaderFallback = isShaderPackRuntimeInUse() && PauCLodShaderContext.isFallbackActive();
+		return effectiveGenerationTargetDistanceChunks(range.roundHorizonEndChunk(), shaderFallback);
+	}
+
+	private static int sectionStepDistance(int sectionX, int sectionZ, int previousSectionX, int previousSectionZ) {
+		if (previousSectionX == Integer.MIN_VALUE || previousSectionZ == Integer.MIN_VALUE) {
+			return Integer.MAX_VALUE;
+		}
+		return Math.max(Math.abs(sectionX - previousSectionX), Math.abs(sectionZ - previousSectionZ));
+	}
+
+	private static boolean shouldSeedLocalWorldgenRoot(int deltaSectionX, int deltaSectionZ, double radiusChunks, int cellWidthBlocks) {
+		if (deltaSectionX == 0 && deltaSectionZ == 0) {
+			return true;
+		}
+
+		double chunksPerSection = cellWidthBlocks / 16.0D;
+		double centerXChunks = deltaSectionX * chunksPerSection;
+		double centerZChunks = deltaSectionZ * chunksPerSection;
+		double cellHalfDiagonalChunks = Math.sqrt(2.0D) * chunksPerSection * 0.5D;
+		return Math.hypot(centerXChunks, centerZChunks) - cellHalfDiagonalChunks <= radiusChunks;
+	}
+
+	private static String describeEmbeddedWorldGenGate(IDhClientLevel dhLevel) {
+		Object networkState = getFieldValue(dhLevel, "networkState");
+		boolean networkPresent = networkState != null;
+		boolean configReceived = readBooleanFieldValue(networkState, "configReceived");
+		Object sessionConfig = networkPresent ? getFieldValue(networkState, "sessionConfig") : null;
+		boolean distantGenerationEnabled = invokeBooleanMethod(sessionConfig, "isDistantGenerationEnabled", true);
+		return "localWorldgen[level="
+			+ dhLevel.getClass().getSimpleName()
+			+ ", rendering="
+			+ dhLevel.isRendering()
+			+ ", network="
+			+ networkPresent
+			+ ", ready="
+			+ configReceived
+			+ ", distantGen="
+			+ distantGenerationEnabled
+			+ "]";
+	}
+
+	private static boolean invokeBooleanMethod(Object target, String methodName, boolean fallback) {
+		if (target == null) {
+			return fallback;
+		}
+		try {
+			Object value = target.getClass().getMethod(methodName).invoke(target);
+			return value instanceof Boolean booleanValue ? booleanValue : fallback;
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return fallback;
+		}
+	}
+
+	private static byte invokeByteMethod(Object target, String methodName, byte fallback) {
+		if (target == null) {
+			return fallback;
+		}
+		try {
+			Object value = target.getClass().getMethod(methodName).invoke(target);
+			return value instanceof Number number ? number.byteValue() : fallback;
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return fallback;
+		}
+	}
+
+	private static int invokeIntMethod(Object target, String methodName, int fallback) {
+		if (target == null) {
+			return fallback;
+		}
+		try {
+			Object value = target.getClass().getMethod(methodName).invoke(target);
+			return value instanceof Number number ? number.intValue() : fallback;
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return fallback;
+		}
+	}
+
+	private static long invokeLongMethod(Object target, String methodName, Class<?>[] parameterTypes, Object argument, long fallback) {
+		if (target == null) {
+			return fallback;
+		}
+		try {
+			Object value = target.getClass().getMethod(methodName, parameterTypes).invoke(target, argument);
+			return value instanceof Number number ? number.longValue() : fallback;
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return fallback;
+		}
+	}
+
+	private static Object invokeObjectMethod(Object target, String methodName, Class<?>[] parameterTypes, Object argument) {
+		if (target == null) {
+			return null;
+		}
+		try {
+			return target.getClass().getMethod(methodName, parameterTypes).invoke(target, argument);
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return null;
+		}
+	}
+
+	private static boolean readBooleanFieldValue(Object target, String fieldName) {
+		if (target == null) {
+			return false;
+		}
+		try {
+			java.lang.reflect.Field field = findField(target.getClass(), fieldName);
+			if (field == null) {
+				return false;
+			}
+			field.setAccessible(true);
+			return field.getBoolean(target);
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return false;
+		}
+	}
+
+	private static void setBooleanFieldValue(Object target, String fieldName, boolean value) throws ReflectiveOperationException {
+		java.lang.reflect.Field field = findField(target.getClass(), fieldName);
+		if (field == null) {
+			return;
+		}
+		field.setAccessible(true);
+		field.setBoolean(target, value);
+	}
+
+	private static void setEnumFieldIfPresent(Object target, String fieldName, String enumName) throws ReflectiveOperationException {
+		java.lang.reflect.Field field = findField(target.getClass(), fieldName);
+		if (field == null) {
+			return;
+		}
+		field.setAccessible(true);
+		Class<?> enumType = field.getType();
+		if (!enumType.isEnum()) {
+			return;
+		}
+		for (Object constant : enumType.getEnumConstants()) {
+			Enum<?> enumValue = (Enum<?>) constant;
+			if (enumValue.name().equals(enumName)) {
+				field.set(target, enumValue);
+				return;
+			}
+		}
+	}
+
+	private static Object getFieldValue(Object target, String fieldName) {
+		if (target == null) {
+			return null;
+		}
+		try {
+			java.lang.reflect.Field field = findField(target.getClass(), fieldName);
+			if (field == null) {
+				return null;
+			}
+			field.setAccessible(true);
+			return field.get(target);
+		} catch (ReflectiveOperationException | LinkageError throwable) {
+			return null;
+		}
+	}
+
+	private static java.lang.reflect.Field findField(Class<?> type, String fieldName) {
+		Class<?> current = type;
+		while (current != null) {
+			try {
+				return current.getDeclaredField(fieldName);
+			} catch (NoSuchFieldException ignored) {
+				current = current.getSuperclass();
+			}
+		}
+		return null;
+	}
+
 	private static DhGpuUploadState captureGpuUploadState() {
 		try {
 			Class<?> glProxyClass = Class.forName("com.seibel.distanthorizons.common.render.openGl.glObject.GLProxy");
@@ -1190,6 +1862,10 @@ public final class PauCEmbeddedDhBridge {
 		return PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() >= readInt("pauc.lod.directHorizonBacklogPendingChunks", 1536, 128, 32768)
 			|| PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() >= readInt("pauc.lod.directHorizonBacklogTasks", 128, 8, 8192)
 			|| PauCEmbeddedLodRuntimeDiagnostics.backlogPressure() >= readDouble("pauc.lod.directHorizonBacklogQueuePressure", 0.28D, 0.0D, 1.0D);
+	}
+
+	private record SeedQueueResult(int queuedRequests, int directRootRequests, int discoveredRequests) {
+		private static final SeedQueueResult NONE = new SeedQueueResult(0, 0, 0);
 	}
 
 	private record BridgeState(

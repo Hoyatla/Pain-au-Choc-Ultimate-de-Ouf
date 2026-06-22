@@ -5,7 +5,6 @@ import fr.hoyatla.pauc.lod.PauCShaderCapabilities;
 import fr.hoyatla.pauc.lod.PauCShaderProfileId;
 import net.irisshaders.iris.Iris;
 
-import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -27,6 +26,19 @@ public final class PauCShaderPackProgramPatches {
 		"clouds_history\\s*=\\s*max0\\s*\\(\\s*mix\\s*\\(\\s*current\\s*,\\s*history\\s*,\\s*history_weight\\s*\\)\\s*\\)\\s*;",
 		Pattern.MULTILINE
 	);
+	private static final Pattern PHOTON_BORDER_FOG_UNIFORM_DECLARATION = Pattern.compile(
+		"uniform\\s+int\\s+paucVanillaFogEndDistance\\s*;",
+		Pattern.MULTILINE
+	);
+	private static final Pattern PHOTON_BORDER_FOG_SHADOW_COMPENSATION = Pattern.compile(
+		"if\\s*\\(\\s*paucVanillaFogEndDistance\\s*>\\s*paucVanillaFogStartDistance\\s*&&\\s*"
+			+ "paucVanillaFogEndDistance\\s*>\\s*0\\s*\\)\\s*\\{\\s*"
+			+ "float\\s+shadow_fog_start\\s*=\\s*max\\s*\\(\\s*float\\s*\\(\\s*paucVanillaFogStartDistance\\s*\\)\\s*,\\s*32\\.0\\s*\\)\\s*;\\s*"
+			+ "float\\s+shadow_fog_end\\s*=\\s*max\\s*\\(\\s*float\\s*\\(\\s*paucVanillaFogEndDistance\\s*\\)\\s*,\\s*shadow_fog_start\\s*\\+\\s*16\\.0\\s*\\)\\s*;\\s*"
+			+ "float\\s+shadow_fog_blend\\s*=\\s*smoothstep\\s*\\(\\s*shadow_fog_start\\s*,\\s*shadow_fog_end\\s*,\\s*view_distance\\s*\\)\\s*;\\s*"
+			+ "fog\\s*\\*=\\s*1\\.0\\s*-\\s*0\\.82\\s*\\*\\s*shadow_fog_blend\\s*;\\s*\\}",
+		Pattern.MULTILINE
+	);
 	private static final Pattern PHOTON_CLOUD_RESULT_WRITE = Pattern.compile(
 		"clouds\\s*\\.\\s*xyz\\s*=\\s*result\\s*\\.\\s*scattering\\s*\\.\\s*xyz\\s*;\\s*"
 			+ "clouds\\s*\\.\\s*w\\s*=\\s*result\\s*\\.\\s*transmittance\\s*;",
@@ -35,10 +47,12 @@ public final class PauCShaderPackProgramPatches {
 	private static boolean photonCloudDepthPatchLogged;
 	private static boolean photonCloudHistoryPatchLogged;
 	private static boolean photonCloudEdgePatchLogged;
+	private static boolean photonShadowFogPatchLogged;
 	private static boolean paucNativeHeaderPatchLogged;
 	private static volatile int photonCloudDepthPatchCount;
 	private static volatile int photonCloudHistoryPatchCount;
 	private static volatile int photonCloudEdgePatchCount;
+	private static volatile int photonShadowFogPatchCount;
 	private static volatile int paucNativeHeaderPatchCount;
 	private static volatile PauCLodShaderProfiles.Family lastShaderFamily = PauCLodShaderProfiles.Family.GENERIC;
 	private static volatile PauCShaderProfileId lastProfileId = PauCShaderProfileId.SHADER_OFF;
@@ -77,7 +91,7 @@ public final class PauCShaderPackProgramPatches {
 			return source;
 		}
 		return switch (lastShaderFamily) {
-			case PHOTON -> patchPhotonClouds(programName, source);
+			case PHOTON -> patchPhotonPrograms(programName, source);
 			default -> source;
 		};
 	}
@@ -93,6 +107,8 @@ public final class PauCShaderPackProgramPatches {
 			+ photonCloudHistoryPatchCount
 			+ ", photonEdge="
 			+ photonCloudEdgePatchCount
+			+ ", photonShadowFog="
+			+ photonShadowFogPatchCount
 			+ ", nativeHeader="
 			+ paucNativeHeaderPatchCount
 			+ "]";
@@ -168,7 +184,7 @@ public final class PauCShaderPackProgramPatches {
 		return source.substring(0, insertionIndex + 1) + header + source.substring(insertionIndex + 1);
 	}
 
-	private static String patchPhotonClouds(String programName, String source) {
+	private static String patchPhotonPrograms(String programName, String source) {
 		if (programName == null) {
 			return source;
 		}
@@ -176,6 +192,7 @@ public final class PauCShaderPackProgramPatches {
 		String patched = patchPhotonCloudLodDepth(programName, source);
 		patched = patchPhotonCloudHistory(programName, patched);
 		patched = patchPhotonCloudEdgeFog(programName, patched);
+		patched = patchPhotonShadowFog(programName, patched);
 		return patched;
 	}
 
@@ -287,4 +304,44 @@ public final class PauCShaderPackProgramPatches {
 		}
 		return patched;
 	}
+
+	private static String patchPhotonShadowFog(String programName, String source) {
+		if (source.contains("paucPhotonDirectShadowFog")
+			|| !source.contains("float border_fog(vec3 scene_pos, vec3 world_dir)")
+			|| !source.contains("uniform int paucVanillaFogStartDistance;")
+			|| !source.contains("uniform int paucVanillaFogEndDistance;")
+			|| !source.contains("float view_distance = length(scene_pos.xz);")
+			|| !PHOTON_BORDER_FOG_SHADOW_COMPENSATION.matcher(source).find()) {
+			return source;
+		}
+
+		String patched = source;
+		if (!patched.contains("uniform int paucPhotonShadowCoverageDistance;")) {
+			patched = PHOTON_BORDER_FOG_UNIFORM_DECLARATION.matcher(patched)
+				.replaceFirst("uniform int paucVanillaFogEndDistance;\nuniform int paucPhotonShadowCoverageDistance;");
+			if (patched.equals(source)) {
+				return source;
+			}
+		}
+
+		String replacement = """
+			if (paucPhotonShadowCoverageDistance > 0) {
+			    float shadow_fog_start = max(float(paucPhotonShadowCoverageDistance), 32.0);
+			    float shadow_fog_end = max(float(lod_render_distance), shadow_fog_start + 32.0);
+			    float shadow_fog = 1.0 - smoothstep(shadow_fog_start, shadow_fog_end, view_distance);
+			    fog = min(fog, shadow_fog); // paucPhotonDirectShadowFog
+			}""";
+		String rewritten = PHOTON_BORDER_FOG_SHADOW_COMPENSATION.matcher(patched)
+			.replaceFirst(Matcher.quoteReplacement(replacement));
+		if (rewritten.equals(patched)) {
+			return source;
+		}
+		if (!photonShadowFogPatchLogged) {
+			photonShadowFogPatchLogged = true;
+			Iris.logger.info("PauC rewired Photon border fog to track Photon shadow coverage directly: {}.", programName);
+		}
+		photonShadowFogPatchCount++;
+		return rewritten;
+	}
+
 }

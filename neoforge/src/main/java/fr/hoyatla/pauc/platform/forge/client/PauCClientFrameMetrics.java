@@ -19,15 +19,16 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
-import java.time.ZoneOffset;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.concurrent.locks.LockSupport;
 
 public final class PauCClientFrameMetrics {
 	private static final Logger LOGGER = LogUtils.getLogger();
+	private static final ZoneId WATCHDOG_TIME_ZONE = ZoneId.systemDefault();
 	private static final DateTimeFormatter WATCHDOG_FILE_TIMESTAMP =
-		DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(ZoneOffset.UTC);
+		DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(WATCHDOG_TIME_ZONE);
 	private static final String[] FPS_METHOD_NAMES = { "getFps", "m_260875_", "m" };
 	private static final String[] FPS_STRING_FIELD_NAMES = { "fpsString", "f_90977_", "A" };
 	private static final String FRAME_PACING_ENABLED_PROPERTY = "pauc.client.framePacing";

@@ -29,79 +29,13 @@ public final class PauCDynamicResolution {
 	}
 
 	public static void onClientTick(Minecraft minecraft) {
-		if (resizeCooldownTicks > 0) {
-			resizeCooldownTicks--;
-		}
-		PauCDynamicResolutionMode mode = readMode();
-		lastMode = mode;
-		// FULL render quality under shaders (PauC core principle): resizing Minecraft's main render target fights the
-		// Iris shader pipeline's gbuffer + temporal/TAAU framebuffers, which are resolution-locked. Changing the target
-		// resolution under them desyncs the immediate-mode gbuffer geometry (entities/hand/items/hitboxes) from the
-		// composite, which renders them visibly offset. So resolution scaling is gated OUT whenever a shader pack is
-		// active — fps under shaders is recovered by efficiency, never by dropping resolution.
-		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
-		if (mode == PauCDynamicResolutionMode.OFF
-			|| !readBoolean(ENABLED_PROPERTY, mode != PauCDynamicResolutionMode.OFF)
-			|| minecraft == null
-			|| minecraft.level == null
-			|| shaderActive) {
-			resetToNative(shaderActive ? "inactive-shaders-full-quality" : "inactive");
-			return;
-		}
-		if (disabledTicks > 0) {
-			disabledTicks--;
-			applyMainTargetScale(minecraft, 1.0D, true);
-			publishScale();
-			return;
-		}
-
-		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
-		if (playerVideo.fpsUnlimited() && !PauCClientTargetFps.hasExplicitTargetFps()) {
-			lastTargetFrameMs = -1.0D;
-			lastAverageFrameMs = PauCClientFrameMetrics.averageFrameTimeMs();
-			scale = readDouble("pauc.client.dynamicResolutionUnlimitedScale", mode.minScale(), 0.50D, 1.0D);
-			active = scale < 0.999D;
-			applyMainTargetScale(minecraft, scale, false);
-			System.setProperty("pauc.runtime.dynamicResolutionReason", "player-fps-unlimited-fixed-" + mode.id());
-			publishScale();
-			return;
-		}
-
-		int targetFps = PauCClientTargetFps.effectiveTargetFps(minecraft);
-		if (targetFps <= 0) {
-			resetToNative("target-unavailable");
-			return;
-		}
-		lastTargetFrameMs = 1000.0D / targetFps;
-		lastAverageFrameMs = PauCClientFrameMetrics.averageFrameTimeMs();
-		if (lastAverageFrameMs <= 0.0D) {
-			publishScale();
-			return;
-		}
-
-		double minScale = readDouble(MIN_SCALE_PROPERTY, mode.minScale(), 0.50D, 1.0D);
-		double downStep = readDouble(DOWN_RATE_PROPERTY, mode.downRatePerSecond(), 0.005D, 0.40D) / 20.0D;
-		double upStep = readDouble(UP_RATE_PROPERTY, mode.upRatePerSecond(), 0.005D, 0.25D) / 20.0D;
-		double pressure = lastAverageFrameMs / lastTargetFrameMs;
-		PauCClientFluidityState.Band band = PauCClientFluidityState.lastSnapshot().band();
-		boolean watchdogSpike = PauCClientFrameMetrics.lastWatchdogFrameMs() >= readDouble("pauc.client.dynamicResolutionWatchdogMs", 140.0D, 50.0D, 1_000.0D);
-		if (pressure > 1.05D || watchdogSpike || band == PauCClientFluidityState.Band.RELIEF) {
-			double severity = Math.max(1.0D, Math.min(2.5D, pressure));
-			scale = Math.max(minScale, scale - (downStep * severity));
-			active = scale < 0.999D;
-		} else if (pressure < 0.85D && band != PauCClientFluidityState.Band.RECOVERY) {
-			scale = Math.min(1.0D, scale + upStep);
-			active = scale < 0.999D;
-		}
-		if (!Double.isFinite(scale)) {
-			scale = 1.0D;
-			active = false;
-			disabledTicks = readInt("pauc.client.dynamicResolutionKillSwitchTicks", 1_200, 20, 12_000);
-			applyMainTargetScale(minecraft, 1.0D, true);
-		} else {
-			applyMainTargetScale(minecraft, scale, false);
-		}
-		publishScale();
+		lastMode = readMode();
+		// Dynamic resolution is DISABLED. Profiling proved it yields no fps gain here: the frame is bottlenecked by the
+		// shadow pass (~8 ms re-rendering terrain into the shadow map) and CPU draw submission, NOT fragment/pixel work,
+		// so cutting render resolution saves almost nothing (~1 ms of deferred+composite). It also caused viewport
+		// artifacts (offset hand/HUD/menu under the resize). The menu control is kept inert so the UI doesn't break;
+		// no resolution scaling or shader TAAU is ever applied. Always render at native resolution.
+		resetToNative("disabled-no-fps-benefit");
 	}
 
 	public static void reset() {

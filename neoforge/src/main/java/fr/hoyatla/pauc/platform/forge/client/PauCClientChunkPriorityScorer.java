@@ -31,6 +31,10 @@ public final class PauCClientChunkPriorityScorer {
 	private static final String HIGH_TARGET_LOOKAHEAD_BONUS_PROPERTY = "pauc.lod.vanillaHighTargetLookaheadBonusChunks";
 	private static final String FOG_PRELOAD_RADIUS_PROPERTY = "pauc.lod.fogPreloadRadiusChunks";
 	private static final String FOG_PRELOAD_MIN_EXTRA_PROPERTY = "pauc.lod.fogPreloadMinExtraChunks";
+	private static final String TRAVEL_JUNCTION_GUARD_CHUNKS_PROPERTY = "pauc.lod.travelJunctionGuardChunks";
+	private static final String SHADER_TRAVEL_JUNCTION_GUARD_CHUNKS_PROPERTY = "pauc.lod.shaderTravelJunctionGuardChunks";
+	private static final String ELYTRA_WARM_RADIUS_BONUS_PROPERTY = "pauc.lod.elytraWarmRadiusBonusChunks";
+	private static final String FAST_TRAVEL_WARM_RADIUS_BONUS_PROPERTY = "pauc.lod.fastTravelWarmRadiusBonusChunks";
 	private static final String SHORT_RANGE_ROUND_HORIZON_WARMUP_PROPERTY = "pauc.lod.shortRangeRoundHorizonWarmup";
 	private static final String VANILLA_SEAL_RING_CHUNKS_PROPERTY = "pauc.lod.vanillaSealRingChunks";
 	private static final String VANILLA_SEAL_TRAVEL_RING_CHUNKS_PROPERTY = "pauc.lod.vanillaSealTravelRingChunks";
@@ -103,6 +107,13 @@ public final class PauCClientChunkPriorityScorer {
 		boolean movementCatchup = updateMovementCatchup(dimensionId, playerChunk, speed);
 		boolean fpsFirstVanilla = isFpsFirstVanillaMode(minecraft, PauCClientTargetFps.effectiveTargetFps(minecraft));
 		int warmRadiusChunks = fogPreloadWarmRadius(renderDistance, warmMarginChunks, fastTravel || snapMode || movementCatchup, fpsFirstVanilla);
+		warmRadiusChunks = expandTravelWarmRadius(
+			warmRadiusChunks,
+			renderDistance,
+			elytraFlight,
+			fastTravel,
+			movementCatchup
+		);
 		LookaheadCenter lookaheadCenter = computeLookaheadCenter(
 			playerChunk,
 			warmRadiusChunks,
@@ -113,6 +124,7 @@ public final class PauCClientChunkPriorityScorer {
 			motionZ,
 			speed,
 			turnSeverity,
+			elytraFlight,
 			fastTravel,
 			snapMode,
 			movementCatchup,
@@ -199,6 +211,7 @@ public final class PauCClientChunkPriorityScorer {
 		boolean priorityTravel = frame.fastTravel() || movementCatchup;
 		boolean fpsFirstVanilla = frame.fpsFirstVanilla();
 		int sealRingChunks = vanillaSealRingChunks(priorityTravel);
+		int junctionGuardChunks = junctionGuardChunks(frame);
 		boolean sealRing = chebyshevDistance > frame.renderDistanceChunks()
 			&& chebyshevDistance <= frame.renderDistanceChunks() + sealRingChunks;
 		if (sealRing) {
@@ -207,6 +220,20 @@ public final class PauCClientChunkPriorityScorer {
 				+ Math.max(0.0D, sealRingChunks - (chebyshevDistance - frame.renderDistanceChunks())) * 0.04D
 				+ (ahead ? 0.05D : 0.0D);
 			return new ChunkPriority(sealScore, chebyshevDistance, radialDistance, ahead, true, true);
+		}
+		boolean junctionRing = junctionGuardChunks > 0
+			&& chebyshevDistance > frame.renderDistanceChunks() + sealRingChunks
+			&& chebyshevDistance <= frame.renderDistanceChunks() + sealRingChunks + junctionGuardChunks;
+		if (junctionRing) {
+			boolean ahead = rawFacingDot >= -0.45D || rawMotionDot >= -0.45D;
+			double junctionScore = 0.94D
+				+ Math.max(
+					0.0D,
+					(frame.renderDistanceChunks() + sealRingChunks + junctionGuardChunks) - chebyshevDistance
+				) * 0.03D
+				+ (ahead ? 0.04D : 0.0D);
+			boolean warm = priorityTravel || ahead || frame.elytraFlight();
+			return new ChunkPriority(junctionScore, chebyshevDistance, radialDistance, ahead, true, warm);
 		}
 		boolean viewportCentralBias = PauCLodGameplayProfile.viewportCentralBias() && fpsFirstVanilla && !priorityTravel;
 		double speedReference = frame.fastTravel() ? 0.8D : (movementCatchup ? 0.22D : 0.25D);
@@ -276,6 +303,7 @@ public final class PauCClientChunkPriorityScorer {
 		double motionZ,
 		double speed,
 		double turnSeverity,
+		boolean elytraFlight,
 		boolean fastTravel,
 		boolean snapMode,
 		boolean movementCatchup,
@@ -295,11 +323,17 @@ public final class PauCClientChunkPriorityScorer {
 		if (fastTravel) {
 			lead = Math.max(lead, 5.0D + (speed * 10.0D));
 		}
+		if (elytraFlight) {
+			lead = Math.max(lead, 8.0D + (speed * 18.0D));
+		}
 		if (turnSeverity > 0.32D) {
 			lead += 1.0D;
 		}
 		if (fpsFirstVanilla && (movementCatchup || fastTravel || speed >= 0.08D)) {
 			lead += readInt(HIGH_TARGET_LOOKAHEAD_BONUS_PROPERTY, 2, 0, 8);
+		}
+		if (PauCLodShaderContext.isShaderPackInUse() && !PauCLodShaderContext.isFallbackActive() && (fastTravel || movementCatchup)) {
+			lead += elytraFlight ? 3.0D : 2.0D;
 		}
 
 		int maxLead = Math.max(0, Math.min(warmRadiusChunks, Math.max(4, warmRadiusChunks - Math.max(renderDistance - 1, 1))));
@@ -399,6 +433,39 @@ public final class PauCClientChunkPriorityScorer {
 		return warmRadius;
 	}
 
+	private static int expandTravelWarmRadius(
+		int warmRadiusChunks,
+		int renderDistance,
+		boolean elytraFlight,
+		boolean fastTravel,
+		boolean movementCatchup
+	) {
+		PauCLodRange range = PauCClientLodGovernor.currentRange();
+		if (range == null || !range.enabled()) {
+			return warmRadiusChunks;
+		}
+
+		int extra = 0;
+		if (movementCatchup) {
+			extra = Math.max(extra, 3);
+		}
+		if (fastTravel) {
+			extra = Math.max(extra, readInt(FAST_TRAVEL_WARM_RADIUS_BONUS_PROPERTY, 4, 0, 16));
+		}
+		if (elytraFlight) {
+			extra = Math.max(extra, readInt(ELYTRA_WARM_RADIUS_BONUS_PROPERTY, 8, 0, 24));
+		}
+		if (PauCLodShaderContext.isShaderPackInUse() && !PauCLodShaderContext.isFallbackActive() && (fastTravel || movementCatchup)) {
+			extra += elytraFlight ? 2 : 1;
+		}
+		if (extra <= 0) {
+			return warmRadiusChunks;
+		}
+
+		int maxRadius = Math.max(renderDistance, range.roundHorizonEndChunk());
+		return Math.max(warmRadiusChunks, Math.min(maxRadius, warmRadiusChunks + extra));
+	}
+
 	public static int vanillaSealRingChunks(boolean travelFill) {
 		return readInt(
 			travelFill ? VANILLA_SEAL_TRAVEL_RING_CHUNKS_PROPERTY : VANILLA_SEAL_RING_CHUNKS_PROPERTY,
@@ -406,6 +473,27 @@ public final class PauCClientChunkPriorityScorer {
 			1,
 			16
 		);
+	}
+
+	public static int junctionCoverageBandChunks(PriorityFrame frame) {
+		boolean travel = frame.fastTravel() || frame.movementCatchup();
+		return vanillaSealRingChunks(travel) + junctionGuardChunks(frame);
+	}
+
+	private static int junctionGuardChunks(PriorityFrame frame) {
+		boolean shaderNative = PauCLodShaderContext.isShaderPackInUse() && !PauCLodShaderContext.isFallbackActive();
+		int fallback = frame.elytraFlight()
+			? shaderNative ? 6 : 5
+			: frame.fastTravel() || frame.movementCatchup()
+				? shaderNative ? 4 : 3
+				: shaderNative ? 2 : 1;
+		int configured = readInt(
+			shaderNative ? SHADER_TRAVEL_JUNCTION_GUARD_CHUNKS_PROPERTY : TRAVEL_JUNCTION_GUARD_CHUNKS_PROPERTY,
+			fallback,
+			0,
+			12
+		);
+		return Math.max(0, configured);
 	}
 
 	private static boolean isMovementCatchupQueueResolved() {

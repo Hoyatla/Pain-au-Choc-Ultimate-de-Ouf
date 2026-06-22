@@ -832,6 +832,11 @@ public final class PauCClientFrontierWarmupManager {
 			lastCoveragePresentationHoldUntilMillis = now;
 			return false;
 		}
+		if (shouldBypassCoverageHoldInMetadataMode(snapshot)) {
+			lastCoveragePresentationHoldUntilMillis = now;
+			lastCoverageHoldDemandAtMillis = 0L;
+			return false;
+		}
 		boolean queueDrained = isPauCQueueDrained();
 		boolean queueFullyDrained = isPauCQueueFullyDrained();
 		if (PauCEmbeddedLodRuntimeDiagnostics.canReleaseFillPresentationDuringCoverageDebt()) {
@@ -907,6 +912,9 @@ public final class PauCClientFrontierWarmupManager {
 		if (!snapshot.available()) {
 			return false;
 		}
+		if (shouldBypassCoverageHoldInMetadataMode(snapshot)) {
+			return false;
+		}
 		if (snapshot.nearDebt()) {
 			return true;
 		}
@@ -946,10 +954,29 @@ public final class PauCClientFrontierWarmupManager {
 		return snapshot.activeBandRatio() < shaderRatio;
 	}
 
+	private static boolean shouldBypassCoverageHoldInMetadataMode(CoverageSnapshot snapshot) {
+		if (!snapshot.available() || snapshot.rendererAvailable()) {
+			return false;
+		}
+
+		// Metadata mode cannot observe the embedded PL render buffers directly. When the PL queue is already
+		// drained, keeping a coverage hold here hides valid fallback LODs because the metadata snapshot still
+		// looks empty even though renderable VBOs exist.
+		return isPauCQueueFullyDrained()
+			|| (PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+				&& PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() <= 0
+				&& PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= 0
+				&& PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= 0);
+	}
+
 	private static void updateTerrainContinuityHold() {
 		CoverageSnapshot snapshot = lastCoverageSnapshot;
 		if (!snapshot.available()) {
 			PauCLodNearClipOverride.setTerrainContinuityHold(false, "coverage-unavailable");
+			return;
+		}
+		if (shouldBypassCoverageHoldInMetadataMode(snapshot)) {
+			PauCLodNearClipOverride.setTerrainContinuityHold(false, "metadata-coverage-bypass");
 			return;
 		}
 
@@ -2709,7 +2736,7 @@ public final class PauCClientFrontierWarmupManager {
 
 			double ratio = expected > 0 ? Math.min(1.0D, (double) covered / (double) expected) : 1.0D;
 			boolean catchup = frame.fastTravel() || frame.snapMode() || frame.movementCatchup();
-			int nearRingChunks = PauCClientChunkPriorityScorer.vanillaSealRingChunks(catchup);
+			int nearRingChunks = PauCClientChunkPriorityScorer.junctionCoverageBandChunks(frame);
 			int nearBandEnd = Math.min(lastDistance, firstDistance + Math.max(1, nearRingChunks) - 1);
 			CoverageBand nearBand = CoverageBand.empty(nearBandEnd);
 			if (nearBandEnd >= firstDistance) {
@@ -3095,7 +3122,10 @@ public final class PauCClientFrontierWarmupManager {
 			this.cudaTerrainSectionY = prepared.terrainSectionY();
 			this.cudaProfile = prepared.cudaProfile();
 			if (prepared.cudaAvailable()) {
-				this.lodCacheState = Math.max(LOD_CACHE_STATE_CUDA_PREPARED, prepared.lodCacheState());
+				this.lodCacheState = normalizeCacheState(
+					Math.max(LOD_CACHE_STATE_CUDA_PREPARED, prepared.lodCacheState()),
+					prepared.terrainSectionY()
+				);
 				this.lodQualityTier = Math.max(this.lodQualityTier, prepared.lodQualityTier());
 				this.cudaPreparedAtMillis = prepared.preparedAtMillis();
 				if (this.lodCacheState >= LOD_CACHE_STATE_RENDER_READY) {

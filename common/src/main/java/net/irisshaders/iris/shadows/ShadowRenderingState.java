@@ -13,6 +13,9 @@ public class ShadowRenderingState {
 	private static boolean shadowTerrainGraphDirty = true;
 	private static long shadowTerrainGraphState = Long.MIN_VALUE;
 	private static boolean disableShadowBlockFaceCulling = true;
+	private static volatile int requestedShadowTerrainDistanceChunks;
+	private static volatile int effectiveShadowTerrainDistanceChunks;
+	private static volatile boolean shadowTerrainDistanceCapped;
 
 	public static boolean areShadowsCurrentlyBeingRendered() {
 		return ShadowRenderer.ACTIVE;
@@ -28,6 +31,40 @@ public class ShadowRenderingState {
 
 	public static int getRenderDistance() {
 		return ShadowRenderer.renderDistance;
+	}
+
+	public static int getRequestedShadowTerrainDistanceChunks() {
+		return Math.max(0, requestedShadowTerrainDistanceChunks > 0 ? requestedShadowTerrainDistanceChunks : ShadowRenderer.renderDistance);
+	}
+
+	public static int getEffectiveShadowTerrainDistanceChunks() {
+		return Math.max(0, effectiveShadowTerrainDistanceChunks);
+	}
+
+	public static boolean isShadowTerrainDistanceCapped() {
+		return shadowTerrainDistanceCapped;
+	}
+
+	public static void updateShadowTerrainDistanceInfo(int requestedChunks, int effectiveChunks, boolean capped) {
+		int sanitizedRequestedChunks = Math.max(0, requestedChunks);
+		int sanitizedEffectiveChunks = Math.max(0, effectiveChunks);
+		if (requestedShadowTerrainDistanceChunks == sanitizedRequestedChunks
+			&& effectiveShadowTerrainDistanceChunks == sanitizedEffectiveChunks
+			&& shadowTerrainDistanceCapped == capped) {
+			return;
+		}
+
+		requestedShadowTerrainDistanceChunks = sanitizedRequestedChunks;
+		effectiveShadowTerrainDistanceChunks = sanitizedEffectiveChunks;
+		shadowTerrainDistanceCapped = capped;
+		shadowTerrainGraphDirty = true;
+	}
+
+	public static void resetShadowTerrainDistanceInfo() {
+		requestedShadowTerrainDistanceChunks = 0;
+		effectiveShadowTerrainDistanceChunks = 0;
+		shadowTerrainDistanceCapped = false;
+		shadowTerrainGraphDirty = true;
 	}
 
 	public static void updateShadowTerrainGraphState(double cameraX, double cameraY, double cameraZ, float cameraPitch, float cameraYaw,

@@ -5,14 +5,17 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.stream.Stream;
 
 public final class BundledShaderpackInstaller {
 	public static final String PHOTON_ID = "pauc_builtin_photon";
@@ -21,10 +24,25 @@ public final class BundledShaderpackInstaller {
 
 	private static final String CACHE_DIR_NAME = ".pauc_builtin_shaderpacks";
 	private static final String CONFIG_DIR_NAME = ".pauc_builtin_shaderpack_configs";
+	private static final String MANIFEST_FILE_NAME = ".pauc-bundled-manifest.txt";
 
 	private static final List<BundledShaderpack> BUNDLED_PACKS = List.of(
-		new BundledShaderpack(PHOTON_ID, "Photon", "photon_v1.3b.zip", "/pauc/shaderpacks/photon_v1.3b.zip"),
-		new BundledShaderpack(SOLAS_ID, "Solas", "Solas Shader V3.6.zip", "/pauc/shaderpacks/solas_shader_v3.6.zip")
+		new BundledShaderpack(
+			PHOTON_ID,
+			"Photon",
+			"photon_v1.3b.zip",
+			"photon_v1.3b",
+			"/pauc/shaderpacks/photon_v1.3b",
+			"/pauc/shaderpacks/photon_v1.3b.files.txt"
+		),
+		new BundledShaderpack(
+			SOLAS_ID,
+			"Solas",
+			"Solas Shader V3.6.zip",
+			"solas_shader_v3.6",
+			"/pauc/shaderpacks/solas_shader_v3.6",
+			"/pauc/shaderpacks/solas_shader_v3.6.files.txt"
+		)
 	);
 
 	private static final Map<String, BundledShaderpack> PACKS_BY_ID = new LinkedHashMap<>();
@@ -134,29 +152,78 @@ public final class BundledShaderpackInstaller {
 
 		Path cacheDirectory = cacheDirectory(shaderpacksDirectory);
 		Files.createDirectories(cacheDirectory);
-		Path cachedZip = cacheDirectory.resolve(bundledPack.legacyFileName());
-		ensureCachedZip(bundledPack, cachedZip);
+		Path cachedPackRoot = cacheDirectory.resolve(bundledPack.cacheDirectoryName());
+		ensureCachedPackDirectory(bundledPack, cachedPackRoot);
 
 		Path configDirectory = configDirectory(shaderpacksDirectory);
 		Files.createDirectories(configDirectory);
 		Path configFile = configDirectory.resolve(bundledPack.id() + ".txt");
 
-		return new ResolvedBundledShaderpack(bundledPack.id(), bundledPack.displayName(), cachedZip, configFile);
+		return new ResolvedBundledShaderpack(bundledPack.id(), bundledPack.displayName(), cachedPackRoot, configFile);
 	}
 
-	private static void ensureCachedZip(BundledShaderpack pack, Path cachedZip) throws IOException {
-		if (Files.exists(cachedZip)) {
+	private static void ensureCachedPackDirectory(BundledShaderpack pack, Path cachedPackRoot) throws IOException {
+		String manifest = readRequiredResourceText(pack.manifestResourcePath());
+		Path manifestFile = cachedPackRoot.resolve(MANIFEST_FILE_NAME);
+		if (Files.isDirectory(cachedPackRoot)
+			&& Files.isRegularFile(manifestFile)
+			&& manifest.equals(Files.readString(manifestFile, StandardCharsets.UTF_8))) {
 			return;
 		}
 
-		try (InputStream stream = BundledShaderpackInstaller.class.getResourceAsStream(pack.resourcePath())) {
+		deleteDirectoryIfExists(cachedPackRoot);
+		Files.createDirectories(cachedPackRoot);
+		for (String relativePath : parseManifest(manifest)) {
+			copyBundledResource(pack, relativePath, cachedPackRoot.resolve(relativePath));
+		}
+		Files.writeString(manifestFile, manifest, StandardCharsets.UTF_8);
+		Iris.logger.info("Updated PauC bundled shaderpack cache for {} at {}.", pack.displayName(), cachedPackRoot);
+	}
+
+	private static void copyBundledResource(BundledShaderpack pack, String relativePath, Path destination) throws IOException {
+		Path parent = destination.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+
+		String resourcePath = pack.resourceRoot() + "/" + relativePath;
+		try (InputStream stream = BundledShaderpackInstaller.class.getResourceAsStream(resourcePath)) {
 			if (stream == null) {
-				throw new IOException("Bundled shaderpack resource not found: " + pack.resourcePath());
+				throw new IOException("Bundled shaderpack resource not found: " + resourcePath);
 			}
 
-			Path temp = cachedZip.resolveSibling(cachedZip.getFileName() + ".tmp");
+			Path temp = destination.resolveSibling(destination.getFileName() + ".tmp");
 			Files.copy(stream, temp, StandardCopyOption.REPLACE_EXISTING);
-			Files.move(temp, cachedZip, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			Files.move(temp, destination, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		}
+	}
+
+	private static List<String> parseManifest(String manifest) {
+		return manifest.lines()
+			.map(String::trim)
+			.filter(line -> !line.isEmpty())
+			.toList();
+	}
+
+	private static String readRequiredResourceText(String resourcePath) throws IOException {
+		try (InputStream stream = BundledShaderpackInstaller.class.getResourceAsStream(resourcePath)) {
+			if (stream == null) {
+				throw new IOException("Bundled shaderpack manifest not found: " + resourcePath);
+			}
+
+			return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+		}
+	}
+
+	private static void deleteDirectoryIfExists(Path directory) throws IOException {
+		if (!Files.exists(directory)) {
+			return;
+		}
+
+		try (Stream<Path> stream = Files.walk(directory)) {
+			for (Path path : stream.sorted(Comparator.reverseOrder()).toList()) {
+				Files.deleteIfExists(path);
+			}
 		}
 	}
 
@@ -168,9 +235,16 @@ public final class BundledShaderpackInstaller {
 		return shaderpacksDirectory.resolve(CONFIG_DIR_NAME);
 	}
 
-	public record ResolvedBundledShaderpack(String id, String displayName, Path zipFile, Path configFile) {
+	public record ResolvedBundledShaderpack(String id, String displayName, Path packRoot, Path configFile) {
 	}
 
-	private record BundledShaderpack(String id, String displayName, String legacyFileName, String resourcePath) {
+	private record BundledShaderpack(
+		String id,
+		String displayName,
+		String legacyFileName,
+		String cacheDirectoryName,
+		String resourceRoot,
+		String manifestResourcePath
+	) {
 	}
 }

@@ -15,6 +15,29 @@ import java.util.stream.Stream;
  * Enumerates the possible program source file names to
  */
 public class ShaderPackSourceNames {
+	private static final ImmutableList<String> LEGACY_DH_PROGRAM_STARTS = ImmutableList.of(
+		"pl_terrain.vsh",
+		"pl_terrain.tcs",
+		"pl_terrain.tes",
+		"pl_terrain.gsh",
+		"pl_terrain.fsh",
+		"pl_water.vsh",
+		"pl_water.tcs",
+		"pl_water.tes",
+		"pl_water.gsh",
+		"pl_water.fsh",
+		"pl_generic.vsh",
+		"pl_generic.tcs",
+		"pl_generic.tes",
+		"pl_generic.gsh",
+		"pl_generic.fsh",
+		"pl_shadow.vsh",
+		"pl_shadow.tcs",
+		"pl_shadow.tes",
+		"pl_shadow.gsh",
+		"pl_shadow.fsh",
+		"pl_shadow.csh"
+	);
 	public static final ImmutableList<String> POTENTIAL_STARTS = findPotentialStarts();
 
 	public static boolean findPresentSources(ImmutableList.Builder<AbsolutePackPath> starts, Path packRoot,
@@ -68,6 +91,10 @@ public class ShaderPackSourceNames {
 				addStarts(potentialFileNames, programId.getSourceName());
 			}
 		}
+
+		// Backward compatibility: older PauC bundled shaderpacks used the "pl_*" prefix for the DH terrain path.
+		// Keep these entry points discoverable so cached packs from previous builds remain renderable.
+		potentialFileNames.addAll(LEGACY_DH_PROGRAM_STARTS);
 
 		return potentialFileNames.build();
 	}

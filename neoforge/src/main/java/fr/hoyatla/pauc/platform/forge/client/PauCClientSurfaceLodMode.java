@@ -8,6 +8,7 @@ import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiDistantGenerat
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
 import fr.hoyatla.pauc.lod.PauCLodRange;
+import fr.hoyatla.pauc.lod.PauCLodShaderContext;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
@@ -826,7 +827,7 @@ public final class PauCClientSurfaceLodMode {
 
 	private static int adaptiveFeatureStickyTicks() {
 		return clamp(
-			readInt(FEATURE_TRANSITION_STICKY_TICKS_PROPERTY, 20, 0, 80) + adaptiveTargetBonus(6, 12),
+			readInt(FEATURE_TRANSITION_STICKY_TICKS_PROPERTY, 20, 0, 80) + adaptiveTargetBonus(6, 12) + transitionStabilityPenaltyTicks(),
 			0,
 			80
 		);
@@ -834,7 +835,7 @@ public final class PauCClientSurfaceLodMode {
 
 	private static int adaptiveTransientSurfaceRecoveryTicks() {
 		return clamp(
-			readInt(TRANSIENT_SURFACE_RECOVERY_TICKS_PROPERTY, 18, 0, 80) + adaptiveTargetBonus(6, 14),
+			readInt(TRANSIENT_SURFACE_RECOVERY_TICKS_PROPERTY, 18, 0, 80) + adaptiveTargetBonus(6, 14) + transitionStabilityPenaltyTicks(),
 			0,
 			80
 		);
@@ -844,15 +845,39 @@ public final class PauCClientSurfaceLodMode {
 		int base = readInt(FEATURE_TRANSITION_REASON_SWITCH_TICKS_PROPERTY, 6, 1, 40);
 		int switchPenalty = modeSwitch ? 2 : 0;
 		int familyPenalty = familySwitch ? adaptiveTargetBonus(2, 4) : 0;
-		return clamp(base + switchPenalty + familyPenalty + adaptiveTargetBonus(1, 3), 1, 48);
+		return clamp(base + switchPenalty + familyPenalty + adaptiveTargetBonus(1, 3) + (transitionStabilityPenaltyTicks() / 2), 1, 48);
 	}
 
 	private static int adaptiveFeatureReleaseTicks() {
 		return clamp(
-			readInt("pauc.lod.featureTransitionReleaseTicks", 8, 1, 40) + adaptiveTargetBonus(2, 4),
+			readInt("pauc.lod.featureTransitionReleaseTicks", 8, 1, 40) + adaptiveTargetBonus(2, 4) + (transitionStabilityPenaltyTicks() / 2),
 			1,
 			40
 		);
+	}
+
+	private static int transitionStabilityPenaltyTicks() {
+		double queuePressure = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.backlogPressure()
+			: 0.0D;
+		int penalty = 0;
+		if (queuePressure >= 0.35D) {
+			penalty += 8;
+		} else if (queuePressure >= 0.18D) {
+			penalty += 4;
+		} else if (queuePressure >= 0.10D) {
+			penalty += 2;
+		}
+		if (PauCLodShaderContext.isShaderPackInUse()) {
+			penalty += 2;
+		}
+		if (PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation()) {
+			penalty += 4;
+		}
+		if (PauCClientChunkPriorityScorer.isMovementCatchupActive()) {
+			penalty += 4;
+		}
+		return penalty;
 	}
 
 	private static int adaptiveTargetBonus(int mediumBonus, int farBonus) {

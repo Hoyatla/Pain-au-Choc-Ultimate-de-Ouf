@@ -33,6 +33,7 @@ public abstract class MixinPauCDhWorldGenerationQueue {
 	@Inject(method = "<init>", at = @At("RETURN"), remap = false, require = 0)
 	private void pauc$resetEmbeddedQueueDiagnostics(IDhApiWorldGenerator generator, IDhServerLevel level, CallbackInfo ci) {
 		PauCEmbeddedLodRuntimeDiagnostics.resetSession((WorldGenerationQueue) (Object) this);
+		pauc$recoverEmbeddedLocalWorldGenSession("queue-init");
 	}
 
 	@ModifyVariable(method = "submitRetrievalTask", at = @At("HEAD"), argsOnly = true, ordinal = 0, remap = false, require = 0)
@@ -57,6 +58,7 @@ public abstract class MixinPauCDhWorldGenerationQueue {
 	@Inject(method = "tryQueueNewWorldGenRequestsAsync", at = @At("RETURN"), remap = false, require = 0)
 	private void pauc$trackEmbeddedRetrievalQueueTick(CallbackInfo ci) {
 		PauCEmbeddedLodRuntimeDiagnostics.captureQueue((WorldGenerationQueue) (Object) this);
+		pauc$recoverEmbeddedLocalWorldGenSession("queue-tick");
 	}
 
 	@Inject(method = "close", at = @At("HEAD"), remap = false)
@@ -85,6 +87,15 @@ public abstract class MixinPauCDhWorldGenerationQueue {
 		if (!pauc$loggedLogoutInterrupt) {
 			pauc$loggedLogoutInterrupt = true;
 			PAUC_LOGGER.info("PauC cleared pending embedded DH world generation during client logout to let the world close cleanly.");
+		}
+	}
+
+	@Unique
+	private static void pauc$recoverEmbeddedLocalWorldGenSession(String source) {
+		try {
+			Class<?> bridgeClass = Class.forName("fr.hoyatla.pauc.platform.forge.client.PauCEmbeddedDhBridge");
+			bridgeClass.getMethod("recoverEmbeddedLocalWorldGenSessionFromQueue", String.class).invoke(null, source);
+		} catch (ReflectiveOperationException | LinkageError ignored) {
 		}
 	}
 }
