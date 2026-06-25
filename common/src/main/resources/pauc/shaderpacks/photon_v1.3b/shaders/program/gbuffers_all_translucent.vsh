@@ -127,6 +127,12 @@ void main() {
                   // ilux-git for finding this!
     light_levels = clamp01(gl_MultiTexCoord1.xy * rcp(240.0));
     tint = gl_Color;
+#if defined PROGRAM_GBUFFERS_HAND_WATER
+    // Keep handheld translucent geometry on a neutral path. A bad item tint
+    // propagated by the PauC/Iris integration can otherwise poison the whole
+    // composition stage.
+    tint = vec4(1.0);
+#endif
     material_mask = get_material_mask();
     tbn = get_tbn_matrix();
 

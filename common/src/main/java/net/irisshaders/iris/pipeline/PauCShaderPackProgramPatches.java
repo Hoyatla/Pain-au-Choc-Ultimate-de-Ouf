@@ -191,9 +191,15 @@ public final class PauCShaderPackProgramPatches {
 
 		String patched = patchPhotonCloudLodDepth(programName, source);
 		patched = patchPhotonCloudHistory(programName, patched);
-		patched = patchPhotonCloudEdgeFog(programName, patched);
+		if (isPhotonCloudEdgePatchEnabled()) {
+			patched = patchPhotonCloudEdgeFog(programName, patched);
+		}
 		patched = patchPhotonShadowFog(programName, patched);
 		return patched;
+	}
+
+	private static boolean isPhotonCloudEdgePatchEnabled() {
+		return Boolean.parseBoolean(System.getProperty("pauc.shader.photonCloudEdgePatch", "false"));
 	}
 
 	private static String patchPhotonCloudLodDepth(String programName, String source) {

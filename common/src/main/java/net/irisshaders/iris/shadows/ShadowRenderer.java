@@ -290,8 +290,19 @@ public class ShadowRenderer {
 		String distanceInfo;
 		String cullingInfo;
 		double vanillaRenderDistanceBlocks = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16.0D;
+		double shadowTerrainDistanceCapBlocks = fr.hoyatla.pauc.lod.PauCPhotonShadowCoverage.shadowTerrainDistanceCapBlocks(vanillaRenderDistanceBlocks);
+		String cappedDistanceInfo =
+			shadowTerrainDistanceCapBlocks > vanillaRenderDistanceBlocks
+				? shadowTerrainDistanceCapBlocks + " blocks (capped by PauC Photon shadow join coverage)"
+				: "render distance = " + Minecraft.getInstance().options.getEffectiveRenderDistance() * 16
+					+ " blocks "
+					+ (Minecraft.getInstance().isLocalServer()
+						? "(capped by normal render distance)"
+						: "(capped by normal/server render distance)");
 		if ((packCullingState == ShadowCullState.DEFAULT && packHasVoxelization) || packCullingState == ShadowCullState.DISTANCE) {
 			double distance = halfPlaneLength * renderMultiplier;
+			double requestedDistance = distance;
+			distance = fr.hoyatla.pauc.lod.PauCPhotonShadowCoverage.extendShadowTerrainDistanceBlocks(distance);
 
 			String reason;
 
@@ -301,15 +312,13 @@ public class ShadowRenderer {
 				reason = "(voxelization detected)";
 			}
 
-			if (distance <= 0 || distance > vanillaRenderDistanceBlocks) {
-				pauc$updateShadowTerrainDistanceInfo(distance, vanillaRenderDistanceBlocks);
-				distanceInfo = "render distance = " + Minecraft.getInstance().options.getEffectiveRenderDistance() * 16
-					+ " blocks ";
-				distanceInfo += Minecraft.getInstance().isLocalServer() ? "(capped by normal render distance)" : "(capped by normal/server render distance)";
+			if (distance <= 0 || distance > shadowTerrainDistanceCapBlocks) {
+				pauc$updateShadowTerrainDistanceInfo(requestedDistance, shadowTerrainDistanceCapBlocks);
+				distanceInfo = cappedDistanceInfo;
 				cullingInfo = "disabled " + reason;
 				return holder.setInfo(new NonCullingFrustum(), distanceInfo, cullingInfo);
 			} else {
-				pauc$updateShadowTerrainDistanceInfo(distance, distance);
+				pauc$updateShadowTerrainDistanceInfo(requestedDistance, distance);
 				distanceInfo = distance + " blocks (set by shader pack)";
 				cullingInfo = "distance only " + reason;
 				BoxCuller boxCuller = new BoxCuller(distance);
@@ -324,21 +333,22 @@ public class ShadowRenderer {
 			if (isReversed && renderMultiplier < 0) renderMultiplier = 1.0f;
 
 			double distance = (isReversed ? voxelDistance : halfPlaneLength) * renderMultiplier;
+			double requestedDistance = distance;
 			String setter = "(set by shader pack)";
 
 			if (renderMultiplier < 0) {
 				distance = IrisVideoSettings.shadowDistance * 16;
+				requestedDistance = distance;
 				setter = "(set by user)";
 			}
+			distance = fr.hoyatla.pauc.lod.PauCPhotonShadowCoverage.extendShadowTerrainDistanceBlocks(distance);
 
-			if (distance >= vanillaRenderDistanceBlocks && !isReversed) {
-				pauc$updateShadowTerrainDistanceInfo(distance, vanillaRenderDistanceBlocks);
-				distanceInfo = "render distance = " + Minecraft.getInstance().options.getEffectiveRenderDistance() * 16
-					+ " blocks ";
-				distanceInfo += Minecraft.getInstance().isLocalServer() ? "(capped by normal render distance)" : "(capped by normal/server render distance)";
+			if (distance >= shadowTerrainDistanceCapBlocks && !isReversed) {
+				pauc$updateShadowTerrainDistanceInfo(requestedDistance, shadowTerrainDistanceCapBlocks);
+				distanceInfo = cappedDistanceInfo;
 				boxCuller = null;
 			} else {
-				pauc$updateShadowTerrainDistanceInfo(distance, Math.max(0.0D, distance));
+				pauc$updateShadowTerrainDistanceInfo(requestedDistance, Math.max(0.0D, distance));
 				distanceInfo = distance + " blocks " + setter;
 
 				if (distance == 0.0 && !isReversed) {
@@ -395,6 +405,7 @@ public class ShadowRenderer {
 			if (renderDistanceMultiplier < 0) {
 				renderDistance = IrisVideoSettings.shadowDistance;
 			}
+			renderDistance = fr.hoyatla.pauc.lod.PauCPhotonShadowCoverage.extendShadowTerrainDistanceChunks(renderDistance);
 
 			visibleBlockEntities = new ArrayList<>();
 

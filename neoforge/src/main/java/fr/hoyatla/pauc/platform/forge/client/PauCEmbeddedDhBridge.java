@@ -94,6 +94,7 @@ public final class PauCEmbeddedDhBridge {
 	private static final String RELIEF_UNDERGROUND_CAVE_CULLING_HEIGHT_PROPERTY = "pauc.lod.reliefUndergroundCaveCullingHeight";
 	private static final String RELIEF_SURFACE_PLAYER_Y_PROPERTY = "pauc.lod.reliefSurfacePlayerY";
 	private static final String RELIEF_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.reliefOverdrawPrevention";
+	private static final String RELIEF_VANILLA_FADE_MODE_PROPERTY = "pauc.lod.reliefVanillaFadeMode";
 	private static final String SHADER_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.shaderOverdrawPrevention";
 	private static final String SHADER_FALLBACK_OVERDRAW_PREVENTION_PROPERTY = "pauc.lod.shaderFallbackOverdrawPrevention";
 	private static final String SHADER_VANILLA_FADE_MODE_PROPERTY = "pauc.lod.shaderVanillaFadeMode";
@@ -533,7 +534,7 @@ public final class PauCEmbeddedDhBridge {
 			return;
 		}
 		if (shaderRuntimeChange
-			&& readBoolean(CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY, false)) {
+			&& readBoolean(CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY, true)) {
 			clearRenderDataCacheForSignatureChange(previousSignature, signature, "shader runtime changed");
 			return;
 		}
@@ -918,7 +919,11 @@ public final class PauCEmbeddedDhBridge {
 				EDhApiMcRenderingFadeMode.class,
 				keepUnderVanilla || shaderFallback ? EDhApiMcRenderingFadeMode.NONE : EDhApiMcRenderingFadeMode.SINGLE_PASS
 			)
-			: EDhApiMcRenderingFadeMode.NONE;
+			: readEnum(
+				RELIEF_VANILLA_FADE_MODE_PROPERTY,
+				EDhApiMcRenderingFadeMode.class,
+				keepUnderVanilla ? EDhApiMcRenderingFadeMode.NONE : EDhApiMcRenderingFadeMode.SINGLE_PASS
+			);
 		boolean configured = setDhCoreConfigValueWithoutSaving(DH_QUALITY_CONFIG_CLASS, DH_VANILLA_FADE_MODE_FIELD, fadeMode)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_OVERDRAW_PREVENTION_FIELD, overdrawPrevention)
 			& setDhCoreConfigValueWithoutSaving(DH_CULLING_CONFIG_CLASS, DH_REDUCE_OVERDRAW_FAST_MOVEMENT_FIELD, Boolean.FALSE);

@@ -250,7 +250,16 @@ public final class PauCClientFluidityState {
 		if (!snapshot.active || snapshot.visibleFillFloorCeiling <= 0) {
 			return visibleFillFloor;
 		}
+		if (shouldPrioritizeFillRecovery(PauCClientChunkPriorityScorer.isMovementCatchupActive())) {
+			return visibleFillFloor;
+		}
 		return Math.max(48, Math.min(visibleFillFloor, snapshot.visibleFillFloorCeiling));
+	}
+
+	public static boolean shouldPrioritizeFillRecovery(boolean movementCatchup) {
+		boolean coverageDebt = PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt();
+		boolean nearCoverageDebt = PauCClientFrontierWarmupManager.hasNearCoverageDebt();
+		return shouldPrioritizeFillRecovery(movementCatchup, coverageDebt, nearCoverageDebt);
 	}
 
 	public static int adjustGenerationRate(int generationRequestRateLimit, boolean movementCatchup) {
@@ -354,12 +363,54 @@ public final class PauCClientFluidityState {
 
 	public static double adjustWarmupScale(double scale) {
 		Snapshot snapshot = lastSnapshot;
-		return snapshot.active ? Math.max(0.15D, Math.min(1.50D, scale * snapshot.warmupScale)) : scale;
+		if (!snapshot.active) {
+			return scale;
+		}
+		double adjusted = Math.max(0.15D, Math.min(1.50D, scale * snapshot.warmupScale));
+		if (shouldPrioritizeFillRecovery(PauCClientChunkPriorityScorer.isMovementCatchupActive())) {
+			double floor = readDouble(
+				"pauc.lod.fillRecoveryWarmupFloor",
+				PauCLodShaderContext.isShaderPackInUse() ? 0.92D : 1.00D,
+				0.15D,
+				2.0D
+			);
+			adjusted = Math.max(adjusted, floor);
+		}
+		return adjusted;
 	}
 
 	public static double adjustMeshBudgetScale(double scale) {
 		Snapshot snapshot = lastSnapshot;
-		return snapshot.active ? Math.max(0.15D, Math.min(1.60D, scale * snapshot.meshScale)) : scale;
+		if (!snapshot.active) {
+			return scale;
+		}
+		double adjusted = Math.max(0.15D, Math.min(1.60D, scale * snapshot.meshScale));
+		if (shouldPrioritizeFillRecovery(PauCClientChunkPriorityScorer.isMovementCatchupActive())) {
+			double floor = readDouble(
+				"pauc.lod.fillRecoveryMeshBudgetFloor",
+				PauCLodShaderContext.isShaderPackInUse() ? 0.82D : 0.90D,
+				0.15D,
+				2.0D
+			);
+			adjusted = Math.max(adjusted, floor);
+		}
+		return adjusted;
+	}
+
+	private static boolean shouldPrioritizeFillRecovery(boolean movementCatchup, boolean coverageDebt, boolean nearCoverageDebt) {
+		if (movementCatchup || coverageDebt || nearCoverageDebt) {
+			return true;
+		}
+		if (!PauCClientFrontierWarmupManager.isDirectHorizonFillActive(PauCLodClientSettings.targetDistanceChunks())
+			|| !PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()) {
+			return false;
+		}
+		if (PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() <= 0
+			&& PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() <= 0) {
+			return false;
+		}
+		return shouldProtectBacklogRecovery(false, false, false);
 	}
 
 	private static int targetDistanceCeiling(

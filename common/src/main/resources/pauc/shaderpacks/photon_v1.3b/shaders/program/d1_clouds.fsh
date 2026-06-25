@@ -156,13 +156,30 @@ void main() {
     ivec2 texel = ivec2(gl_FragCoord.xy);
 
     clouds = vec4(0.0, 0.0, 0.0, 1.0);
+    clouds_data = vec2(1e6, 0.0);
 
 #if defined WORLD_OVERWORLD
+    if (isEyeInWater != 0) {
+        return;
+    }
+
     ivec2 checkerboard_pos = CLOUDS_TEMPORAL_UPSCALING * texel +
         clouds_checkerboard_offsets[frameCounter % checkerboard_area];
 
     vec2 new_uv =
         vec2(checkerboard_pos) / vec2(view_res) * rcp(float(taau_render_scale));
+
+    vec2 edge_margin =
+#ifdef TAAU
+        max(2.0 * view_pixel_size / taau_render_scale, vec2(0.004));
+#else
+        max(2.0 * view_pixel_size, vec2(0.004));
+#endif
+
+    if (any(lessThan(new_uv, edge_margin)) ||
+        any(greaterThan(new_uv, 1.0 - edge_margin))) {
+        return;
+    }
 
     // Get maximum depth from area covered by this fragment
     float depth_max = depth_max_4x4(depthtex1, taau_render_scale);
@@ -222,8 +239,6 @@ void main() {
     clouds_data.y = result.scattering.w;
 #else
     clouds = vec4(0.0, 0.0, 0.0, 1.0);
-    clouds_data.x = 1e6;
-    clouds_data.y = 0.0;
 #endif
 
     // Crepuscular rays
@@ -242,5 +257,13 @@ void main() {
     // Aurora
 
     clouds.xyz += draw_aurora(ray_dir, dither) * clouds.w;
+
+    // Keep the combined sky buffer numerically sane and only let actual cloud
+    // coverage project in front of terrain later.
+    clouds.xyz = min(max0(clouds.xyz), vec3(16.0));
+    clouds.w = clamp01(clouds.w);
+    if (1.0 - clouds.w < 0.015) {
+        clouds_data.x = 1e6;
+    }
 #endif
 }

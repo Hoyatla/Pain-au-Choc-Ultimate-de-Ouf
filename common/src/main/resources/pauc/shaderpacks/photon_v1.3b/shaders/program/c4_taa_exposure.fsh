@@ -292,14 +292,29 @@ void main() {
     vec2 velocity =
         closest.xy - reproject_scene_space(closest_scene, hand, is_lod).xy;
     vec2 previous_uv = uv - velocity;
+    vec2 history_margin =
+#ifdef TAAU
+        max(3.0 * view_pixel_size / taau_render_scale, vec2(0.006));
+#else
+        max(3.0 * view_pixel_size, vec2(0.006));
+#endif
+    bool history_edge_safe =
+        all(greaterThanEqual(previous_uv, history_margin)) &&
+        all(lessThanEqual(previous_uv, 1.0 - history_margin));
+    vec2 previous_uv_clamped =
+        clamp(previous_uv, history_margin, 1.0 - history_margin);
 
     vec3 history_color =
-        catmull_rom_filter_fast_rgb(colortex5, previous_uv, 0.6);
-    history_color = max0(history_color); // Eliminate NaNs in the history
+        catmull_rom_filter_fast_rgb(colortex5, previous_uv_clamped, 0.6);
+    bool invalid_history =
+        !history_edge_safe || hand || any(isnan(history_color)) ||
+        max_of(history_color) > 64.0;
+    history_color = invalid_history ? vec3(0.0) : max0(history_color);
 
-    float pixel_age = texelFetch(colortex5, ivec2(previous_uv * view_res), 0).a;
-    pixel_age =
-        max0(pixel_age * float(clamp01(previous_uv) == previous_uv) + 1.0);
+    float pixel_age = invalid_history
+        ? 1.0
+        : texelFetch(colortex5, ivec2(previous_uv_clamped * view_res), 0).a;
+    pixel_age = invalid_history ? 1.0 : max0(pixel_age + 1.0);
 
     // Distance factor to favour responsiveness closer to the camera and image
     // stability further away
@@ -320,12 +335,17 @@ void main() {
     current_color = reinhard(current_color);
     history_color = reinhard(history_color);
 
-    history_color = neighborhood_clipping(
-        texel,
-        current_color,
-        history_color,
-        distance_factor
-    );
+    if (invalid_history) {
+        history_color = current_color;
+        alpha = 1.0;
+    } else {
+        history_color = neighborhood_clipping(
+            texel,
+            current_color,
+            history_color,
+            distance_factor
+        );
+    }
 #else
     // Temporal upscaling
     vec2 pos = clamp01(uv + 0.5 * taa_offset * rcp(taau_render_scale)) *
@@ -335,7 +355,9 @@ void main() {
                       // Antialiasing Techniques" section 5.1
     vec3 current_color = catmull_rom_filter(colortex0, pos, confidence).rgb;
 
-    if (min_of(current_color) < 0.0) {
+    if (min_of(current_color) < 0.0 ||
+        any(isnan(current_color)) ||
+        max_of(current_color) > 64.0) {
         // Fix negatives arising around very dark objects
         current_color = texture(colortex0, pos).rgb;
     }
@@ -347,25 +369,34 @@ void main() {
     vec3 min_color = texture(colortex1, pos).rgb * 2.0 - 1.0;
     vec3 max_color = texture(colortex2, pos).rgb * 2.0 - 1.0;
 
-    bool history_clipped;
-    history_color = rgb_to_ycocg(history_color);
-    history_color =
-        clip_aabb(history_color, min_color, max_color, history_clipped);
-    float flicker_reduction = history_clipped
-        ? 0.0
-        : get_flicker_reduction(history_color, min_color, max_color);
-    history_color = ycocg_to_rgb(history_color);
+    if (invalid_history) {
+        history_color = current_color;
+        alpha = 1.0;
+    } else {
+        bool history_clipped;
+        history_color = rgb_to_ycocg(history_color);
+        history_color =
+            clip_aabb(history_color, min_color, max_color, history_clipped);
+        float flicker_reduction = history_clipped
+            ? 0.0
+            : get_flicker_reduction(history_color, min_color, max_color);
+        history_color = ycocg_to_rgb(history_color);
 
-    alpha *= pow(confidence, TAAU_CONFIDENCE_REJECTION);
-    alpha *= 1.0 - TAAU_FLICKER_REDUCTION * flicker_reduction;
+        alpha *= pow(confidence, TAAU_CONFIDENCE_REJECTION);
+        alpha *= 1.0 - TAAU_FLICKER_REDUCTION * flicker_reduction;
+    }
 #endif
 
     // Offcenter rejection from Jessie, which is originally by Zombye
     // Reduces blur in motion
-    vec2 pixel_offset = 1.0 - abs(2.0 * fract(view_res * previous_uv) - 1.0);
+    vec2 pixel_offset =
+        1.0 - abs(2.0 * fract(view_res * previous_uv_clamped) - 1.0);
     float offcenter_rejection =
         sqrt(pixel_offset.x * pixel_offset.y) * TAA_OFFCENTER_REJECTION +
         (1.0 - TAA_OFFCENTER_REJECTION);
+    if (invalid_history) {
+        offcenter_rejection = 1.0;
+    }
 
     alpha = 1.0 - alpha;
     alpha *= offcenter_rejection;

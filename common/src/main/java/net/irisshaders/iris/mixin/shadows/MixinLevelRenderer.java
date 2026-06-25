@@ -100,6 +100,9 @@ public class MixinLevelRenderer implements CullingDataCache {
 	private static boolean pauc$reportedMainCameraShadowFallback;
 
 	@Unique
+	private static boolean pauc$reportedPhotonShadowFallback;
+
+	@Unique
 	private static boolean pauc$reportedShadowChunkInfoConstructorFailure;
 
 	@Unique
@@ -129,6 +132,30 @@ public class MixinLevelRenderer implements CullingDataCache {
 	@Override
 	public void useMainCameraChunksIfShadowSetupFailed() {
 		pauc$syncShadowCacheLevel();
+
+		// Photon ships a native DH shadow path. When that native path returns a valid terrain set,
+		// trust it. The previous deterministic rebuild replaced it every frame with a broader
+		// camera/player reconstruction, which is the path that produced the dark/incorrect screen-space
+		// lighting the user is seeing. For Photon we only intervene when the native setup returns EMPTY.
+		if (pauc$shouldUseMinimalPhotonShadowFallback()) {
+			if (!renderChunksInFrustum.isEmpty()) {
+				pauc$rememberShadowChunks(renderChunksInFrustum, renderChunksInFrustum.size());
+				return;
+			}
+			if (!pauc$mainRenderChunksSnapshot.isEmpty()) {
+				renderChunksInFrustum = new ObjectArrayList<>(pauc$mainRenderChunksSnapshot);
+				pauc$rememberShadowChunks(renderChunksInFrustum, renderChunksInFrustum.size());
+				if (!pauc$reportedPhotonShadowFallback) {
+					pauc$reportedPhotonShadowFallback = true;
+					Iris.logger.info("PauC restored Photon shadow terrain from the live main-camera chunk list after an empty native shadow setup.");
+				}
+				return;
+			}
+			if (!pauc$lastStableShadowChunks.isEmpty()) {
+				renderChunksInFrustum = new ObjectArrayList<>(pauc$lastStableShadowChunks);
+			}
+			return;
+		}
 
 		// Opt-out: if the pack drives its own shadow terrain and explicitly disables PauC's fallback,
 		// leave whatever the shadow setup produced untouched.
@@ -212,6 +239,13 @@ public class MixinLevelRenderer implements CullingDataCache {
 				PauCLodShaderRuntime.describe()
 			);
 		}
+	}
+
+	@Unique
+	private boolean pauc$shouldUseMinimalPhotonShadowFallback() {
+		return PauCLodShaderContext.isShaderPackInUse()
+			&& PauCLodShaderProfiles.currentFamily() == PauCLodShaderProfiles.Family.PHOTON
+			&& PauCLodShaderContext.hasScannedDhShadowProgram();
 	}
 
 	@Unique

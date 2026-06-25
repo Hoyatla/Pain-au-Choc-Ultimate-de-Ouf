@@ -34,11 +34,13 @@ public final class PauCForgeBootstrap {
 		"net.paucor.neoforge.PauCorForgeMod"
 	};
 	private static final String PAUCOR_FORGE_BOOTSTRAP_METHOD = "bootstrap";
+	private static final String DEV_OVERRIDES_ENABLED_PROPERTY = "pauc.devOverridesEnabled";
 	private static final List<KeyMapping> KEY_MAPPINGS = new ArrayList<>();
 	private static final PauCCompatEventBridge COMPAT_EVENT_BRIDGE = new PauCCompatEventBridge();
 	private static final PauCWorldgenEventBridge WORLDGEN_EVENT_BRIDGE = new PauCWorldgenEventBridge();
 	private static boolean initialized;
 	private static boolean paucorBootstrapUnavailableLogged;
+	private static boolean devOverridesIgnoredLogged;
 
 	private PauCForgeBootstrap() {
 	}
@@ -68,12 +70,23 @@ public final class PauCForgeBootstrap {
 		MinecraftForge.EVENT_BUS.register(WORLDGEN_EVENT_BRIDGE);
 	}
 
-	// Loads config/paucultimate-dev.properties at startup and pushes its "pauc.*" keys into the system properties, so dev
-	// toggles documented in that file actually take effect. Real -D JVM args win (we only set keys not already present).
-	// Called before the compat guards and the shader pipeline so overrides are visible everywhere downstream.
+	// Local dev overrides are now opt-in so packaged builds and test instances do not
+	// silently inherit stale per-machine toggles from config.
 	private static void loadDevPropertyOverrides() {
 		Path devFile = FMLPaths.CONFIGDIR.get().resolve(PauCIdentity.MOD_ID + "-dev.properties");
 		if (!Files.isRegularFile(devFile)) {
+			return;
+		}
+
+		if (!Boolean.parseBoolean(System.getProperty(DEV_OVERRIDES_ENABLED_PROPERTY, "false"))) {
+			if (!devOverridesIgnoredLogged) {
+				devOverridesIgnoredLogged = true;
+				LOGGER.info(
+					"PauC ignored local dev overrides from {}. Set -D{}=true to enable them explicitly.",
+					devFile.getFileName(),
+					DEV_OVERRIDES_ENABLED_PROPERTY
+				);
+			}
 			return;
 		}
 

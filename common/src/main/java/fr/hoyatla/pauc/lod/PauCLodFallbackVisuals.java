@@ -71,6 +71,10 @@ public final class PauCLodFallbackVisuals {
 	private static final float LATE_DARK_DIRECTIONAL_LIGHT = 0.14F;
 	private static final float LATE_CLEAR_WATER_BLEND = 0.12F;
 	private static final float LATE_DARK_WATER_BLEND = 0.06F;
+	private static final float CLEAR_DISTANCE_FOG_INTENSITY = 0.0F;
+	private static final float CLEAR_DISTANCE_FOG_FLOOR = 0.0F;
+	private static final float CLEAR_DISTANCE_WATER_BLEND = 0.0F;
+	private static final float CLEAR_DISTANCE_FAR_DESATURATION = 0.0F;
 	private static final float LATE_CLEAR_FAR_DESATURATION = 0.0F;
 	private static final float LATE_DARK_FAR_DESATURATION = 0.0F;
 	private static final float LATE_CLEAR_EMISSIVE_BOOST = 0.10F;
@@ -220,6 +224,14 @@ public final class PauCLodFallbackVisuals {
 			defaultFarDesaturation = 0.0F;
 		}
 
+		boolean clearDistancePresentation = !underwater && !shaderNative;
+		if (clearDistancePresentation) {
+			defaultFogIntensity = CLEAR_DISTANCE_FOG_INTENSITY;
+			defaultFogFloor = CLEAR_DISTANCE_FOG_FLOOR;
+			defaultWaterBlend = CLEAR_DISTANCE_WATER_BLEND;
+			defaultFarDesaturation = CLEAR_DISTANCE_FAR_DESATURATION;
+		}
+
 		float seamClipDistance = PauCLodNearClipOverride.currentBoundaryClipBlocks(range.lodStartChunk() * 16.0F);
 		float seamMorphWidth = readFloat(SEAM_MORPH_WIDTH_PROPERTY, STANDARD_SEAM_MORPH_WIDTH_BLOCKS, 0.0F, 256.0F);
 		float configuredSeamMorphStrength = configuredShaderOffSeamMorphStrength();
@@ -227,6 +239,18 @@ public final class PauCLodFallbackVisuals {
 			PauCLodSeamState.update(configuredSeamMorphStrength > 0.0F ? seamClipDistance : 0.0F, seamMorphWidth);
 		}
 		PauCLodSeamState.Snapshot seam = PauCLodSeamState.current();
+		float fogIntensity = clearDistancePresentation
+			? CLEAR_DISTANCE_FOG_INTENSITY
+			: readFloat(FOG_INTENSITY_PROPERTY, defaultFogIntensity, 0.0F, 1.0F);
+		float fogFloor = clearDistancePresentation
+			? CLEAR_DISTANCE_FOG_FLOOR
+			: readFloat(FOG_FLOOR_PROPERTY, defaultFogFloor, 0.0F, 0.95F);
+		float waterBlend = clearDistancePresentation
+			? CLEAR_DISTANCE_WATER_BLEND
+			: readFloat(WATER_BLEND_PROPERTY, defaultWaterBlend, 0.0F, 0.75F);
+		float farDesaturation = clearDistancePresentation
+			? CLEAR_DISTANCE_FAR_DESATURATION
+			: readFloat(FAR_DESATURATION_PROPERTY, defaultFarDesaturation, 0.0F, 1.0F);
 		State state = new State(
 			readFloat(STRENGTH_PROPERTY, 1.0F, 0.0F, 1.0F),
 			lateRender,
@@ -237,16 +261,16 @@ public final class PauCLodFallbackVisuals {
 			1.0F,
 			fogStart,
 			fogEnd,
-			readFloat(FOG_INTENSITY_PROPERTY, defaultFogIntensity, 0.0F, 1.0F),
-			readFloat(FOG_FLOOR_PROPERTY, defaultFogFloor, 0.0F, 0.95F),
+			fogIntensity,
+			fogFloor,
 			readFloat(BRIGHTNESS_PROPERTY, defaultBrightness, 0.5F, 2.0F),
 			readFloat(SHADOW_LIFT_PROPERTY, defaultShadowLift, 0.0F, 0.55F),
 			readFloat(SATURATION_PROPERTY, defaultSaturation, 0.0F, 1.5F),
 			readFloat(CONTRAST_PROPERTY, defaultContrast, 0.0F, 1.5F),
 			readFloat(GAMMA_PROPERTY, defaultGamma, 0.25F, 2.0F),
 			readFloat(DIRECTIONAL_LIGHT_PROPERTY, defaultDirectionalLight, 0.0F, 0.75F),
-			readFloat(WATER_BLEND_PROPERTY, defaultWaterBlend, 0.0F, 0.75F),
-			readFloat(FAR_DESATURATION_PROPERTY, defaultFarDesaturation, 0.0F, 1.0F),
+			waterBlend,
+			farDesaturation,
 			readFloat(EMISSIVE_BOOST_PROPERTY, defaultEmissiveBoost, 0.0F, 0.75F),
 			rescueStrength,
 			shaderOffSeamMorphStrength(seam, configuredSeamMorphStrength),
@@ -381,9 +405,9 @@ public final class PauCLodFallbackVisuals {
 				+ "    vec3 gradedWater = mix(color, min(nearWater, color), 0.35 * waterNear);\n"
 				+ "    gradedWater = mix(gradedWater, min(midWater, gradedWater), 0.55 * waterMid);\n"
 				+ "    gradedWater = mix(gradedWater, min(farWater, gradedWater), 0.70 * waterFar);\n"
-				+ "    gradedWater = mix(gradedWater, mix(gradedWater, uPaucFallbackFogColor.rgb, 0.18), waterWall);\n"
+				+ "    gradedWater = mix(gradedWater, mix(gradedWater, uPaucFallbackFogColor.rgb, 0.18), waterWall * clamp(uPaucFallbackWaterBlend, 0.0, 1.0));\n"
 				+ "    color = mix(color, gradedWater, clamp(uPaucFallbackWaterBlend, 0.0, 1.0) * waterLike);\n"
-				+ "    color = mix(color, mix(color, uPaucFallbackFogColor.rgb, 0.12), waterWall * clamp(uPaucFallbackWaterBlend + 0.18, 0.0, 1.0));\n"
+				+ "    color = mix(color, mix(color, uPaucFallbackFogColor.rgb, 0.12), waterWall * clamp(uPaucFallbackWaterBlend, 0.0, 1.0));\n"
 				+ "    float farTone = smoothstep(max(uPaucFallbackFogStart - 192.0, 0.0), uPaucFallbackFogEnd, viewDist);\n"
 				+ "    float farLum = dot(color, vec3(0.2126, 0.7152, 0.0722));\n"
 				+ "    color = mix(color, mix(vec3(farLum), color, 0.72), clamp(uPaucFallbackFarDesaturation, 0.0, 1.0) * farTone);\n"
@@ -394,7 +418,7 @@ public final class PauCLodFallbackVisuals {
 				+ "    color = mix(color, max(color, originalColor * 1.10), clamp(uPaucFallbackEmissiveBoost, 0.0, 1.0) * warmLight);\n"
 				+ "    color = mix(color, uPaucFallbackFogColor.rgb, fogBlend);\n"
 				+ "    fragColor.rgb = mix(fragColor.rgb, clamp(color, 0.0, 1.0), clamp(uPaucFallbackVisualStrength, 0.0, 1.0));\n"
-				+ "    fragColor.a *= 1.0 - clamp(waterWall * 0.55, 0.0, 0.55);\n"
+				+ "    fragColor.a *= 1.0 - clamp(waterWall * clamp(uPaucFallbackWaterBlend, 0.0, 1.0) * 0.20, 0.0, 0.20);\n"
 				+ "}\n"
 				+ "\n"
 				+ "void main()\n"

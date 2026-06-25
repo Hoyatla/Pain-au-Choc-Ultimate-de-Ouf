@@ -270,11 +270,15 @@ public class IrisLodRenderProgram {
 	}
 
 	public static IrisLodRenderProgram createProgram(String name, boolean isShadowPass, boolean translucent, ProgramSource source, CustomUniforms uniforms, IrisRenderingPipeline pipeline) {
+		PauCLodShaderProfiles.Profile profile = currentShaderLodProfile();
+		boolean preserveBundledNativeShader = shouldPreserveBundledNativeShaderProgram(profile);
 		String fragmentSource = source.getFragmentSource().orElseThrow(RuntimeException::new);
-		fragmentSource = alignNativeDhJoinDistance(fragmentSource, isShadowPass, name);
-		fragmentSource = alignPaucChunkBoundaryFade(fragmentSource, isShadowPass, name);
-		fragmentSource = relaxNativeDhNearFade(fragmentSource, isShadowPass, name);
-		fragmentSource = applyPaucLodShadowGradient(fragmentSource, isShadowPass, translucent, name);
+		if (!preserveBundledNativeShader) {
+			fragmentSource = alignNativeDhJoinDistance(fragmentSource, isShadowPass, name);
+			fragmentSource = alignPaucChunkBoundaryFade(fragmentSource, isShadowPass, name);
+			fragmentSource = relaxNativeDhNearFade(fragmentSource, isShadowPass, name);
+			fragmentSource = applyPaucLodShadowGradient(fragmentSource, isShadowPass, translucent, name);
+		}
 		Map<PatchShaderType, String> transformed = TransformPatcher.patchDHTerrain(
 			name,
 			source.getVertexSource().orElseThrow(RuntimeException::new),
@@ -293,19 +297,23 @@ public class IrisLodRenderProgram {
 		tessEval = ensureLodBlockMaterialConstants(tessEval, name);
 		geometry = ensureLodBlockMaterialConstants(geometry, name);
 		fragment = ensureLodBlockMaterialConstants(fragment, name);
-		fragment = alignNativeDhJoinDistance(fragment, isShadowPass, name);
-		fragment = alignPaucChunkBoundaryFade(fragment, isShadowPass, name);
-		fragment = attenuateDhFog(fragment, name);
-		fragment = relaxNativeDhNearFade(fragment, isShadowPass, name);
-		fragment = applyPaucLodPresentationGradient(fragment, isShadowPass, name);
-		fragment = applyPaucPhotonWaterGradient(fragment, isShadowPass, name);
-		fragment = applyPaucBlissHorizonFog(fragment, isShadowPass, name);
-		fragment = applyPaucBlissWaterSeamPatch(fragment, isShadowPass, name);
-		fragment = applyPaucLodShadowGradient(fragment, isShadowPass, translucent, name);
-		fragment = applyPaucUnderwaterRuntimeFog(fragment, isShadowPass, name);
+		if (!preserveBundledNativeShader) {
+			fragment = alignNativeDhJoinDistance(fragment, isShadowPass, name);
+			fragment = alignPaucChunkBoundaryFade(fragment, isShadowPass, name);
+			fragment = attenuateDhFog(fragment, name);
+			fragment = relaxNativeDhNearFade(fragment, isShadowPass, name);
+			fragment = applyPaucLodPresentationGradient(fragment, isShadowPass, name);
+			fragment = applyPaucPhotonWaterGradient(fragment, isShadowPass, name);
+			fragment = applyPaucBlissHorizonFog(fragment, isShadowPass, name);
+			fragment = applyPaucBlissWaterSeamPatch(fragment, isShadowPass, name);
+			fragment = applyPaucLodShadowGradient(fragment, isShadowPass, translucent, name);
+			fragment = applyPaucUnderwaterRuntimeFog(fragment, isShadowPass, name);
+		}
 		fragment = ensurePaucFinalUniforms(fragment);
-		vertex = PauCShaderPackProgramPatches.patchVertex(source.getName(), vertex);
-		fragment = PauCShaderPackProgramPatches.patchFragment(source.getName(), fragment);
+		if (!preserveBundledNativeShader) {
+			vertex = PauCShaderPackProgramPatches.patchVertex(source.getName(), vertex);
+			fragment = PauCShaderPackProgramPatches.patchFragment(source.getName(), fragment);
+		}
 		Map<PatchShaderType, String> printedSources = new EnumMap<>(PatchShaderType.class);
 		printedSources.put(PatchShaderType.VERTEX, vertex);
 		printedSources.put(PatchShaderType.TESS_CONTROL, tessControl);
@@ -335,6 +343,15 @@ public class IrisLodRenderProgram {
 
 	private static PauCLodShaderProfiles.Profile shaderLodProfile(PauCLodShaderProfiles.Family family) {
 		return PauCLodShaderProfiles.profile(family);
+	}
+
+	private static boolean shouldPreserveBundledNativeShaderProgram(PauCLodShaderProfiles.Profile profile) {
+		if (profile == null || !profile.preservesNativeDhPresentation()) {
+			return false;
+		}
+
+		return profile.family() == PauCLodShaderProfiles.Family.PHOTON
+			|| profile.family() == PauCLodShaderProfiles.Family.SOLAS;
 	}
 
 	private static String doFogMix(PauCLodShaderProfiles.Profile profile) {
@@ -905,13 +922,17 @@ public class IrisLodRenderProgram {
 			return source;
 		}
 
+		PauCLodShaderProfiles.Profile profile = currentShaderLodProfile();
+		boolean preserveNativeJoinOpacity = profile.preservesNativeDhPresentation();
 		Matcher matcher = FAR_BASED_ALPHA_FADE.matcher(source);
 		StringBuffer rewritten = new StringBuffer(source.length());
 		boolean patched = false;
 		while (matcher.find()) {
 			patched = true;
 			String distanceExpression = matcher.group(1);
-			String replacement = "color.a *= smoothstep(max(float(paucVanillaRenderDistance) - 16.0, 0.0), float(paucLodStartDistance) + 16.0, " + distanceExpression + ");";
+			String replacement = preserveNativeJoinOpacity
+				? "color.a *= 1.0;"
+				: "color.a *= smoothstep(max(float(paucVanillaRenderDistance) - 16.0, 0.0), float(paucLodStartDistance) + 16.0, " + distanceExpression + ");";
 			matcher.appendReplacement(rewritten, Matcher.quoteReplacement(replacement));
 		}
 		matcher.appendTail(rewritten);
@@ -1018,7 +1039,6 @@ public class IrisLodRenderProgram {
 			|| source == null
 			|| source.contains("paucDhPhotonWaterTone")
 			|| currentShaderLodProfile().family() != PauCLodShaderProfiles.Family.PHOTON
-			|| !currentShaderLodProfile().shouldApplyNativeWaterTonePatch()
 			|| !isWaterProgram(programName)
 			|| !source.contains("fragment_color")
 			|| !source.contains("scene_pos")
@@ -1026,26 +1046,9 @@ public class IrisLodRenderProgram {
 			return source;
 		}
 
-		Matcher matcher = PHOTON_WATER_FOG_APPLY.matcher(source);
-		StringBuffer rewritten = new StringBuffer(source.length());
-		boolean patched = false;
-		while (matcher.find()) {
-			patched = true;
-			String replacement = "{\n"
-				+ "    float paucDhPhotonWaterDistance = length(scene_pos.xz);\n"
-				+ "    float paucDhPhotonWaterEndFog = smoothstep(max(float(paucLodEndDistance) - " + farFogWidth(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON)) + ", 0.0), float(paucLodEndDistance), paucDhPhotonWaterDistance);\n"
-				+ photonWaterHorizonGradient(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON), "fragment_color", "paucDhPhotonWaterDistance", "paucDhPhotonWater")
-				+ "    fragment_color.rgb = mix(fragment_color.rgb, iris_FogColor.rgb, " + waterEndFogStrength(shaderLodProfile(PauCLodShaderProfiles.Family.PHOTON)) + " * paucDhPhotonWaterEndFog);\n"
-				+ "}\n"
-				+ "fragment_color.rgb = fragment_color.rgb * fog.a + fog.rgb;";
-			matcher.appendReplacement(rewritten, Matcher.quoteReplacement(replacement));
-		}
-		matcher.appendTail(rewritten);
-		if (patched && !paucNativeWaterGradientPatchLogged) {
-			paucNativeWaterGradientPatchLogged = true;
-			Iris.logger.info("PauC applied native DH water tone gradient for shader LOD presentation: {}.", programName);
-		}
-		return patched ? ensurePaucPresentationUniforms(rewritten.toString()) : source;
+		// Photon's own water path is preferable here. PauC's extra horizon/fog tint on
+		// native LOD water is what creates the white outer ring the user sees.
+		return source;
 	}
 
 	private static String applyPaucBlissHorizonFog(String source, boolean isShadowPass, String programName) {

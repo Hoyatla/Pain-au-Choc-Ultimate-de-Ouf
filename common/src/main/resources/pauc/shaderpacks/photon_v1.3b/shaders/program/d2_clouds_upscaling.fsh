@@ -57,6 +57,7 @@ uniform float eyeAltitude;
 uniform int moonPhase;
 uniform int frameCounter;
 uniform float frameTime;
+uniform int isEyeInWater;
 
 uniform vec3 light_dir;
 
@@ -193,6 +194,10 @@ void main() {
     vec4 current = texelFetch(colortex9, src_texel, 0);
     vec2 current_data = texelFetch(colortex10, src_texel, 0).xy;
     float depth = texelFetch(depthtex1, dst_texel, 0).x;
+    current.rgb = min(max0(current.rgb), vec3(16.0));
+    current.a = clamp01(current.a);
+    current_data.x = clamp(current_data.x, 0.0, 1e6);
+    current_data.y = clamp(current_data.y, 0.0, 16.0);
 
     bool is_hand;
     fix_hand_depth(depth, is_hand);
@@ -205,6 +210,7 @@ void main() {
     // Check for LoD terrain
     float depth_lod = texelFetch(lod_depth_tex, dst_texel, 0).x;
     bool is_lod = is_lod_terrain(depth, depth_lod);
+    float terrain_depth = is_lod ? depth_lod : depth;
 
     float depth_linear =
         screen_to_view_space_depth(gbufferProjectionInverse, depth);
@@ -228,6 +234,12 @@ void main() {
 #else
     const bool is_lod = false;
 #endif
+
+    if (isEyeInWater != 0) {
+        clouds_history = vec4(0.0, 0.0, 0.0, 1.0);
+        clouds_data = vec3(1e6, 0.0, 0.0);
+        return;
+    }
 
     // --------------------
     //   clouds upscaling
@@ -254,9 +266,9 @@ void main() {
             texture_min_4x4(colortex12, uv_clamped * taau_render_scale));
 
     // Early exit if clouds covered by terrain
-    if (depth != 1.0) {
+    if (terrain_depth != 1.0) {
         float view_distance_squared =
-            length_squared(screen_to_view_space(vec3(uv, depth), true));
+            length_squared(screen_to_view_space(vec3(uv, terrain_depth), true, is_lod));
         if (view_distance_squared < sqr(closest_distance) || is_hand) {
             clouds_history = current;
             clouds_data.x = 1e6; // apparent distance
@@ -279,6 +291,13 @@ void main() {
 #define previous_uv_clamped previous_uv
 #endif
 
+    vec2 reprojection_margin =
+#ifdef TAAU
+        max(2.0 * view_pixel_size / taau_render_scale, vec2(0.004));
+#else
+        max(2.0 * view_pixel_size, vec2(0.004));
+#endif
+
     vec4 history = max0(catmull_rom_filter_fast(
         colortex11,
         previous_uv_clamped * taau_render_scale,
@@ -286,6 +305,11 @@ void main() {
     ));
     vec3 history_data =
         texture(colortex12, previous_uv_clamped * taau_render_scale).xyz;
+    history.rgb = min(history.rgb, vec3(16.0));
+    history.a = clamp01(history.a);
+    history_data.x = clamp(history_data.x, 0.0, 1e6);
+    history_data.y = clamp(history_data.y, 0.0, CLOUDS_ACCUMULATION_LIMIT);
+    history_data.z = clamp(history_data.z, 0.0, 16.0);
 
     // Depth at the previous position
     float history_depth =
@@ -301,10 +325,15 @@ void main() {
     // Work out whether the history should be invalidated
     bool disocclusion = clamp01(previous_uv) != previous_uv;
     disocclusion = disocclusion ||
+        any(lessThan(previous_uv, reprojection_margin)) ||
+        any(greaterThan(previous_uv, 1.0 - reprojection_margin));
+    disocclusion = disocclusion ||
         (history_depth < 1.0 &&
          distance_to_terrain_squared < sqr(closest_distance));
     disocclusion = disocclusion || history_depth == 0.0; // Signals hand
     disocclusion = disocclusion || any(isnan(history));
+    disocclusion = disocclusion || isnan(history_data.x) || isnan(history_data.y) ||
+        isnan(history_data.z);
     disocclusion = disocclusion || world_age_changed;
 
     // Replace history if a disocclusion was detected

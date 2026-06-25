@@ -115,7 +115,22 @@ public final class PauCLodNearClipOverride {
 	}
 
 	public static boolean shouldKeepLodsUnderVanilla() {
-		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, false) || shouldAutoKeepLodsUnderVanillaForCurrentShader();
+		return readBoolean(KEEP_UNDER_VANILLA_PROPERTY, false)
+			|| shouldAutoKeepLodsUnderVanillaForCurrentShader()
+			|| isNonPaucShaderActive();
+	}
+
+	// Option 1: under a non-PAUC shaderpack (Photon, Solas...) keep LODs rendered UNDER vanilla at all times so LOD
+	// coverage tracks ACTUAL vanilla presence per-position (a LOD only vanishes when the vanilla chunk at its exact
+	// position covers it; and it fills under the player when vanilla unloads at altitude). The coverage-completeness
+	// guard (terrain-continuity / coverage-recovery hold) is deliberately NOT honoured for these packs in
+	// underVanillaClipBlocks(), so it can no longer pull the LODs back to a distance clip. Trade-off: still-building
+	// LODs may briefly show incomplete. This should NOT override true native DH shader paths, otherwise the shader's
+	// own join behavior never reaches the screen.
+	private static boolean isNonPaucShaderActive() {
+		return PauCLodShaderContext.isShaderPackInUse()
+			&& !PauCLodShaderContext.isDhNativeShaderActive()
+			&& PauCLodShaderProfiles.currentFamily() != PauCLodShaderProfiles.Family.PAUC;
 	}
 
 	private static boolean shouldAutoKeepLodsUnderVanillaForCurrentShader() {
@@ -234,6 +249,12 @@ public final class PauCLodNearClipOverride {
 	private static float underVanillaClipBlocks(PauCLodRange range, boolean groundedOverlapClip) {
 		float configuredClip = readFloat(UNDER_VANILLA_CLIP_BLOCKS_PROPERTY, 0.0F, 0.0F, 256.0F);
 		if (range == null || !range.enabled()) {
+			return configuredClip;
+		}
+
+		// Option 1 (non-PAUC shaders): keep LODs hard under vanilla at the configured clip (default 0) and do NOT
+		// let the coverage-recovery / feature-transition holds pull them back to a distance clip.
+		if (isNonPaucShaderActive()) {
 			return configuredClip;
 		}
 

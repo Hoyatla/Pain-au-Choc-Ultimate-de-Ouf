@@ -134,8 +134,15 @@ public final class PauCLodShaderPresentation {
 	}
 
 	private static boolean shouldNeutralizeNativeShaderFog() {
-		return readBoolean(NATIVE_SHADER_FOG_NEUTRALIZATION_PROPERTY, true)
-			&& PauCLodShaderContext.isDhNativeShaderActive();
+		if (!PauCLodShaderContext.isDhNativeShaderActive()) {
+			return false;
+		}
+
+		if (PauCLodShaderProfiles.currentFamily() != PauCLodShaderProfiles.Family.PAUC) {
+			return false;
+		}
+
+		return readBoolean(NATIVE_SHADER_FOG_NEUTRALIZATION_PROPERTY, true);
 	}
 
 	public static boolean shouldLateRenderFallbackLods() {

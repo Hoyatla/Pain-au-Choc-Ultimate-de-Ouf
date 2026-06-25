@@ -630,6 +630,7 @@ void main() {
     // Specular reflections
 
 #if defined ENVIRONMENT_REFLECTIONS || defined SKY_REFLECTIONS
+#if !defined PROGRAM_GBUFFERS_HAND_WATER
     if (material.ssr_multiplier > eps) {
         vec3 position_screen = vec3(
             gl_FragCoord.xy * rcp(taau_render_scale) * view_pixel_size,
@@ -652,6 +653,7 @@ void main() {
             is_water
         );
     }
+#endif
 #endif
 
     // Blending
@@ -680,6 +682,7 @@ void main() {
 
     // Fog
 
+#if !defined PROGRAM_GBUFFERS_HAND_WATER
     vec4 fog = common_fog(length(position_scene), false);
     fragment_color.rgb = fragment_color.rgb * fog.a + fog.rgb;
 
@@ -687,6 +690,7 @@ void main() {
 
     fragment_color.rgb =
         purkinje_shift(fragment_color.rgb, adjusted_light_levels);
+#endif
 
     // Refraction data
 

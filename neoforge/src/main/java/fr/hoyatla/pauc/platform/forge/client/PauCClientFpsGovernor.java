@@ -159,6 +159,7 @@ public final class PauCClientFpsGovernor {
 		updateRuntimeHudFps(fps, smoothedFps);
 		lastQueuePressure = queuePressure;
 		boolean shaderActive = PauCLodShaderContext.isShaderPackInUse();
+		boolean movementCatchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
 		PauCLodShaderProfiles.Family shaderFamily = PauCLodShaderProfiles.currentFamily();
 		PauCLodShaderContext.DhShaderMode dhMode = PauCLodShaderContext.effectiveDhMode();
 		String currentRuntime = runtimeId(shaderActive, shaderFamily);
@@ -214,6 +215,7 @@ public final class PauCClientFpsGovernor {
 		lastWorkloadRecovered = workloadRecovered;
 		boolean paucResolved = workloadSnapshot.paucResolved();
 		boolean externalFpsDip = workloadSnapshot.externalFpsDip();
+		boolean fillRecoveryPriority = PauCClientFluidityState.shouldPrioritizeFillRecovery(movementCatchup);
 		boolean resolvedFpsDip = externalFpsDip
 			|| (paucResolved
 				&& queueFullyDrained
@@ -221,7 +223,16 @@ public final class PauCClientFpsGovernor {
 				&& heapPressure < 0.88D
 				&& queuePressure < 0.08D);
 		boolean reliefEligibleFromFps = !externalFpsDip && !paucResolved && (rawRatio < 0.66D || deliveryRatio < 0.68D);
-		if (frameWatchdogSpike || reliefEligibleFromFps || heapPressure > 0.90D || queuePressure > 0.28D) {
+		boolean suppressReliefForFillRecovery = fillRecoveryPriority
+			&& !externalFpsDip
+			&& !frameWatchdogSpike
+			&& heapPressure < 0.90D;
+		if (suppressReliefForFillRecovery) {
+			lowFpsStreak = Math.max(0, lowFpsStreak - 2);
+			highFpsStreak = Math.max(0, highFpsStreak - 1);
+			qualityHeadroomStreak = 0;
+			qualityUpgradeConfirmations = 0;
+		} else if (frameWatchdogSpike || reliefEligibleFromFps || heapPressure > 0.90D || queuePressure > 0.28D) {
 			lowFpsStreak = rawRatio < 0.66D ? Math.max(lowFpsStreak + 1, 3) : lowFpsStreak + 1;
 			highFpsStreak = 0;
 			qualityHeadroomStreak = 0;
@@ -260,8 +271,10 @@ public final class PauCClientFpsGovernor {
 		updateVillageSeverePressure(deliveryRatio, workloadRecovered, queueDrained, queueFullyDrained, idleQueueResolved);
 
 		Policy policy;
-		boolean reliefPolicyFromFps = !resolvedFpsDip && !paucResolved && (rawRatio < 0.66D || deliveryRatio < 0.72D);
-		if (frameWatchdogSpike || reliefPolicyFromFps || queuePressure > 0.30D || lowFpsStreak >= 3) {
+		boolean reliefPolicyFromFps = !suppressReliefForFillRecovery && !resolvedFpsDip && !paucResolved && (rawRatio < 0.66D || deliveryRatio < 0.72D);
+		if (suppressReliefForFillRecovery && queuePressure > 0.12D) {
+			policy = shaderActive ? Policy.SHADER_RECOVERY : Policy.VANILLA_RECOVERY;
+		} else if (frameWatchdogSpike || reliefPolicyFromFps || (!suppressReliefForFillRecovery && queuePressure > 0.30D) || (!suppressReliefForFillRecovery && lowFpsStreak >= 3)) {
 			policy = shaderActive ? Policy.SHADER_RELIEF : Policy.VANILLA_RELIEF;
 		} else if (deliveryRatio < 0.95D || heapPressure > 0.82D || queuePressure > 0.12D) {
 			policy = shaderActive ? Policy.SHADER_BALANCED : Policy.VANILLA_BALANCED;
@@ -565,9 +578,7 @@ public final class PauCClientFpsGovernor {
 		boolean idleQueueResolved
 	) {
 		boolean villagePressure = PauCVillagePerformanceDiagnostics.isVillagePressureActive();
-		boolean recentVillageLoad = PauCVillagePerformanceDiagnostics.lastClientVillageEntityCount() > 0
-			|| PauCVillagePerformanceDiagnostics.lastRenderedVillageEntitiesWindow() >= readInt("pauc.lod.villageSevereRecentEntityWindow", 8, 0, 4096)
-			|| PauCVillagePerformanceDiagnostics.lastRenderedVillageBlockEntitiesWindow() >= readInt("pauc.lod.villageSevereRecentBlockEntityWindow", 24, 0, 4096);
+		boolean recentVillageLoad = hasRecentVillageLoad();
 		boolean villageLoadGone = !villagePressure || !recentVillageLoad;
 		double enterRatio = readDouble(VILLAGE_SEVERE_RATIO_PROPERTY, 0.83D, 0.40D, 1.20D);
 		double recoveryRatio = readDouble(VILLAGE_SEVERE_RECOVERY_RATIO_PROPERTY, 0.88D, enterRatio, 1.30D);
@@ -684,6 +695,8 @@ public final class PauCClientFpsGovernor {
 		boolean movementCatchup = PauCClientChunkPriorityScorer.isMovementCatchupActive();
 		boolean stabilizeLodPresentation = PauCClientFrontierWarmupManager.shouldStabilizeLodPresentation();
 		boolean nearCoverageDebt = PauCClientFrontierWarmupManager.hasNearCoverageDebt();
+		boolean coverageDebt = PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt();
+		boolean fillRecoveryPriority = PauCClientFluidityState.shouldPrioritizeFillRecovery(movementCatchup);
 		boolean shortTargetDistance = configuredTarget <= readInt("pauc.lod.shortTargetDistanceChunks", 16, 2, 32);
 		if (shortTargetDistance && !shaderActive) {
 			targetDistance = configuredTarget;
@@ -706,10 +719,10 @@ public final class PauCClientFpsGovernor {
 		if (!villageSeverePressure || stabilizeLodPresentation) {
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, visibleFillFloor);
 		}
-		if (shouldApplyVillagePressureRelief() && !stabilizeLodPresentation) {
+		if (shouldApplyVillagePressureRelief() && !stabilizeLodPresentation && !fillRecoveryPriority) {
 			generationRequestRateLimit = Math.min(generationRequestRateLimit, readInt(VILLAGE_GENERATION_RATE_PROPERTY, 32, 4, 128));
 		}
-		if (shouldApplyVillageSevereRelief() && !stabilizeLodPresentation) {
+		if (shouldApplyVillageSevereRelief() && !stabilizeLodPresentation && !fillRecoveryPriority) {
 			generationRequestRateLimit = Math.min(generationRequestRateLimit, readInt(VILLAGE_SEVERE_GENERATION_RATE_PROPERTY, 8, 2, 64));
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, readInt(VILLAGE_SEVERE_GENERATION_FLOOR_PROPERTY, 32, 8, 128));
 		}
@@ -734,7 +747,10 @@ public final class PauCClientFpsGovernor {
 		if (!readBoolean(ALLOW_GENERATION_REDUCTION_PROPERTY, PauCLodGameplayProfile.allowDynamicGenerationReduction())) {
 			generationRequestRateLimit = Math.max(generationRequestRateLimit, PauCLodClientSettings.configuredGenerationRequestRateLimit());
 		}
-		boolean emergencyRelief = policy == Policy.SHADER_RELIEF || policy == Policy.VANILLA_RELIEF;
+		boolean emergencyRelief = (policy == Policy.SHADER_RELIEF || policy == Policy.VANILLA_RELIEF)
+			&& !fillRecoveryPriority
+			&& !coverageDebt
+			&& !nearCoverageDebt;
 		if (emergencyRelief && !movementCatchup) {
 			boolean highFpsCoverageDebt = highTargetVanillaMode() && (PauCEmbeddedLodRuntimeDiagnostics.hasCoverageDebt() || nearCoverageDebt);
 			int emergencyCap = shaderActive
@@ -1310,6 +1326,7 @@ public final class PauCClientFpsGovernor {
 
 	private static boolean shouldApplyVillagePressureRelief() {
 		return PauCVillagePerformanceDiagnostics.isVillagePressureActive()
+			&& hasRecentVillageLoad()
 			&& !idleQueueResolvedState
 			&& !backlogResolved
 			&& !lastWorkloadRecovered;
@@ -1317,9 +1334,16 @@ public final class PauCClientFpsGovernor {
 
 	private static boolean shouldApplyVillageSevereRelief() {
 		return villageSeverePressure
+			&& hasRecentVillageLoad()
 			&& !idleQueueResolvedState
 			&& !backlogResolved
 			&& !lastWorkloadRecovered;
+	}
+
+	private static boolean hasRecentVillageLoad() {
+		return PauCVillagePerformanceDiagnostics.lastClientVillageEntityCount() > 0
+			|| PauCVillagePerformanceDiagnostics.lastRenderedVillageEntitiesWindow() >= readInt("pauc.lod.villageSevereRecentEntityWindow", 8, 0, 4096)
+			|| PauCVillagePerformanceDiagnostics.lastRenderedVillageBlockEntitiesWindow() >= readInt("pauc.lod.villageSevereRecentBlockEntityWindow", 24, 0, 4096);
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {

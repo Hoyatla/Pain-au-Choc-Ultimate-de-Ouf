@@ -66,11 +66,19 @@ public class MixinFogRenderer {
 			PauCLodFogState.reset();
 			return;
 		}
-		// Optional toggle: disable the vanilla distance fog "dome" by pushing the fog distances far beyond the
-		// view. IMPORTANT: only when NO shader pack is active. A shader pack owns its own atmospheric fog and
-		// reads these same fog uniforms, so we must never touch them while a shader is in use — the toggle is
-		// strictly a vanilla/shaderless fog control and must not remove the shader's fog.
-		if (!PauCLodClientSettings.isVanillaFogEnabled() && !PauCShaders.isShaderPackInUse()) {
+		PauCLodRange range = PauCLodHorizonState.currentRange();
+		boolean shaderManagedFog = PauCShaders.isShaderPackInUse();
+		if (!shaderManagedFog && range != null && range.enabled()) {
+			RenderSystem.setShaderFogStart(PAUC_DISABLED_FOG_START);
+			RenderSystem.setShaderFogEnd(PAUC_DISABLED_FOG_END);
+			PauCLodFogState.reset();
+			return;
+		}
+		// Toggle: disable PauC's vanilla distance fog "dome" by pushing the fog distances far beyond the view.
+		// Applies in BOTH shaderless and shader modes (per design: the PauC vanilla fog is unwanted). Under a shader
+		// pack the pack's OWN atmospheric fog (e.g. Photon's analytic/raymarched, driven by its own uniforms, not these)
+		// takes over the distance; shaderless simply renders to the horizon with no distance dome.
+		if (!PauCLodClientSettings.isVanillaFogEnabled()) {
 			RenderSystem.setShaderFogStart(PAUC_DISABLED_FOG_START);
 			RenderSystem.setShaderFogEnd(PAUC_DISABLED_FOG_END);
 			PauCLodFogState.reset();
@@ -81,13 +89,11 @@ public class MixinFogRenderer {
 			return;
 		}
 
-		boolean shaderManagedFog = PauCShaders.isShaderPackInUse();
 		if (shaderManagedFog && PauCLodShaderPresentation.shouldLateRenderFallbackLods()) {
 			PauCLodFogState.reset();
 			return;
 		}
 
-		PauCLodRange range = PauCLodHorizonState.currentRange();
 		PauCLodFogState.capture(RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd(), range, shaderManagedFog);
 		if (shaderManagedFog && !PauCLodShaderContext.shouldApplyFallbackFog()) {
 			return;

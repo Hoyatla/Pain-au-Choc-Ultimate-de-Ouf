@@ -1,0 +1,479 @@
+PauC Ultimate - Recapitulatif des phases de debug
+Date du recap: 2026-06-24
+
+Perimetre
+- Ce fichier resume les grandes phases de debug et de stabilisation menees jusqu'a present sur PauC Ultimate.
+- Il ne s'agit pas d'un changelog exhaustif ligne par ligne.
+- Le but est de garder une trace lisible des chantiers debug, des hypotheses, des corrections tentees et de l'etat courant.
+
+Phase 01 - Audit initial et rejection CurseForge
+Objectif
+- Comprendre pourquoi le jar 0.1.1 etait refuse.
+
+Debug mene
+- Inventaire des liens externes et des chemins de code suspects.
+- Analyse des classes signalees par CurseForge.
+
+Points identifies
+- Presence de logique d'update externe et d'execution de commandes.
+- Classes visees:
+  - fr/hoyatla/pauc/lodruntime/core/jar/updater/SelfUpdater
+  - pl_sqlite/util/ProcessRunner
+
+Actions tentees
+- Neutralisation puis retrait progressif des chemins dangereux.
+- Nettoyage de l'arbre pour limiter le risque de signature refusee.
+
+Etat
+- Phase de securisation de base engagee.
+
+Phase 02 - Reorganisation des versions, archives et sauvegardes globales
+Objectif
+- Eviter l'ecrasement des anciens jars et garder des etats testables.
+
+Debug mene
+- Verification de la logique de versionnement.
+- Verification des jars dans source/dist et dans les instances Prism.
+
+Actions tentees
+- Passage a 0.2.0 puis versions suivantes.
+- Multiples sauvegardes globales horodatees.
+- Remplacement manuel de jars dans les instances de test.
+
+Etat
+- Le projet a conserve une logique de jalons et d'archives, meme si certains etats sont explicitement marques casses.
+
+Phase 03 - Correlation des rapports de performance/qualite avec PauC
+Objectif
+- Aligner le code avec les rapports PDF de performance et de qualite.
+
+Debug mene
+- Lecture des rapports fournis.
+- Correlation avec les modules actifs de PauC.
+- Identification des chantiers a fort impact:
+  - governor / fluidity
+  - warmup / backlog / catchup
+  - batching CPU / CUDA
+  - upload / mesh budgets
+  - churn de presentation
+  - surface LOD instability
+
+Etat
+- Les rapports ont servi de base d'audit et de priorisation.
+
+Phase 04 - Governor, fluidity et auto-freinage excessif
+Objectif
+- Eviter que PauC s'auto-degrade alors que PauC n'est plus le vrai goulot.
+
+Debug mene
+- Lecture chronologique des logs de sessions.
+- Analyse des etats:
+  - queue=0 / backlog=0 mais mode de secours encore actif
+  - villagePressure off mais villageSevere encore colle
+  - remontee FPS trop lente
+
+Zones visees
+- PauCClientFluidityState
+- PauCClientFpsGovernor
+
+Actions tentees
+- Multiples passes pour rendre la reaction du governor moins basee sur le FPS brut.
+- Ajustements de hysteresis, hold, sortie des etats severes et logique de relief/catchup.
+
+Resultat
+- Quelques ameliorations locales selon les sessions.
+- Plusieurs regressions importantes ont aussi ete observees, notamment des plafonnements FPS indecis ou des choix de budget non convaincants.
+
+Etat
+- Sujet partiellement travaille, pas considere comme definitivement stabilise.
+
+Phase 05 - Surface LOD, transitions et papillonnage
+Objectif
+- Stabiliser les niveaux de detail et reduire les bascules visuelles.
+
+Debug mene
+- Analyse des logs de mode surface:
+  - dense-vegetation
+  - tall-local-features
+  - surface-stable
+- Observation de bascules multiples sur de courtes fenetres temporelles.
+
+Actions tentees
+- Debounce.
+- Memoire de contexte.
+- Ajustements des transitions et du maintien d'etat.
+
+Resultat
+- Reduction partielle de certains clignotements.
+- Le sujet a continue de revenir sous differentes formes suivant les reglages LOD et les shaders.
+
+Etat
+- Pas cloture de facon propre.
+
+Phase 06 - LOD slider, anneaux, cible 2..96 et logique de charge
+Objectif
+- Fixer un domaine coherent:
+  - minimum technique 2
+  - maximum d'affichage et de reglage 96
+
+Debug mene
+- Verification des bornes de settings video.
+- Verification de la logique de rayon, horizon diagonal, anneaux reels et interpretation de la valeur 96.
+
+Actions tentees
+- Limitation du slider.
+- Relecture de la logique de distance LOD.
+
+Resultat
+- Le cadre 2..96 a ete clarifie au niveau intention.
+- En pratique, la stabilite de charge/rendu n'a pas ete parfaitement tenue sur toutes les sessions.
+
+Etat
+- Regle de produit clarifiee, tenue runtime encore inegale.
+
+Phase 07 - Chargement LOD trop lent, trous dans la carte et retention
+Objectif
+- Toujours garder une couverture carte utile en deplacement.
+- Remplir plus vite l'horizon.
+- Eviter les trous entre zone vanilla et LODs.
+
+Debug mene
+- Lecture de latest.log et des rapports performance-*.json.
+- Analyse de:
+  - queuedChunks
+  - backlog
+  - avgChunkMs
+  - throughput reel
+  - fill band
+  - retention
+  - direct horizon fill
+
+Constats
+- Files de generation souvent saturees.
+- Debit reel inferieur a la demande.
+- Warmup parfois actif seulement en couche secondaire.
+- Certaines logiques retenaient des chunks vanilla, pas les cellules LOD utiles.
+
+Actions tentees
+- Augmentation de la demande.
+- Ajustements de fill, warmup, backlog, retention, catchup.
+- Travail sur la jonction vanilla/LOD et le masquage sous zone vanilla.
+
+Resultat
+- Des sessions ont montre des progres.
+- D'autres ont conserve trous, lenteur de charge, ou disparition de LODs avec shaders.
+
+Etat
+- Sujet encore sensible, surtout en contexte shader.
+
+Phase 08 - CUDA, CPU routing et prechauffage
+Objectif
+- Utiliser CUDA quand utile sans ajouter de couts absurdes.
+- Eviter un routage trop conservateur vers CPU.
+
+Debug mene
+- Lecture des metriques:
+  - cpuRoutes
+  - cudaRoutes
+  - avgCudaMicros
+  - avgCpuMicros
+  - asyncSubmitted / asyncHits / throttles
+
+Constats
+- Le seam batching GPU etait present mais pas toujours determinant.
+- Le worldgen ne passait pas par un vrai chemin GPU de bout en bout.
+- Plusieurs sessions montraient encore une surcharge de queue plus que de calcul de seam.
+
+Actions tentees
+- Ajustements de seuils et de profils runtime.
+- Travail sur la preparation cache/cuda pour horizon et relief.
+
+Resultat
+- Gains ponctuels sur certaines metriques internes.
+- Pas de resolution definitive des problemes utilisateurs ecran.
+
+Etat
+- Le GPU est exploite sur certains sous-chemins, mais pas encore comme une solution structurelle du chargement LOD.
+
+Phase 09 - Ombres vanilla, ombres shaders et jonction vanilla/LOD
+Objectif
+- Recuperer des ombres terrain stables.
+- Maintenir les ombres vanilla avec ou sans shader.
+- Eviter les clignotements a la jonction chunks vanilla / LODs.
+
+Debug mene
+- Multiples sessions de test sur Solas et Photon.
+- Lecture des screenshots et des logs liees au shadow path.
+- Analyse de la relation entre angle camera, transition, zone vanilla et zone LOD.
+
+Actions tentees
+- Ajustements des passes de shadowmap.
+- Tentatives de couverture de zone jonction.
+- Tentatives sur le fog comme masque visuel quand la couverture d'ombre n'etait pas suffisante.
+
+Resultat
+- Solas et Photon n'ont pas toujours reagi pareil.
+- Plusieurs regressions ont ete introduites puis corrigees partiellement.
+- Le chantier ombres a longtemps tourne autour de:
+  - ombres absentes
+  - ombres qui reviennent seulement dans certains cas
+  - ombres qui clignotent avec mouvement ou angle de camera
+
+Etat
+- Travail majeur effectue, mais le sujet est reste fragile et fortement regressif pendant longtemps.
+
+Phase 10 - Migration conceptuelle vers 0.5.0 orientee shaders
+Objectif
+- Basculer le projet vers une phase shaderpack-first.
+- Embarquer Photon et Solas dans PauC.
+
+Debug mene
+- Reorganisation de la base forge/neoforge.
+- Documentation de roadmap shader.
+- Premiere integration de ressources shaderpacks dans le projet.
+
+Actions tentees
+- Embarquement de Photon et Solas comme ressources.
+- Retrait du chemin PauCShaderpack autonome quand il est devenu un frein.
+
+Resultat
+- Le projet a commence a integrer les packs cibles dans ses ressources.
+- L'integration n'est pas encore un remplacement complet et propre de toute la logique Iris existante.
+
+Etat
+- Changement d'orientation effectif, integration encore inachevee.
+
+Phase 11 - Menus shaders, UI, police et logique de reglage
+Objectif
+- Mettre une UX coherent dans video settings.
+- Eviter les doublons de menu et les etats de reglage caches ou triples.
+
+Debug mene
+- Retour terrain sur:
+  - menu shaders inutile
+  - boutons sans texte
+  - mauvaise police
+  - navigation de reglages non conforme
+
+Actions tentees
+- Plusieurs passes de menu et de presentation.
+- Travail partiel sur la navigation et la documentation de la cible UX.
+
+Resultat
+- L'UX n'a pas encore atteint l'etat vise:
+  - liste claire des shaderpacks
+  - panneau droit hierarchique
+  - fenetre de reglage dediee par selection
+  - police vanilla stable
+
+Etat
+- Chantier ouvert.
+
+Phase 12 - Camera, main joueur, mobs et hitboxes avec shaders
+Objectif
+- Corriger le decallage du monde lorsque les shaders sont actifs.
+
+Debug mene
+- Observation terrain:
+  - main du joueur mal placee
+  - mobs semblant flotter
+  - hitboxes percuees comme decalees
+  - camera ou projection semblant instables
+
+Actions tentees
+- Multiples corrections sur le chemin shader / camera / presentation.
+
+Resultat
+- Plusieurs regressions ont ete signalees.
+- Le sujet a fini par converger vers un probleme plus profond de composition et/ou de passage shader plutot qu'un simple bug de menu.
+
+Etat
+- Sujet pas encore considere comme regle.
+
+Phase 13 - Photon visuellement casse: noir, rose, halo, composition
+Objectif
+- Comprendre pourquoi Photon produit un rendu ecran incorrect alors que Solas peut rester acceptable.
+
+Debug mene
+- Analyse chronologique de screenshots et logs.
+- Verification du fog, des clouds, du TAA history, de la composition, de la main, des passes translucides et de l'eau.
+
+Symptomes observes
+- Voile noir.
+- Artefacts roses.
+- Halo ou lentille lumineuse en rotation camera.
+- Main noire/rose.
+- Bord d'ecran ou grande zone droite contaminee.
+- Cas ou le rendu semble en negatif ou plonge dans une nappe sombre.
+
+Actions tentees
+- Gardes numeriques sur history, clouds et edges.
+- Clamps sur buffers et reprojection.
+- Ajustements dans:
+  - c1_blend_layers
+  - c4_taa_exposure
+  - d1_clouds
+  - d2_clouds_upscaling
+  - d4_deferred_shading
+  - include/sky/clouds/sampling
+  - include/fog/simple_fog
+  - gbuffers_weather
+
+Resultat
+- Reduction partielle de certains artefacts.
+- Pas de resolution definitive du rendu Photon.
+
+Etat
+- Chantier actif majeur.
+
+Phase 14 - Isolation du chemin hand / hand_water sur Photon
+Objectif
+- Verifier si la contamination visuelle vient du chemin main / translucide tenu par Photon.
+
+Debug mene
+- Lecture directe du pack Photon embarque.
+- Analyse des passes:
+  - gbuffers_all_solid
+  - gbuffers_all_translucent
+  - blend/composition
+- Recoupement avec le screenshot montrant une main noire/rose et une grande zone droite polluee.
+
+Actions tentees
+- Neutralisation des teintes anormales sur la main.
+- Isolation du chemin hand_water vis-a-vis du fog et des reflets monde.
+
+Resultat
+- Une nouvelle passe compilee a ete produite et injectee dans l'instance.
+- Validation visuelle utilisateur encore necessaire apres cette passe.
+
+Etat
+- C'est la phase de debug active la plus recente.
+
+Phase 15 - Recherche de logiques type mods d'optimisation externes
+Objectif
+- Integrer directement dans PauC des principes utiles de mods d'optimisation, sans dependances runtime.
+
+References etudiees
+- EntityCulling
+- MoreCulling
+- ImmediatelyFast
+- ModernFix
+- FerriteCore
+
+Constat
+- Proximite deja presente avec EntityCulling.
+- Couverture partielle pour MoreCulling.
+- Pas d'equivalent complet ImmediatelyFast / ModernFix / FerriteCore.
+
+Actions tentees
+- Debut de travail sur memoire, culling et chargement.
+- Pas d'integration complete de ces familles de gains a ce stade.
+
+Etat
+- Audit utile, integration incomplete.
+
+Phase 16 - Desactivation des surcouches dev et hygiene runtime
+Objectif
+- Reduire les comportements parasites et les overrides locaux non maitrisables.
+
+Debug mene
+- Relecture du bootstrap et des config/dev overrides.
+
+Actions tentees
+- Dev properties chargees seulement si explicitement activees.
+- Nettoyage progressif des chemins dev devenus inutiles.
+
+Etat
+- Hygiene amelioree, a poursuivre.
+
+Phase 17 - Resolution dynamique: mesure et abandon
+Objectif
+- Recuperer des fps sous shaders en reduisant la resolution de rendu.
+
+Debug mene
+- Mesure du temps de frame a 1.0x vs 0.65x (42 pourcent des pixels).
+- Ajout d'un profileur de sections de rendu dans IrisRenderingPipeline (shadowPass / deferred / composite).
+
+Constats
+- Frame quasi identique a 1.0x et a 0.65x -> le jeu est CPU/draw-call bound, pas pixel/fragment bound.
+- Repartition mesuree (Solas, frame ~26ms): shadowPass ~8ms (jusqu'a 11.5), deferred 0.4ms, composite+final 0.8ms.
+- Le differe+composite que la resolution dynamique reduit ne pese que ~1.2ms -> aucun gain possible.
+
+Actions tentees
+- Desactivation complete de la resolution dynamique (onClientTick rendu inerte / natif).
+- Retrait du code associe: chemin Photon-TAAU, fix viewport entites (pauc$alignViewportToRenderTarget), sondes DRS.
+
+Resultat
+- Hypothese initiale "les passes differees dominent -> resolution-bound" prouvee fausse par la mesure.
+- La passe d'ombres (re-rendu du terrain dans la shadow map chaque frame) identifiee comme le vrai levier fps.
+
+Etat
+- Resolution dynamique abandonnee. Le bug main/HUD/F3 qu'elle causait disparait avec elle.
+
+Phase 18 - Jonction vanilla/LOD: ombres et fog sous Photon
+Objectif
+- Ombrer/masquer la zone LOD claire juste apres la fin des ombres, sans cercle, stable en elytre.
+
+Debug mene
+- Mesure de l'ortho d'ombre par pack: Solas 192 blocs (12 ch), Photon 128 puis releve a 192.
+- dhScan: Solas embarque un programme dh_shadow (shadow=true); Photon non (shadow=false, dhShadow.enabled=false explicite dans shaders.properties).
+- Comparaison du code couleur de fog 0.3.1 vs actuel.
+
+Actions tentees (et resultats)
+- shouldRenderDH orElse(true): cout GPU sans couverture visible -> annule.
+- Forcage du DH shadow synthetique (shader d'ombre vanilla applique sur geometrie DH): a CASSE toutes les ombres des deux packs -> annule. Les garde-fous PauC qui bloquaient ce chemin avaient raison.
+- Fog ancre dynamiquement au bord des ombres (paucPhotonShadowEffectiveDistance): cree un CERCLE de brouillard radial visible en vol -> rejete. Tout fog base sur la distance-joueur est radial = un cercle vu d'en haut.
+
+Constats
+- Le decalage de couleur (brouillard vanilla = couleur de biome verte, LOD = atmosphere du shader gris-bleu) est STRUCTUREL, pas une regression: code couleur byte-identique a 0.3.1.
+- Conclusion: le fog ne peut pas couvrir la zone sans cercle. Seule vraie voie: de vraies ombres sur le terrain LOD.
+
+Etat
+- Abandon des approches fog pour la couverture. Bascule vers un vrai programme d'ombre DH pour Photon.
+
+Phase 19 - pl_shadow: programme d'ombre DH ecrit pour Photon
+Objectif
+- Donner a Photon le caster d'ombre DH qu'il n'a jamais eu, pour que le terrain LOD recoive des ombres (comme Solas).
+
+Debug mene
+- Lecture de la reference Solas (programs/dh_shadow.glsl -> alias pl_shadow) et des modeles Photon (program/shadow.vsh, program/pl_terrain.vsh).
+- Convention DH shadow confirmee: gl_ModelViewMatrix = shadowModelView, gl_ProjectionMatrix = ortho d'ombre, distorsion propre du pack.
+
+Actions
+- Ecriture de program/pl_shadow.vsh + pl_shadow.fsh pour Photon, avec la distorsion de Photon (distort_shadow_space).
+- Passage dhShadow.enabled=true (Photon a maintenant un programme d'ombre).
+
+Resultat
+- pl_shadow compile et est detecte (dhScan shadow=true, dhShadow=true, files 530->532).
+- MAIS aucune ombre LOD visible, meme apres retrait du overdraw cull.
+- Cast / reception (terrain DH ecrit dans le meme gbuffer que le vanilla) / plomberie framebuffer verifies corrects sur le papier.
+- Tentative de diagnostic runtime: visualisation de shadowcolor0 (rouge sur le DH). shadowcolor0 indisponible dans final.fsh (erreur compil C1503, revertee), debug deplace dans d4_deferred_shading mais l'override de couleur ne s'affiche pas a l'ecran (probablement ecrase par une passe composite suivante).
+
+Etat
+- Bloque sur le cast / le diagnostic runtime. Sujet intrinsequement difficile (raison probable pour laquelle Photon ne livre pas de dh_shadow d'origine). pl_shadow + debug encore en place dans l'instance.
+
+Etat courant resume
+- Le projet compile.
+- Les versions 0.5.x existent et les jars sont produits.
+- Solas est globalement moins problematique que Photon sur le rendu ecran.
+- Photon reste le chantier visuel le plus complexe:
+  - composition
+  - fog/shadow interaction
+  - hand/translucent path
+  - stabilite de presentation
+- Le chargement LOD a progresse mais reste un point de vigilance, surtout avec shaders.
+- Les chantiers UI/UX des reglages shaders/video ne sont pas finalises.
+- Resolution dynamique: abandonnee (mesuree sans gain, jeu CPU/shadow-bound). Vrai levier fps = la passe d'ombres (~8ms).
+- Couverture d'ombre jonction par fog: ecartee (tout fog distance est un cercle vu d'en haut).
+- Ombres LOD Photon: pl_shadow ecrit et detecte mais ne produit pas d'ombre visible; cast/diagnostic runtime bloque.
+
+Chantiers encore ouverts a forte priorite
+1. Photon: corriger definitivement la composition ecran, la main et la contamination rose/noire.
+2. LODs avec shaders: garantir visibilite, charge rapide et absence de trous.
+3. Jonction vanilla/LOD: couture visuelle stable en mouvement rapide; trou geometrique (near-clip) a combler.
+4. Ombres LOD Photon (pl_shadow): faire produire des ombres reelles (debug cast vs reception); alternative = etendre les ombres vanilla a la zone (cout GPU).
+5. Performance: attaquer la passe d'ombres (re-rendu terrain ~8ms) comme vrai levier fps, a pleine qualite.
+6. Menus shader/video: navigation claire, police vanilla, libelles visibles.
+7. Camera / placement / presentation avec shaders: supprimer tout decallage percu.
+
+Fin du recapitulatif.

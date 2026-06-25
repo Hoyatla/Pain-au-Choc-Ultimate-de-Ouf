@@ -96,6 +96,12 @@ void main() {
     uv = gl_MultiTexCoord0.xy;
     light_levels = clamp01(gl_MultiTexCoord1.xy * rcp(240.0));
     tint = gl_Color;
+#if defined PROGRAM_GBUFFERS_HAND
+    // Keep the first-person hand on a stable untinted path. The PauC/Iris
+    // integration can feed a bad color multiplier here, which then turns the
+    // hand dark or tinted before deferred shading even starts.
+    tint = vec4(1.0);
+#endif
     material_mask = get_material_mask();
     tbn = get_tbn_matrix();
 

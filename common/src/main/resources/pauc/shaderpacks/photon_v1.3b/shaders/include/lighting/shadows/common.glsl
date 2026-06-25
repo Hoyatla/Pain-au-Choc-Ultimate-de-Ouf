@@ -2,8 +2,18 @@
 #define INCLUDE_LIGHTING_SHADOWS_COMMON
 
 // Fade from close shadows (shadow maps) to distant shadows (lightmap or SSRT)
+uniform int paucPhotonShadowEffectiveDistance;
+
 float get_shadow_distance_fade(vec3 scene_pos, vec3 shadow_screen_pos) {
     float effective_shadow_distance = min(shadowDistance, far);
+#ifdef LOD_MOD_ACTIVE
+    if (paucPhotonShadowEffectiveDistance > 0) {
+        effective_shadow_distance =
+            min(max(effective_shadow_distance,
+                    float(paucPhotonShadowEffectiveDistance)),
+                far);
+    }
+#endif
     return linear_step(
         0.1,
         1.0,
