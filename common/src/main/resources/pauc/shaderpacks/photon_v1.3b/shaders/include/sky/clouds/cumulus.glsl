@@ -8,6 +8,8 @@
 
 // altitude_fraction := 0 at the bottom of the cloud layer and 1 at the top
 float clouds_cumulus_altitude_shaping(float density, float altitude_fraction) {
+    float cumulusness = 1.0 - clouds_params.l0_cumulus_stratus_blend;
+
     // Stratus shapes
     if (clouds_params.l0_cumulus_stratus_blend > eps) {
         density =
@@ -23,12 +25,16 @@ float clouds_cumulus_altitude_shaping(float density, float altitude_fraction) {
                 clouds_params.l0_cumulus_stratus_blend);
     }
 
-    // Carve egg shape
-    density -= smoothstep(0.2, 1.0, altitude_fraction) *
-        (0.6 - 0.3 * clouds_params.l0_cumulus_stratus_blend);
+    // Keep flatter bottoms and fuller cauliflower crowns for true cumulus.
+    density -= smoothstep(0.28, 1.0, altitude_fraction) *
+        (0.50 - 0.20 * clouds_params.l0_cumulus_stratus_blend);
+    density += 0.10 * cumulusness *
+        smoothstep(0.18, 0.58, altitude_fraction) *
+        smoothstep(1.0, 0.72, altitude_fraction) *
+        dampen(max0(density));
 
     // Reduce density at the bottom of the cloud
-    density *= smoothstep(0.0, 0.2, altitude_fraction);
+    density *= smoothstep(0.0, mix(0.22, 0.14, clouds_params.l0_cumulus_stratus_blend), altitude_fraction);
 
     return density;
 }
@@ -85,13 +91,23 @@ float clouds_cumulus_density(vec3 pos) {
     const float worley_1 = 0.5;
 #endif
 
-    float detail_fade = 0.20 * smoothstep(0.85, 1.0, 1.0 - altitude_fraction) -
-        0.35 * smoothstep(0.05, 0.5, altitude_fraction) + 0.6;
+    float cumulusness = 1.0 - clouds_params.l0_cumulus_stratus_blend;
+    float crown_detail =
+        cumulusness *
+        smoothstep(0.18, 0.58, altitude_fraction) *
+        smoothstep(1.0, 0.72, altitude_fraction);
+    float bottom_softness = 1.0 - smoothstep(0.03, 0.20, altitude_fraction);
+    float detail_fade = mix(0.52, 1.18, crown_detail);
+    detail_fade *= mix(0.72, 1.0, 1.0 - bottom_softness);
 
+    float edge_density = dampen(clamp01(1.0 - density));
     density -= clouds_params.l0_detail_weights.x * sqr(worley_0) *
-        dampen(clamp01(1.0 - density));
+        edge_density * mix(0.90, 1.18, crown_detail);
     density -= clouds_params.l0_detail_weights.y * sqr(worley_1) *
-        dampen(clamp01(1.0 - density)) * detail_fade;
+        edge_density * detail_fade;
+
+    float billow = max0(1.0 - 2.0 * abs(worley_0 - 0.5));
+    density += 0.08 * crown_detail * billow * clamp01(density);
 
     // Adjust density so that the clouds are wispy at the bottom and hard at the
     // top
@@ -102,7 +118,7 @@ float clouds_cumulus_density(vec3 pos) {
             clouds_params.l0_edge_sharpening.y,
             altitude_fraction)
     );
-    density *= 0.1 + 0.9 * smoothstep(0.2, 0.7, altitude_fraction);
+    density *= 0.18 + 0.82 * smoothstep(0.12, 0.62, altitude_fraction);
 
     return density;
 }

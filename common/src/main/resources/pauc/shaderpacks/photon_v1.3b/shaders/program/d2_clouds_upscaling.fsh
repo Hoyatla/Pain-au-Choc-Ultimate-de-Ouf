@@ -407,6 +407,19 @@ void main() {
     history_weight *= offcenter_rejection;
 #endif
 
+    float coverage = clamp01(1.0 - current.a);
+    float edge_factor = smoothstep(0.05, 0.28, coverage);
+    float transmittance_delta = abs(current.a - history.a);
+    float distance_delta = abs(apparent_distance - apparent_distance_history) /
+        max(max(apparent_distance, apparent_distance_history), 1.0);
+
+    history_weight = min(history_weight, 0.88);
+    history_weight *= 1.0 - 0.60 * clamp01(velocity_factor * 1.5);
+    history_weight *= 1.0 - 0.55 * clamp01(transmittance_delta * 2.0);
+    history_weight *= 1.0 - 0.35 * clamp01(distance_delta * 3.0);
+    history_weight *= mix(0.55, 1.0, edge_factor);
+    history_weight = clamp01(history_weight);
+
     clouds_history = max0(mix(current, history, history_weight));
     clouds_data.x =
         mix(apparent_distance, apparent_distance_history, history_weight);

@@ -48,14 +48,14 @@ vec2 clouds_l0_detail_weights(Weather weather, float cumulus_stratus_blend) {
     float wind_torn_factor =
         linear_step(0.66, 0.9, weather.wind) * (1.0 - cumulus_stratus_blend);
 
-    return mix(vec2(0.33, 0.40) * (1.0 + 0.5 * wind_torn_factor),
-               vec2(0.07, 0.10),
+    return mix(vec2(0.38, 0.48) * (1.0 + 0.55 * wind_torn_factor),
+               vec2(0.08, 0.12),
                vec2(sqr(cumulus_stratus_blend), cumulus_stratus_blend)) *
         CLOUDS_CUMULUS_DETAIL_STRENGTH;
 }
 
 vec2 clouds_l0_edge_sharpening(Weather weather, float cumulus_stratus_blend) {
-    return mix(vec2(3.0, 12.0), vec2(2.0, 7.0), sqr(cumulus_stratus_blend));
+    return mix(vec2(3.6, 14.0), vec2(2.0, 7.0), sqr(cumulus_stratus_blend));
 }
 
 float clouds_l0_altitude_scale(Weather weather, vec2 coverage) {
