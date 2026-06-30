@@ -42,6 +42,10 @@ public final class PauCEntityRenderBudget {
 	private static boolean frameValid;
 	private static int deferredThisFrame;
 	private static int lastDeferredPerFrame;
+	// PauC #2: cache the per-frame enabled flag so the per-entity hot path does not do a synchronized
+	// System.getProperty lookup for EVERY entity every frame (hundreds of locked lookups on dense scenes).
+	private static long enabledCacheSeq = -1L;
+	private static boolean enabledThisFrame;
 
 	private PauCEntityRenderBudget() {
 	}
@@ -56,7 +60,12 @@ public final class PauCEntityRenderBudget {
 		// Default OFF: per-frame dephasing of visible far entities strobes during sustained pressure (hordes), which
 		// reads as jank. Kept as opt-in. Hostile-mob visibility is gameplay-critical, so entities are otherwise left to
 		// the (invisible) occlusion cull and the existing distance cull only.
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"))) {
+		long enabledSeq = PauCFrameSpikeAbsorber.frameSeq();
+		if (enabledSeq != enabledCacheSeq) {
+			enabledCacheSeq = enabledSeq;
+			enabledThisFrame = Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"));
+		}
+		if (!enabledThisFrame) {
 			return false;
 		}
 		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {

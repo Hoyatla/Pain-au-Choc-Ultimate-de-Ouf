@@ -35,6 +35,10 @@ public final class PauCBlockEntityRenderBudget {
 	private static boolean frameValid;
 	private static int deferredThisFrame;
 	private static int lastDeferredPerFrame;
+	// PauC #2: cache the per-frame enabled flag so the per-block-entity hot path does not do a synchronized
+	// System.getProperty lookup for EVERY block entity every frame (hundreds on decoration-heavy packs).
+	private static long enabledCacheSeq = -1L;
+	private static boolean enabledThisFrame;
 
 	private PauCBlockEntityRenderBudget() {
 	}
@@ -48,7 +52,12 @@ public final class PauCBlockEntityRenderBudget {
 		}
 		// Default OFF: per-frame dephasing of visible block entities strobes (blinks every other frame), which reads as
 		// jank even when raw frame times improve. Kept as opt-in only (set pauc.lod.blockEntityRenderBudget=true).
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"))) {
+		long enabledSeq = PauCFrameSpikeAbsorber.frameSeq();
+		if (enabledSeq != enabledCacheSeq) {
+			enabledCacheSeq = enabledSeq;
+			enabledThisFrame = Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"));
+		}
+		if (!enabledThisFrame) {
 			return false;
 		}
 		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {

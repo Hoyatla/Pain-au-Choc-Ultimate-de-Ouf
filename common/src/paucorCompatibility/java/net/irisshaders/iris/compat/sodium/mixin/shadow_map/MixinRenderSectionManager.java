@@ -73,6 +73,27 @@ public abstract class MixinRenderSectionManager {
 		}
 	}
 
+	// PauC efficiency #1: the shadow chunk graph is re-traversed every frame with occlusion culling disabled - the
+	// dominant shader-on CPU cost. ShadowRenderingState already tracks (and is fed, in ShadowRenderer) whether the
+	// graph actually changed: camera position/pitch/yaw + sun angle (quantized) + section add/remove/rebuild. When it
+	// has NOT changed and a cached stable shadow visibility list exists, skip the whole re-traversal and reuse the
+	// cache. The shadow map is still re-rendered each frame with the current sun projection, so shadows stay correct;
+	// we only avoid recomputing WHICH chunks are visible when nothing relevant moved. Kill-switch: pauc.shadow.cacheTerrainList=false.
+	@Inject(method = "update", at = @At("HEAD"), cancellable = true, remap = false)
+	private void pauc$skipStableShadowRebuild(Camera camera, Viewport viewport, boolean spectator, CallbackInfo ci) {
+		if (!PauCCompatibility.shouldUseSodiumShadowPass()) {
+			return;
+		}
+		if (!Boolean.parseBoolean(System.getProperty("pauc.shadow.cacheTerrainList", "true"))) {
+			return;
+		}
+		if (pauc$hasStableShadowRenderLists && !ShadowRenderingState.shouldRebuildShadowTerrainGraph()) {
+			shadowRenderLists = pauc$lastStableShadowRenderLists;
+			shadowTaskLists = pauc$lastStableShadowTaskLists;
+			ci.cancel();
+		}
+	}
+
 	@Inject(remap = false, method = "update", at = @At(remap = true, value = "INVOKE", target = "Lnet/caffeinemc/mods/sodium/client/render/chunk/RenderSectionManager;createTerrainRenderList(Lnet/minecraft/client/Camera;Lnet/caffeinemc/mods/sodium/client/render/viewport/Viewport;IZ)V", shift = At.Shift.AFTER), cancellable = true)
 	private void cancelIfShadow(Camera camera, Viewport viewport, boolean spectator, CallbackInfo ci) {
 		if (PauCCompatibility.shouldUseSodiumShadowPass()) {

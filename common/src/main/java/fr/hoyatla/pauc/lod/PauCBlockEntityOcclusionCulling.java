@@ -189,19 +189,25 @@ public final class PauCBlockEntityOcclusionCulling {
 	}
 
 	private static boolean computeOccluded(Level level, BlockPos pos) {
-		AABB box = new AABB(pos);
-		double midY = (box.minY + box.maxY) * 0.5D;
-		double centerX = (box.minX + box.maxX) * 0.5D;
-		double centerZ = (box.minZ + box.maxZ) * 0.5D;
-		double insetX = (box.maxX - box.minX) * 0.2D;
-		double insetZ = (box.maxZ - box.minZ) * 0.2D;
-		double topY = box.maxY - 0.1D;
+		// Derive the sample points directly from the block position (unit cube) - avoids allocating an AABB on every
+		// occlusion re-evaluation. Identical geometry: center 0.5, top maxY-0.1=+0.9, inset (max-min)*0.2=0.2.
+		double x = pos.getX();
+		double y = pos.getY();
+		double z = pos.getZ();
+		double centerX = x + 0.5D;
+		double centerZ = z + 0.5D;
+		double midY = y + 0.5D;
+		double topY = y + 0.9D;
+		double loX = x + 0.2D;
+		double hiX = x + 0.8D;
+		double loZ = z + 0.2D;
+		double hiZ = z + 0.8D;
 
 		return rayBlocked(level, centerX, midY, centerZ)
 			&& rayBlocked(level, centerX, topY, centerZ)
-			&& rayBlocked(level, box.minX + insetX, midY, box.minZ + insetZ)
-			&& rayBlocked(level, box.maxX - insetX, midY, box.maxZ - insetZ)
-			&& rayBlocked(level, box.minX + insetX, topY, box.maxZ - insetZ);
+			&& rayBlocked(level, loX, midY, loZ)
+			&& rayBlocked(level, hiX, midY, hiZ)
+			&& rayBlocked(level, loX, topY, hiZ);
 	}
 
 	private static boolean rayBlocked(Level level, double tx, double ty, double tz) {
