@@ -1,15 +1,20 @@
 package fr.hoyatla.pauc.platform.forge.client;
 
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import net.minecraft.client.Minecraft;
 
 public final class PauCClientTargetFps {
 	private static final String TARGET_FPS_PROPERTY = "pauc.client.targetFps";
 	private static final String VANILLA_UNLIMITED_REFERENCE_FPS_PROPERTY = "pauc.client.unlimitedVanillaReferenceFps";
 	private static final String SHADER_UNLIMITED_REFERENCE_FPS_PROPERTY = "pauc.client.unlimitedShaderReferenceFps";
+	private static final String SILDURS_ENHANCED_UNLIMITED_REFERENCE_FPS_PROPERTY = "pauc.client.unlimitedSildursEnhancedReferenceFps";
+	private static final String SILDURS_VIBRANT_UNLIMITED_REFERENCE_FPS_PROPERTY = "pauc.client.unlimitedSildursVibrantReferenceFps";
 	private static final String UNLIMITED_OBSERVED_HEADROOM_FPS_PROPERTY = "pauc.client.unlimitedObservedHeadroomFps";
 	private static final int DEFAULT_VANILLA_UNLIMITED_REFERENCE_FPS = 360;
 	private static final int DEFAULT_SHADER_UNLIMITED_REFERENCE_FPS = 144;
+	private static final int DEFAULT_SILDURS_ENHANCED_UNLIMITED_REFERENCE_FPS = 108;
+	private static final int DEFAULT_SILDURS_VIBRANT_UNLIMITED_REFERENCE_FPS = 96;
 	private static volatile double shaderObservedFps = -1.0D;
 	private static volatile double vanillaObservedFps = -1.0D;
 
@@ -50,10 +55,22 @@ public final class PauCClientTargetFps {
 		if (playerVideo.available() && !playerVideo.fpsUnlimited()) {
 			return "player-limit";
 		}
+		PauCLodShaderProfiles.Family shaderFamily = PauCLodShaderContext.isShaderPackInUse()
+			? PauCLodShaderProfiles.currentFamily()
+			: PauCLodShaderProfiles.Family.GENERIC;
+		if (usesFixedUnlimitedReference(shaderFamily)) {
+			return "unlimited-family-fixed-reference";
+		}
 		return "unlimited-high-reference";
 	}
 
 	private static int unlimitedReferenceFps(Minecraft minecraft, boolean shaderActive) {
+		PauCLodShaderProfiles.Family shaderFamily = shaderActive
+			? PauCLodShaderProfiles.currentFamily()
+			: PauCLodShaderProfiles.Family.GENERIC;
+		if (usesFixedUnlimitedReference(shaderFamily)) {
+			return fixedUnlimitedReferenceFps(shaderFamily);
+		}
 		int fps = PauCClientFrameMetrics.queryFps(minecraft);
 		double observed = shaderActive ? shaderObservedFps : vanillaObservedFps;
 		if (fps >= 15) {
@@ -74,6 +91,31 @@ public final class PauCClientTargetFps {
 		int headroom = readInt(UNLIMITED_OBSERVED_HEADROOM_FPS_PROPERTY, shaderActive ? 12 : 24, 0, 160);
 		int observedReference = observed > 0.0D ? (int) Math.round(observed) + headroom : floor;
 		return sanitize(Math.max(floor, observedReference));
+	}
+
+	private static boolean usesFixedUnlimitedReference(PauCLodShaderProfiles.Family family) {
+		return switch (family == null ? PauCLodShaderProfiles.Family.GENERIC : family) {
+			case SILDURS_ENHANCED, SILDURS_VIBRANT -> true;
+			default -> false;
+		};
+	}
+
+	private static int fixedUnlimitedReferenceFps(PauCLodShaderProfiles.Family family) {
+		return switch (family == null ? PauCLodShaderProfiles.Family.GENERIC : family) {
+			case SILDURS_ENHANCED -> readInt(
+				SILDURS_ENHANCED_UNLIMITED_REFERENCE_FPS_PROPERTY,
+				DEFAULT_SILDURS_ENHANCED_UNLIMITED_REFERENCE_FPS,
+				48,
+				240
+			);
+			case SILDURS_VIBRANT -> readInt(
+				SILDURS_VIBRANT_UNLIMITED_REFERENCE_FPS_PROPERTY,
+				DEFAULT_SILDURS_VIBRANT_UNLIMITED_REFERENCE_FPS,
+				48,
+				240
+			);
+			default -> DEFAULT_SHADER_UNLIMITED_REFERENCE_FPS;
+		};
 	}
 
 	private static double smoothObservedFps(double previous, int fps) {

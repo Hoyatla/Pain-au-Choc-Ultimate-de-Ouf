@@ -152,7 +152,14 @@ public final class PauCLodVideoSettings {
 
 	private static Component dynamicResolutionCaption(Component option, int modeIndex) {
 		PauCDynamicResolutionMode mode = PauCDynamicResolutionMode.byIndex(modeIndex);
-		return Component.translatable("options.generic_value", option, Component.translatable("options.pauc.dynamicResolution." + mode.id()));
+		Component value = Component.translatable("options.pauc.dynamicResolution." + mode.id());
+		if (mode != PauCDynamicResolutionMode.OFF) {
+			int minScalePercent = (int) Math.round(mode.minScale() * 100.0D);
+			value = Component.empty()
+				.append(value)
+				.append(Component.literal(" (" + minScalePercent + "%)"));
+		}
+		return Component.translatable("options.generic_value", option, value);
 	}
 
 	private static void updateLinkedWidgets() {

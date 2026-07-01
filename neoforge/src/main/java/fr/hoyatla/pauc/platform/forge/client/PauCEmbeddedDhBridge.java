@@ -193,7 +193,7 @@ public final class PauCEmbeddedDhBridge {
 			int targetDistance = range.roundHorizonEndChunk();
 			RuntimeLodSettings runtimeSettings = stabilizePresentationRuntimeSettings(RuntimeLodSettings.fastDefaults());
 			boolean shaderPackInUse = isShaderPackRuntimeInUse();
-			boolean nativeShaderFog = shaderPackInUse && !PauCLodShaderContext.isFallbackActive();
+			boolean nativeShaderFog = shouldTreatShaderFogAsAuthoritative(shaderPackInUse);
 			boolean dhDistanceFog = shouldUseDhDistanceFog(nativeShaderFog);
 			GenerationFillPolicyState fillPolicyState = configureCoreRuntimeSettings(targetDistance, runtimeSettings);
 			clearApiValueIfSet(configs.graphics().fog().drawMode());
@@ -879,6 +879,13 @@ public final class PauCEmbeddedDhBridge {
 		return !nativeShaderFog && readBoolean(ROUND_HORIZON_FOG_PROPERTY, true);
 	}
 
+	private static boolean shouldTreatShaderFogAsAuthoritative(boolean shaderPackInUse) {
+		if (!shaderPackInUse || PauCLodShaderContext.isFallbackActive()) {
+			return false;
+		}
+		return true;
+	}
+
 	private static boolean setDhCoreConfigApiValue(String configClassName, String fieldName, Object value) {
 		try {
 			Class<?> configClass = Class.forName(configClassName);
@@ -1426,7 +1433,7 @@ public final class PauCEmbeddedDhBridge {
 			}
 
 			return switch (PauCLodShaderProfiles.currentFamily()) {
-				case BLISS, BSL, COMPLEMENTARY, PHOTON, RETHINKING, SOLAS -> EDhApiTransparency.COMPLETE;
+				case BLISS, BSL, COMPLEMENTARY, PHOTON, RETHINKING, SOLAS, SILDURS_ENHANCED, SILDURS_VIBRANT -> EDhApiTransparency.COMPLETE;
 				case GENERIC -> EDhApiTransparency.FAKE;
 			};
 		}

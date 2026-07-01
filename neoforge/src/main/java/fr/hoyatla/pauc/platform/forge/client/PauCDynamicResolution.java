@@ -3,6 +3,7 @@ package fr.hoyatla.pauc.platform.forge.client;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import fr.hoyatla.pauc.lod.PauCDynamicResolutionMode;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import net.minecraft.client.Minecraft;
 
 import java.util.Locale;
@@ -42,6 +43,13 @@ public final class PauCDynamicResolution {
 			resetToNative("inactive");
 			return;
 		}
+		if (!readBoolean("pauc.client.dynamicResolutionAllowUnsafeMainTargetResize", false)) {
+			// The current DRS path resizes Minecraft's main render target directly. That couples
+			// screen-space projection, depth and picking to a reduced buffer and is the root cause
+			// of shifted hands, floating entities and misaligned hitboxes on shader paths.
+			resetToNative("disabled-unsafe-main-target-resize");
+			return;
+		}
 		if (disabledTicks > 0) {
 			disabledTicks--;
 			applyMainTargetScale(minecraft, 1.0D, true);
@@ -50,10 +58,18 @@ public final class PauCDynamicResolution {
 		}
 
 		PauCPlayerVideoSettings.Snapshot playerVideo = PauCPlayerVideoSettings.capture(minecraft);
-		if (playerVideo.fpsUnlimited() && !PauCClientTargetFps.hasExplicitTargetFps()) {
+		PauCLodShaderProfiles.Family shaderFamily = PauCLodShaderProfiles.currentFamily();
+		if (playerVideo.fpsUnlimited()
+			&& !PauCClientTargetFps.hasExplicitTargetFps()
+			&& shouldUseFixedUnlimitedScale(shaderFamily)) {
 			lastTargetFrameMs = -1.0D;
 			lastAverageFrameMs = PauCClientFrameMetrics.averageFrameTimeMs();
-			scale = readDouble("pauc.client.dynamicResolutionUnlimitedScale", mode.minScale(), 0.50D, 1.0D);
+			scale = readDouble(
+				"pauc.client.dynamicResolutionUnlimitedScale",
+				unlimitedFixedScale(mode, shaderFamily),
+				0.50D,
+				1.0D
+			);
 			active = scale < 0.999D;
 			applyMainTargetScale(minecraft, scale, false);
 			System.setProperty("pauc.runtime.dynamicResolutionReason", "player-fps-unlimited-fixed-" + mode.id());
@@ -73,12 +89,22 @@ public final class PauCDynamicResolution {
 			return;
 		}
 
-		double minScale = readDouble(MIN_SCALE_PROPERTY, mode.minScale(), 0.50D, 1.0D);
-		double downStep = readDouble(DOWN_RATE_PROPERTY, mode.downRatePerSecond(), 0.005D, 0.40D) / 20.0D;
-		double upStep = readDouble(UP_RATE_PROPERTY, mode.upRatePerSecond(), 0.005D, 0.25D) / 20.0D;
+		double minScale = readDouble(MIN_SCALE_PROPERTY, minimumScale(mode, shaderFamily), 0.50D, 1.0D);
+		double downStep = readDouble(DOWN_RATE_PROPERTY, downRatePerSecond(mode, shaderFamily), 0.005D, 0.40D) / 20.0D;
+		double upStep = readDouble(UP_RATE_PROPERTY, upRatePerSecond(mode, shaderFamily), 0.005D, 0.25D) / 20.0D;
 		double pressure = lastAverageFrameMs / lastTargetFrameMs;
 		PauCClientFluidityState.Band band = PauCClientFluidityState.lastSnapshot().band();
 		boolean watchdogSpike = PauCClientFrameMetrics.lastWatchdogFrameMs() >= readDouble("pauc.client.dynamicResolutionWatchdogMs", 140.0D, 50.0D, 1_000.0D);
+		int currentFps = PauCClientFrameMetrics.queryFps(minecraft);
+		if (shouldUseRescueOnlyScaling(playerVideo, shaderFamily)
+			&& !shouldEngageRescueScaling(shaderFamily, currentFps, pressure, band, watchdogSpike)) {
+			scale = 1.0D;
+			active = false;
+			applyMainTargetScale(minecraft, 1.0D, true);
+			System.setProperty("pauc.runtime.dynamicResolutionReason", "shader-rescue-idle-" + shaderFamily.name().toLowerCase(Locale.ROOT));
+			publishScale();
+			return;
+		}
 		if (pressure > 1.05D || watchdogSpike || band == PauCClientFluidityState.Band.RELIEF) {
 			double severity = Math.max(1.0D, Math.min(2.5D, pressure));
 			scale = Math.max(minScale, scale - (downStep * severity));
@@ -154,15 +180,19 @@ public final class PauCDynamicResolution {
 			return;
 		}
 		double quantizedScale = targetScale >= 0.995D ? 1.0D : Math.max(0.50D, Math.min(1.0D, Math.round(targetScale * 20.0D) / 20.0D));
-		int targetWidth = Math.max(320, (int) Math.round(windowWidth * quantizedScale));
-		int targetHeight = Math.max(180, (int) Math.round(windowHeight * quantizedScale));
-		if (quantizedScale >= 0.999D) {
-			targetWidth = windowWidth;
-			targetHeight = windowHeight;
-		}
+		int targetWidth = windowWidth;
+		int targetHeight = windowHeight;
 
 		RenderTarget mainTarget = minecraft.getMainRenderTarget();
 		boolean windowChanged = windowWidth != lastWindowWidth || windowHeight != lastWindowHeight;
+		if (quantizedScale < 0.999D) {
+			appliedScale = 1.0D;
+			active = false;
+			lastWindowWidth = windowWidth;
+			lastWindowHeight = windowHeight;
+			System.setProperty("pauc.runtime.dynamicResolutionAppliedScale", round(appliedScale));
+			return;
+		}
 		if (mainTarget.width == targetWidth && mainTarget.height == targetHeight) {
 			appliedScale = quantizedScale;
 			active = scale < 0.999D || appliedScale < 0.999D;
@@ -187,6 +217,100 @@ public final class PauCDynamicResolution {
 
 	private static void publishScale() {
 		System.setProperty(RUNTIME_SCALE_PROPERTY, round(scale));
+	}
+
+	private static boolean shouldUseFixedUnlimitedScale(PauCLodShaderProfiles.Family family) {
+		return false;
+	}
+
+	private static boolean shouldUseRescueOnlyScaling(
+		PauCPlayerVideoSettings.Snapshot playerVideo,
+		PauCLodShaderProfiles.Family family
+	) {
+		if (playerVideo == null || !playerVideo.fpsUnlimited() || PauCClientTargetFps.hasExplicitTargetFps()) {
+			return false;
+		}
+		return PauCLodShaderContext.isShaderPackInUse();
+	}
+
+	private static boolean shouldEngageRescueScaling(
+		PauCLodShaderProfiles.Family family,
+		int currentFps,
+		double pressure,
+		PauCClientFluidityState.Band band,
+		boolean watchdogSpike
+	) {
+		if (watchdogSpike || band == PauCClientFluidityState.Band.RELIEF) {
+			return true;
+		}
+		double queuePressure = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.backlogPressure()
+			: 0.0D;
+		int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.queueAvailable()
+			? PauCEmbeddedLodRuntimeDiagnostics.pendingChunks()
+			: 0;
+		if (queuePressure >= 0.28D || pendingChunks >= 768) {
+			return true;
+		}
+		int activationFps = rescueActivationFps(family);
+		if (currentFps > 0 && currentFps <= activationFps) {
+			return true;
+		}
+		return currentFps <= 0 && pressure > 1.18D;
+	}
+
+	private static int rescueActivationFps(PauCLodShaderProfiles.Family family) {
+		return switch (family == null ? PauCLodShaderProfiles.Family.GENERIC : family) {
+			case PHOTON -> 54;
+			case SOLAS -> 60;
+			case SILDURS_ENHANCED -> 60;
+			case SILDURS_VIBRANT -> 54;
+			case COMPLEMENTARY, RETHINKING, BSL, BLISS -> 56;
+			case GENERIC -> 48;
+		};
+	}
+
+	private static double unlimitedFixedScale(PauCDynamicResolutionMode mode, PauCLodShaderProfiles.Family family) {
+		return minimumScale(mode, family);
+	}
+
+	private static double minimumScale(PauCDynamicResolutionMode mode, PauCLodShaderProfiles.Family family) {
+		PauCDynamicResolutionMode resolvedMode = mode == null ? PauCDynamicResolutionMode.OFF : mode;
+		return switch (family == null ? PauCLodShaderProfiles.Family.GENERIC : family) {
+			case SILDURS_ENHANCED -> switch (resolvedMode) {
+				case OFF -> 1.0D;
+				case QUALITY -> 0.96D;
+				case BALANCED -> 0.94D;
+				case PERFORMANCE -> 0.92D;
+			};
+			case SILDURS_VIBRANT -> switch (resolvedMode) {
+				case OFF -> 1.0D;
+				case QUALITY -> 0.94D;
+				case BALANCED -> 0.90D;
+				case PERFORMANCE -> 0.88D;
+			};
+			default -> resolvedMode.minScale();
+		};
+	}
+
+	private static double downRatePerSecond(PauCDynamicResolutionMode mode, PauCLodShaderProfiles.Family family) {
+		PauCDynamicResolutionMode resolvedMode = mode == null ? PauCDynamicResolutionMode.OFF : mode;
+		double fallback = resolvedMode.downRatePerSecond();
+		return switch (family == null ? PauCLodShaderProfiles.Family.GENERIC : family) {
+			case SILDURS_ENHANCED -> fallback * 0.35D;
+			case SILDURS_VIBRANT -> fallback * 0.45D;
+			default -> fallback;
+		};
+	}
+
+	private static double upRatePerSecond(PauCDynamicResolutionMode mode, PauCLodShaderProfiles.Family family) {
+		PauCDynamicResolutionMode resolvedMode = mode == null ? PauCDynamicResolutionMode.OFF : mode;
+		double fallback = resolvedMode.upRatePerSecond();
+		return switch (family == null ? PauCLodShaderProfiles.Family.GENERIC : family) {
+			case SILDURS_ENHANCED -> Math.min(0.25D, fallback * 1.35D);
+			case SILDURS_VIBRANT -> Math.min(0.25D, fallback * 1.20D);
+			default -> fallback;
+		};
 	}
 
 	private static PauCDynamicResolutionMode readMode() {

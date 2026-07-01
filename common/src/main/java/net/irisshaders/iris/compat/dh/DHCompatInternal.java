@@ -11,6 +11,7 @@ import com.seibel.distanthorizons.api.objects.math.DhApiVec3f;
 import com.seibel.distanthorizons.coreapi.DependencyInjection.OverrideInjector;
 import fr.hoyatla.pauc.lod.PauCLodShaderSafety;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
+import fr.hoyatla.pauc.lod.PauCLodShaderProfiles;
 import fr.hoyatla.pauc.lod.PauCLodShaderRuntime;
 import net.irisshaders.iris.Iris;
 import net.irisshaders.iris.api.v0.IrisApi;
@@ -64,7 +65,10 @@ public class DHCompatInternal {
 			return;
 		}
 
-		boolean hasExplicitDhTerrainShader = pipeline.hasExplicitDHTerrainShader();
+		PauCLodShaderProfiles.Family shaderFamily = PauCLodShaderProfiles.currentFamily();
+		boolean runtimeDhTerrainAllowed = PauCLodShaderProfiles.allowsRuntimeDhTerrainPath(shaderFamily);
+		boolean hasExplicitDhTerrainShader = pipeline.hasExplicitDHTerrainShader()
+			&& (PauCLodShaderContext.hasScannedDhTerrainProgram() || runtimeDhTerrainAllowed);
 		Optional<ProgramSource> terrainSource = hasExplicitDhTerrainShader ? pipeline.getDHTerrainShader() : Optional.empty();
 		boolean detectedRuntimeDhShader = terrainSource.isPresent();
 		boolean detectedNativeDhShader = detectedRuntimeDhShader;
@@ -95,7 +99,9 @@ public class DHCompatInternal {
 					? "cached-missing-dh-shader"
 					: packBlocksSyntheticDhTerrainShader
 						? "missing-pack-dh-terrain-shader"
-						: hasExplicitDhTerrainShader ? "missing-dh-shader" : "missing-dh-terrain-shader";
+					: hasExplicitDhTerrainShader
+						? runtimeDhTerrainAllowed ? "runtime-family-dh-terrain-shader" : "missing-dh-shader"
+						: "missing-dh-terrain-shader";
 		PauCLodShaderContext.markDhShaderCompatibility(
 			hasNativeDhShader,
 			syntheticDhTerrainShader,

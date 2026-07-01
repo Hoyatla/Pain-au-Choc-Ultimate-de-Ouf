@@ -159,6 +159,58 @@ public final class PauCLodShaderProfiles {
 		false,
 		false
 	);
+	private static final Profile SILDURS_ENHANCED_PROFILE = new Profile(
+		Family.SILDURS_ENHANCED,
+		"sildurs-enhanced-default",
+		false,
+		false,
+		false,
+		"0.08",
+		"0.06",
+		"0.08",
+		"0.10",
+		"0.10",
+		"56.0",
+		"112.0",
+		"0.68",
+		"0.30",
+		"0.36",
+		"vec3(0.44, 0.58, 0.74)",
+		"0.00",
+		"160.0",
+		"544.0",
+		"0.10",
+		"0.28",
+		"0.36",
+		false,
+		false
+	);
+	private static final Profile SILDURS_VIBRANT_PROFILE = new Profile(
+		Family.SILDURS_VIBRANT,
+		"sildurs-vibrant",
+		false,
+		false,
+		false,
+		"0.09",
+		"0.07",
+		"0.09",
+		"0.11",
+		"0.11",
+		"64.0",
+		"128.0",
+		"0.74",
+		"0.28",
+		"0.34",
+		"vec3(0.46, 0.60, 0.78)",
+		"0.00",
+		"176.0",
+		"560.0",
+		"0.12",
+		"0.30",
+		"0.38",
+		false,
+		false
+	);
 	private static final Profile GENERIC_PROFILE = new Profile(
 		Family.GENERIC,
 		"generic",
@@ -230,6 +282,14 @@ public final class PauCLodShaderProfiles {
 		if (lower.contains("photon")) {
 			return Family.PHOTON;
 		}
+		if (lower.contains("sildur")) {
+			if (lower.contains("enhanced default") || lower.contains("enhanceddefault")) {
+				return Family.SILDURS_ENHANCED;
+			}
+			if (lower.contains("vibrant")) {
+				return Family.SILDURS_VIBRANT;
+			}
+		}
 		if (lower.contains("rethinking")) {
 			return Family.RETHINKING;
 		}
@@ -250,7 +310,16 @@ public final class PauCLodShaderProfiles {
 			case BLISS -> BLISS_PROFILE;
 			case PHOTON -> PHOTON_PROFILE;
 			case SOLAS -> SOLAS_PROFILE;
+			case SILDURS_ENHANCED -> SILDURS_ENHANCED_PROFILE;
+			case SILDURS_VIBRANT -> SILDURS_VIBRANT_PROFILE;
 			case GENERIC -> GENERIC_PROFILE;
+		};
+	}
+
+	public static boolean allowsRuntimeDhTerrainPath(Family family) {
+		return switch (family == null ? Family.GENERIC : family) {
+			case PHOTON, SOLAS, SILDURS_ENHANCED, SILDURS_VIBRANT -> true;
+			default -> false;
 		};
 	}
 
@@ -265,6 +334,8 @@ public final class PauCLodShaderProfiles {
 		BLISS,
 		PHOTON,
 		SOLAS,
+		SILDURS_ENHANCED,
+		SILDURS_VIBRANT,
 		GENERIC
 	}
 

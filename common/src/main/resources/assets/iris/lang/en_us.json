@@ -42,6 +42,7 @@
     "options.iris.shaderPackSelection.failedAddSingle":  "\"%s\" is not a valid Shader Pack",
     "options.iris.shaderPackSelection.copyError":  "Could not add Shader Pack \"%s\"",
     "options.iris.shaderPackSelection.copyErrorAlreadyExists":  "\"%s\" is already in your Shader Packs folder!",
+    "options.iris.shaderQuickAccess.off":  "Shader OFF",
     "options.iris.shaderPackOptions.tooManyFiles":  "Cannot import multiple Shader Settings files!",
     "options.iris.shaderPackOptions.failedImport":  "Failed to import Shader Settings file \"%s\"",
     "options.iris.shaderPackOptions.importedSettings":  "Imported Shader Settings from \"%s\"",

@@ -118,7 +118,11 @@ public final class PauCLodShaderRuntime {
 		if (!shouldKeepPauCLodCloudsVisible()) {
 			return false;
 		}
-		boolean defaultProtect = !PauCLodShaderContext.isFallbackActive() && !isUnderPressure();
+		PauCLodShaderProfiles.Family family = currentFamily();
+		boolean stableNativeCloudPath = PauCLodShaderContext.isDhNativeShaderActive()
+			&& (family == PauCLodShaderProfiles.Family.SILDURS_ENHANCED
+				|| family == PauCLodShaderProfiles.Family.SILDURS_VIBRANT);
+		boolean defaultProtect = stableNativeCloudPath || (!PauCLodShaderContext.isFallbackActive() && !isUnderPressure());
 		return readBoolean(PROTECT_LOD_CLOUD_CENTER_PROPERTY, defaultProtect);
 	}
 

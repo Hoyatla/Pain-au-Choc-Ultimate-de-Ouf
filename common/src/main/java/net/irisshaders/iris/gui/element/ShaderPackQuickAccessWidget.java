@@ -1,6 +1,7 @@
 package net.irisshaders.iris.gui.element;
 
 import net.irisshaders.iris.Iris;
+import net.irisshaders.iris.api.v0.IrisApi;
 import net.irisshaders.iris.gui.GuiUtil;
 import net.irisshaders.iris.gui.screen.ShaderPackScreen;
 import net.minecraft.ChatFormatting;
@@ -26,8 +27,10 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 	private static final int BUTTON_GAP = 4;
 	private static final int MIN_BUTTON_WIDTH = 76;
 	private static final int MAX_BUTTON_WIDTH = 170;
+	private static final String SHADER_OFF_SENTINEL = "__pauc_shader_off__";
 	private static final Component TITLE = Component.translatable("options.iris.shaderPackSelection");
 	private static final Component EMPTY = Component.translatable("options.iris.shaders.nonePresent").withStyle(ChatFormatting.GRAY);
+	private static final Component SHADER_OFF = Component.translatable("options.iris.shaderQuickAccess.off");
 	private static final Component PREVIOUS = Component.literal("<");
 	private static final Component NEXT = Component.literal(">");
 
@@ -46,15 +49,22 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 	}
 
 	private static List<String> readShaderPackNames() {
+		List<String> entries = new ArrayList<>();
+		entries.add(SHADER_OFF_SENTINEL);
 		try {
-			return Iris.getShaderpacksDirectoryManager().enumerate();
+			entries.addAll(Iris.getShaderpacksDirectoryManager().enumerate());
 		} catch (Throwable e) {
 			Iris.logger.error("Error reading shaderpacks while constructing video settings quick access", e);
-			return List.of();
 		}
+		return entries;
 	}
 
 	private void centerOnCurrentPack() {
+		if (!Iris.getIrisConfig().areShadersEnabled()) {
+			this.firstVisiblePack = 0;
+			return;
+		}
+
 		String currentPackName = Iris.getIrisConfig().getShaderPackName().orElse(null);
 		if (currentPackName == null) {
 			return;
@@ -182,7 +192,13 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 		for (PackButton packButton : this.visibleButtons) {
 			if (packButton.hovered(mouseX, mouseY)) {
 				GuiUtil.playButtonClickSound();
-				Minecraft.getInstance().setScreen(ShaderPackScreen.openShaderPackOptionsDirectly(this.parent, packButton.packName));
+				if (isShaderOffEntry(packButton.packName)) {
+					if (Iris.getIrisConfig().areShadersEnabled()) {
+						IrisApi.getInstance().getConfig().setShadersEnabledAndApply(false);
+					}
+				} else {
+					Minecraft.getInstance().setScreen(ShaderPackScreen.openShaderPackOptionsDirectly(this.parent, packButton.packName));
+				}
 				return true;
 			}
 		}
@@ -210,6 +226,10 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 		narrationElementOutput.add(NarratedElementType.TITLE, TITLE);
 	}
 
+	private static boolean isShaderOffEntry(String packName) {
+		return SHADER_OFF_SENTINEL.equals(packName);
+	}
+
 	private static class PackButton {
 		private final String packName;
 		private final int x;
@@ -226,7 +246,7 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 			this.width = width;
 			this.height = height;
 			Font font = Minecraft.getInstance().font;
-			String displayName = packName;
+			String displayName = isShaderOffEntry(packName) ? SHADER_OFF.getString() : packName;
 			boolean shortened = false;
 
 			if (font.width(displayName) > width - 12) {
@@ -240,7 +260,9 @@ public class ShaderPackQuickAccessWidget extends AbstractWidget {
 
 		private void render(GuiGraphics guiGraphics, Font font, int mouseX, int mouseY) {
 			boolean hovered = hovered(mouseX, mouseY);
-			boolean active = Iris.getIrisConfig().areShadersEnabled() && packName.equals(Iris.getCurrentPackName());
+			boolean active = isShaderOffEntry(packName)
+				? !Iris.getIrisConfig().areShadersEnabled()
+				: Iris.getIrisConfig().areShadersEnabled() && packName.equals(Iris.getCurrentPackName());
 			GuiUtil.drawButton(guiGraphics, x, y, width, height, hovered, false);
 			MutableComponent text = this.label.copy();
 			int color = active ? 0xFFF263 : 0xFFFFFF;

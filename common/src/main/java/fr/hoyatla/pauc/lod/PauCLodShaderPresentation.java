@@ -134,6 +134,12 @@ public final class PauCLodShaderPresentation {
 	}
 
 	private static boolean shouldNeutralizeNativeShaderFog() {
+		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
+		if (family == PauCLodShaderProfiles.Family.SILDURS_ENHANCED
+			|| family == PauCLodShaderProfiles.Family.SILDURS_VIBRANT) {
+			return readBoolean(NATIVE_SHADER_FOG_NEUTRALIZATION_PROPERTY, true)
+				&& PauCLodShaderContext.isDhNativeShaderActive();
+		}
 		return readBoolean(NATIVE_SHADER_FOG_NEUTRALIZATION_PROPERTY, true)
 			&& PauCLodShaderContext.isDhNativeShaderActive();
 	}

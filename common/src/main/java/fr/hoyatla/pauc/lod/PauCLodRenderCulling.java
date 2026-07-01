@@ -77,13 +77,13 @@ public final class PauCLodRenderCulling {
 	private static final int DEFAULT_HORDE_ENTITY_PRESSURE_DISTANCE_BLOCKS = 128;
 	private static final int DEFAULT_HORDE_BLOCK_ENTITY_PRESSURE_DISTANCE_BLOCKS = 96;
 	private static final int DEFAULT_PARTICLE_DISTANCE_BLOCKS = 80;
-	private static final int DEFAULT_LOD_CLOUD_CELL_WIDTH_BLOCKS = 16;
+	private static final int DEFAULT_LOD_CLOUD_CELL_WIDTH_BLOCKS = 12;
 	private static final int DEFAULT_LOD_CLOUD_THICKNESS_BLOCKS = 4;
 	private static final int DEFAULT_LOD_CLOUD_INNER_CULL_INSTANCES = 3;
 	private static final int DEFAULT_SHADER_FALLBACK_LOD_CLOUD_INNER_CULL_INSTANCES = 4;
 	private static final int DEFAULT_LOD_CLOUD_OUTER_ACTIVE_INSTANCES = 5;
 	private static final int MAX_LOD_CLOUD_OUTER_ACTIVE_INSTANCES = 24;
-	private static final float DEFAULT_LOD_CLOUD_SPEED_BLOCKS_PER_SECOND = 6.0F;
+	private static final float DEFAULT_LOD_CLOUD_SPEED_BLOCKS_PER_SECOND = 0.6F;
 	private static final int DEFAULT_LOD_CLOUD_HEIGHT_OFFSET_FROM_WORLD_TOP_BLOCKS = -128;
 	private static final int DEFAULT_LOD_CLOUD_LOW_NEAR_CULL_HEIGHT_MARGIN_BLOCKS = 24;
 	private static final int DEFAULT_LOD_CLOUD_LOW_NEAR_CULL_RING = 4;
@@ -243,6 +243,9 @@ public final class PauCLodRenderCulling {
 	public static boolean shouldCullLowNearLodCloud(double minPosY, int instanceOffsetX, int instanceOffsetZ) {
 		Minecraft minecraft = Minecraft.getInstance();
 		if (minecraft == null || minecraft.level == null || minecraft.gameRenderer == null) {
+			return false;
+		}
+		if (PauCLodShaderRuntime.shouldProtectLodCloudCenter()) {
 			return false;
 		}
 
@@ -407,7 +410,8 @@ public final class PauCLodRenderCulling {
 		int scaledOuter = (int) Math.ceil(
 			configuredOuter * (configuredTarget / (double) PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS)
 		);
-		return Math.max(1, Math.min(MAX_LOD_CLOUD_OUTER_ACTIVE_INSTANCES, scaledOuter));
+		int minimumOuter = PauCLodShaderRuntime.shouldKeepPauCLodCloudsVisible() ? 4 : 1;
+		return Math.max(minimumOuter, Math.min(MAX_LOD_CLOUD_OUTER_ACTIVE_INSTANCES, scaledOuter));
 	}
 
 	public static String describe() {
@@ -641,7 +645,7 @@ public final class PauCLodRenderCulling {
 	}
 
 	private static boolean shouldUseDistantLodCloudRing() {
-		return PauCLodShaderContext.isFallbackActive() || PauCLodShaderRuntime.isUnderPressure();
+		return PauCLodShaderContext.isFallbackActive();
 	}
 
 	private static GenericLodCullConfig genericLodCullConfig(long now) {
