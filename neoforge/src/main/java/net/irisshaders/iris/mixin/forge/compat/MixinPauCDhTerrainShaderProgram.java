@@ -1,5 +1,6 @@
 package net.irisshaders.iris.mixin.forge.compat;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.logging.LogUtils;
 import com.seibel.distanthorizons.api.methods.events.sharedParameterObjects.DhApiRenderParam;
 import com.seibel.distanthorizons.common.render.openGl.glObject.shader.GlShaderProgram;
@@ -27,6 +28,8 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 	private static boolean pauc$clipFadeDisabledLogged;
 	@Unique
 	private static boolean pauc$clipBoundaryLogged;
+	@Unique
+	private static float pauc$lastLoggedClipRadius = -1.0F;
 	@Shadow
 	public int uClipDistance;
 	@Shadow
@@ -87,6 +90,12 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 	private int pauc$seamHeightStrength = -1;
 	@Unique
 	private int pauc$seamMaxVerticalStep = -1;
+	@Unique
+	private int pauc$lodClipRadius = -1;
+	@Unique
+	private int pauc$lodClipFade = -1;
+	@Unique
+	private int pauc$lodClipFogColor = -1;
 
 	@Inject(method = "tryInit", at = @At("TAIL"))
 	private void pauc$locateFallbackVisualUniforms(CallbackInfo ci) {
@@ -119,6 +128,9 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 		pauc$seamCornerHeights = shader.tryGetUniformLocation("uPaucSeamCornerHeights");
 		pauc$seamHeightStrength = shader.tryGetUniformLocation("uPaucSeamHeightStrength");
 		pauc$seamMaxVerticalStep = shader.tryGetUniformLocation("uPaucSeamMaxVerticalStep");
+		pauc$lodClipRadius = shader.tryGetUniformLocation("uPaucLodClipRadius");
+		pauc$lodClipFade = shader.tryGetUniformLocation("uPaucLodClipFade");
+		pauc$lodClipFogColor = shader.tryGetUniformLocation("uPaucLodClipFogColor");
 		if (!pauc$fallbackShaderUniformsLogged) {
 			pauc$fallbackShaderUniformsLogged = true;
 			if (pauc$fallbackVisualStrength != -1) {
@@ -160,7 +172,35 @@ public abstract class MixinPauCDhTerrainShaderProgram {
 		pauc$uniform4f(pauc$seamCornerHeights, state.seamNorthWestHeight(), state.seamNorthEastHeight(), state.seamSouthWestHeight(), state.seamSouthEastHeight());
 		pauc$uniform1f(pauc$seamHeightStrength, state.seamHeightStrength());
 		pauc$uniform1f(pauc$seamMaxVerticalStep, state.seamMaxVerticalStep());
+		pauc$applyPaucCircularLodClip();
 		pauc$applyPaucBoundaryClip(renderParameters, state);
+	}
+
+	@Unique
+	private void pauc$applyPaucCircularLodClip() {
+		// Clean circular clip for native-DH LOD packs (e.g. Sildur's Vibrant) whose fog is neutralised so
+		// the LOD field would otherwise end in a ragged/square edge against the sky. Never clip the shadow
+		// pass: there vertexWorldPos is relative to the sun, so a horizontal-distance clip would be wrong.
+		float clipRadius = ShadowRenderingState.areShadowsCurrentlyBeingRendered()
+			? 0.0F
+			: PauCLodShaderPresentation.currentLodCircularClipRadiusBlocks();
+		float clipFade = clipRadius > 0.0F ? PauCLodShaderPresentation.currentLodCircularClipFadeBlocks() : 0.0F;
+		pauc$uniform1f(pauc$lodClipRadius, clipRadius);
+		pauc$uniform1f(pauc$lodClipFade, clipFade);
+		if (clipRadius > 0.0F && pauc$lodClipFogColor != -1) {
+			// Sildur's own current horizon/fog colour, so the dissolving edge melts into its actual sky.
+			float[] horizonColor = RenderSystem.getShaderFogColor();
+			GL32.glUniform3f(pauc$lodClipFogColor, horizonColor[0], horizonColor[1], horizonColor[2]);
+		}
+		// Re-log whenever the radius shifts by >=1 chunk so the gauge-tracking is verifiable in the log
+		// (the clip must follow the player's LOD render-distance slider, not a fixed value).
+		if (clipRadius > 0.0F && Math.abs(clipRadius - pauc$lastLoggedClipRadius) >= 16.0F) {
+			pauc$lastLoggedClipRadius = clipRadius;
+			PAUC_FALLBACK_SHADER_LOGGER.info(
+				"PauC circular LOD clip tracks gauge: radius={} blocks ({} chunks), fade={} blocks (uniformPresent={}).",
+				clipRadius, Math.round(clipRadius / 16.0F), clipFade, pauc$lodClipRadius != -1
+			);
+		}
 	}
 
 	@Unique

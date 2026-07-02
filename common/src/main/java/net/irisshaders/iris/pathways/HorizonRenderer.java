@@ -6,6 +6,7 @@ import com.mojang.blaze3d.vertex.Tesselator;
 import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodRange;
 import fr.hoyatla.pauc.lod.PauCLodShaderContext;
@@ -254,10 +255,18 @@ public class HorizonRenderer {
 
 	private boolean currentHorizonDomeActive() {
 		PauCLodRange range = PauCLodHorizonState.currentRange();
-		return readBoolean(PAUC_HORIZON_DOME_PROPERTY, true)
-			&& range != null
-			&& range.enabled()
-			&& !PauCLodShaderContext.isShaderPackInUse();
+		if (!readBoolean(PAUC_HORIZON_DOME_PROPERTY, true) || range == null || !range.enabled()) {
+			return false;
+		}
+		// Shaderless: the vanilla-fog toggle owns the horizon closure. Fog ON -> the dome closes the map;
+		// fog OFF -> the player asked for a fully clear distance, so no fog AND no dome (nothing drawn beyond
+		// the last LODs). Under a shader that owns its atmospheric fog (Photon/Solas) we leave the sky to the
+		// shader. BUT a shader shipping no native DH fog program (Sildur's Vibrant) neither fogs the LOD
+		// horizon nor honours PauC's vanilla fog uniforms - there the dome is the only closure.
+		if (!PauCLodShaderContext.isShaderPackInUse()) {
+			return PauCLodClientSettings.isVanillaFogEnabled();
+		}
+		return PauCLodShaderContext.shouldApplyLodHorizonFogForNoDhFogPack();
 	}
 
 	private float currentHorizonTopY(boolean domeActive) {

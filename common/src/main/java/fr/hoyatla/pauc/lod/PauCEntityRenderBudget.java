@@ -63,7 +63,7 @@ public final class PauCEntityRenderBudget {
 		long enabledSeq = PauCFrameSpikeAbsorber.frameSeq();
 		if (enabledSeq != enabledCacheSeq) {
 			enabledCacheSeq = enabledSeq;
-			enabledThisFrame = Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "false"));
+			enabledThisFrame = fr.hoyatla.pauc.PauCTunables.readBoolean(ENABLED_PROPERTY, false);
 		}
 		if (!enabledThisFrame) {
 			return false;
@@ -156,7 +156,7 @@ public final class PauCEntityRenderBudget {
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}
@@ -168,7 +168,7 @@ public final class PauCEntityRenderBudget {
 	}
 
 	private static double readDouble(String key, double fallback, double min, double max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

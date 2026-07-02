@@ -88,6 +88,9 @@ public final class PauCCudaWorker {
 	private static volatile CudaRuntime runtime;
 	private static volatile boolean selfTestAttempted;
 	private static final Set<String> TERRAIN_AUTO_DISABLED_PROFILES = ConcurrentHashMap.newKeySet();
+	// Heavy modpacks route thousands of small batches per session through the refusal paths below;
+	// caching the diagnostic status strings avoids rebuilding them (concat + average math) per call.
+	private static final ConcurrentHashMap<String, String> TERRAIN_ROUTE_STATUS_CACHE = new ConcurrentHashMap<>();
 	private static volatile long lastTerrainLaunchNs;
 	private static volatile String lastTerrainStatus = "not-run";
 	private static volatile String lastTerrainProfile = "unknown";
@@ -315,14 +318,24 @@ public final class PauCCudaWorker {
 		}
 		if (shouldRouteSmallBatchToCpu(sums.length, profile)) {
 			recordTerrainCpuRoute(profile);
-			int threshold = smallBatchCpuThreshold(profile);
-			lastTerrainStatus = "terrain-cpu:small-batch:" + profile.id() + "/" + sums.length + "<" + threshold + ":min=" + profile.minUsefulBatch();
+			String status = TERRAIN_ROUTE_STATUS_CACHE.get(profile.id());
+			if (status == null || !status.startsWith("terrain-cpu:")) {
+				int threshold = smallBatchCpuThreshold(profile);
+				status = "terrain-cpu:small-batch:" + profile.id() + "/<" + threshold + ":min=" + profile.minUsefulBatch();
+				TERRAIN_ROUTE_STATUS_CACHE.put(profile.id(), status);
+			}
+			lastTerrainStatus = status;
 			return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
 		}
 		if (isTerrainAutoDisabledForBatch(sums.length, profile)) {
 			CUDA_AUTO_DISABLED_CALLS.incrementAndGet();
 			recordTerrainCpuRoute(profile);
-			lastTerrainStatus = terrainAutoDisabledStatus(profile);
+			String status = TERRAIN_ROUTE_STATUS_CACHE.get(profile.id());
+			if (status == null || !status.startsWith("terrain-auto-disabled:")) {
+				status = terrainAutoDisabledStatus(profile);
+				TERRAIN_ROUTE_STATUS_CACHE.put(profile.id(), status);
+			}
+			lastTerrainStatus = status;
 			return PauCLodCudaBridge.Result.unavailable(lastTerrainStatus, cpuFallback);
 		}
 
@@ -506,6 +519,7 @@ public final class PauCCudaWorker {
 		TERRAIN_CPU_COST_MICROS.set(0L);
 		WORLD_CACHE_COALESCED_BATCHES.set(0L);
 		TERRAIN_AUTO_DISABLED_PROFILES.clear();
+		TERRAIN_ROUTE_STATUS_CACHE.clear();
 		lastTerrainLaunchNs = 0L;
 		lastTerrainStatus = "not-run";
 		lastTerrainProfile = "unknown";

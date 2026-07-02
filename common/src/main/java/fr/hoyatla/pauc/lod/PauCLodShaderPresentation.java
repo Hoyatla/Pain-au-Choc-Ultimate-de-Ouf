@@ -21,6 +21,11 @@ public final class PauCLodShaderPresentation {
 	private static final String EXTEND_SHADER_CAMERA_FAR_PROPERTY = "pauc.lod.extendShaderCameraFar";
 	private static final String EXTEND_LATE_FALLBACK_SHADER_CAMERA_FAR_PROPERTY = "pauc.lod.extendLateFallbackShaderCameraFar";
 	private static final String ALLOW_PRESENTATION_BEYOND_RANGE_PROPERTY = "pauc.lod.shaderPresentationBeyondRange";
+	private static final String CIRCULAR_CLIP_PROPERTY = "pauc.lod.circularClip";
+	private static final String CIRCULAR_CLIP_MARGIN_PROPERTY = "pauc.lod.circularClipMarginChunks";
+	private static final String CIRCULAR_CLIP_FADE_PROPERTY = "pauc.lod.circularClipFadeChunks";
+	private static final int DEFAULT_CIRCULAR_CLIP_MARGIN_CHUNKS = 1;
+	private static final int DEFAULT_CIRCULAR_CLIP_FADE_CHUNKS = 3;
 	private static long lastFogNeutralizationLogMs;
 	private static long lastLateFallbackRenderLogMs;
 
@@ -188,6 +193,44 @@ public final class PauCLodShaderPresentation {
 		return isPresentationEnabled() ? 1 : 0;
 	}
 
+	// Clean circular clip of the embedded DH LOD field. Targets native-DH packs (e.g. Sildur's Vibrant)
+	// that ship no DH programs: their fog is neutralised on the LODs, so without this the field ends in a
+	// ragged/square edge against the sky. Packs with their own DH programs (Photon/Solas) render LODs
+	// through a different program, so this is off for them by default and would not reach their shader anyway.
+	public static boolean isCircularLodClipEnabled() {
+		PauCLodShaderProfiles.Family family = PauCLodShaderProfiles.currentFamily();
+		boolean defaultEnabled = family == PauCLodShaderProfiles.Family.SILDURS_VIBRANT
+			|| family == PauCLodShaderProfiles.Family.SILDURS_ENHANCED;
+		return readBoolean(CIRCULAR_CLIP_PROPERTY, defaultEnabled)
+			&& PauCLodShaderContext.isDhNativeShaderActive()
+			&& currentRange().enabled();
+	}
+
+	public static float currentLodCircularClipRadiusBlocks() {
+		if (!isCircularLodClipEnabled()) {
+			return 0.0F;
+		}
+
+		// Anchor the clip on the PLAYER'S gauge (video-settings LOD render distance), which drives the range's
+		// lodEndChunk — NOT on DH's separate chunkRenderDistance config. All LOD distances must follow the
+		// player's slider; when the slider moves, lodEndChunk (and this clip) move with it. The LOD field is a
+		// square of half-side lodEndChunk, so clipping the inscribed circle at (lodEndChunk - margin) trims the
+		// square corners and the ragged outer ring into a clean circle around the player. Default margin = 1.
+		PauCLodRange range = currentRange();
+		int marginChunks = readInt(CIRCULAR_CLIP_MARGIN_PROPERTY, DEFAULT_CIRCULAR_CLIP_MARGIN_CHUNKS, 0, 64);
+		int radiusChunks = Math.max(range.lodStartChunk() + 1, range.lodEndChunk() - marginChunks);
+		return chunksToBlocks(radiusChunks);
+	}
+
+	public static float currentLodCircularClipFadeBlocks() {
+		if (!isCircularLodClipEnabled()) {
+			return 0.0F;
+		}
+
+		int fadeChunks = readInt(CIRCULAR_CLIP_FADE_PROPERTY, DEFAULT_CIRCULAR_CLIP_FADE_CHUNKS, 0, 32);
+		return chunksToBlocks(fadeChunks);
+	}
+
 	private static PauCLodRange currentRange() {
 		PauCLodRange range = PauCLodHorizonState.currentRange();
 		return range == null ? PauCLodRange.disabled(2, PauCLodRange.DEFAULT_TARGET_DISTANCE_CHUNKS) : range;
@@ -256,12 +299,12 @@ public final class PauCLodShaderPresentation {
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

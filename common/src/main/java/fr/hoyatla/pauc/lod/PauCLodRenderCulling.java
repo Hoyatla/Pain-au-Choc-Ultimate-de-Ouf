@@ -733,12 +733,12 @@ public final class PauCLodRenderCulling {
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return clamp(fallback, min, max);
 		}
@@ -751,7 +751,7 @@ public final class PauCLodRenderCulling {
 	}
 
 	private static float readFloat(String key, float fallback, float min, float max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return clamp(fallback, min, max);
 		}

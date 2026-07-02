@@ -147,7 +147,7 @@ public final class PauCFrameSpikeAbsorber {
 	}
 
 	private static boolean isEnabled() {
-		return Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"));
+		return fr.hoyatla.pauc.PauCTunables.readBoolean(ENABLED_PROPERTY, true);
 	}
 
 	private static double clamp01(double value) {
@@ -155,7 +155,7 @@ public final class PauCFrameSpikeAbsorber {
 	}
 
 	private static double readDouble(String key, double fallback, double min, double max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

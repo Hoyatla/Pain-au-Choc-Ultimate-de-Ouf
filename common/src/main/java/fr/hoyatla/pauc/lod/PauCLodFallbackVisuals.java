@@ -39,7 +39,10 @@ public final class PauCLodFallbackVisuals {
 	private static final int STANDARD_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 18;
 	private static final int LATE_HORIZON_VEIL_START_BEFORE_END_CHUNKS = 6;
 	private static final int STANDARD_FOG_END_MARGIN_CHUNKS = 0;
-	private static final float STANDARD_FOG_INTENSITY = 1.0F;
+	// 0 by default: with vanilla fog ON the extended vanilla fog + horizon dome close the map; layering a
+	// synthetic veil on top washes out the last LOD ring ("cache-misere" fog). Opt back in via
+	// pauc.lod.fallbackVisualFogIntensity for packs/users that want the extra gradient.
+	private static final float STANDARD_FOG_INTENSITY = 0.0F;
 	private static final float STANDARD_BRIGHTNESS = 1.0F;
 	private static final float STANDARD_SHADOW_LIFT = 0.0F;
 	private static final float STANDARD_SATURATION = 1.0F;
@@ -296,7 +299,31 @@ public final class PauCLodFallbackVisuals {
 
 		patched = patched.replace(
 			"float viewDist = length(vertexWorldPos);",
-			"float viewDist = length(vertexWorldPos.xz);"
+			"float viewDist = length(vertexWorldPos.xz);\n"
+				+ "    \n"
+				+ "    // PauC clean circular LOD closure: carve the DH terrain to a circle of radius\n"
+				+ "    // uPaucLodClipRadius (blocks). Cutting a solid LOD slab would expose a vertical cliff\n"
+				+ "    // (the terrain cross-section), so over the last uPaucLodClipFade blocks we DISSOLVE the\n"
+				+ "    // geometry with a distance dither (the cliff crumbles away instead of showing a wall) and\n"
+				+ "    // tint the albedo toward the horizon colour uPaucLodClipFogColor so the edge melts into the\n"
+				+ "    // sky. Disabled (radius 0) in the shadow pass, where viewDist is relative to the sun.\n"
+				+ "    if (uPaucLodClipRadius > 0.0)\n"
+				+ "    {\n"
+				+ "        if (viewDist >= uPaucLodClipRadius)\n"
+				+ "        {\n"
+				+ "            discard;\n"
+				+ "        }\n"
+				+ "        if (uPaucLodClipFade > 0.0)\n"
+				+ "        {\n"
+				+ "            float paucEdge = clamp((viewDist - (uPaucLodClipRadius - uPaucLodClipFade)) / uPaucLodClipFade, 0.0, 1.0);\n"
+				+ "            fragColor.rgb = mix(fragColor.rgb, uPaucLodClipFogColor, paucEdge * paucEdge);\n"
+				+ "            float paucFarInside = 1.0 - paucEdge;\n"
+				+ "            if (paucFarInside < (bayerMatrix4x4(gl_FragCoord.xy) + 0.001))\n"
+				+ "            {\n"
+				+ "                discard;\n"
+				+ "            }\n"
+				+ "        }\n"
+				+ "    }"
 		);
 
 		patched = patched.replace(
@@ -322,6 +349,9 @@ public final class PauCLodFallbackVisuals {
 				+ "uniform float uPaucFallbackEmissiveBoost;\n"
 				+ "uniform float uPaucSeamClipDistance;\n"
 				+ "uniform float uPaucSeamMorphWidth;\n"
+				+ "uniform float uPaucLodClipRadius;\n"
+				+ "uniform float uPaucLodClipFade;\n"
+				+ "uniform vec3 uPaucLodClipFogColor;\n"
 		);
 		if (!patched.contains("uniform float uPaucFallbackVisualStrength;")) {
 			logShaderPatchFailure(path);
@@ -544,12 +574,12 @@ public final class PauCLodFallbackVisuals {
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}
@@ -562,7 +592,7 @@ public final class PauCLodFallbackVisuals {
 	}
 
 	private static float readFloat(String key, float fallback, float min, float max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return clamp(fallback, min, max);
 		}
@@ -627,7 +657,7 @@ public final class PauCLodFallbackVisuals {
 	}
 
 	private static float configuredShaderOffSeamMorphStrength() {
-		String rawValue = System.getProperty(SEAM_MORPH_PROPERTY);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(SEAM_MORPH_PROPERTY);
 		if (rawValue == null) {
 			return 1.0F;
 		}

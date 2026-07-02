@@ -89,7 +89,9 @@ public class MixinFogRenderer {
 
 		PauCLodRange range = PauCLodHorizonState.currentRange();
 		PauCLodFogState.capture(RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd(), range, shaderManagedFog);
-		if (shaderManagedFog && !PauCLodShaderContext.shouldApplyFallbackFog()) {
+		if (shaderManagedFog
+			&& !PauCLodShaderContext.shouldApplyFallbackFog()
+			&& !PauCLodShaderContext.shouldApplyLodHorizonFogForNoDhFogPack()) {
 			return;
 		}
 

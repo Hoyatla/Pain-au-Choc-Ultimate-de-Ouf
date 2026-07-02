@@ -419,7 +419,7 @@ public class IrisLodRenderProgram {
 	}
 
 	private static String readClampedFloatString(String key, float fallback, float min, float max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		float value = fallback;
 		if (rawValue != null) {
 			try {
@@ -432,7 +432,7 @@ public class IrisLodRenderProgram {
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue.trim());
 	}
 
@@ -464,7 +464,7 @@ public class IrisLodRenderProgram {
 
 	private static boolean shouldApplyNativeRuntimeUnderwaterFog(PauCLodShaderProfiles.Profile profile, String programName) {
 		boolean defaultEnabled = !profile.preservesNativeDhPresentation();
-		boolean enabled = Boolean.parseBoolean(System.getProperty(NATIVE_RUNTIME_UNDERWATER_FOG_PROPERTY, Boolean.toString(defaultEnabled)));
+		boolean enabled = fr.hoyatla.pauc.PauCTunables.readBoolean(NATIVE_RUNTIME_UNDERWATER_FOG_PROPERTY, defaultEnabled);
 		if (!enabled && profile.preservesNativeDhPresentation() && !paucNativeUnderwaterFogBypassLogged) {
 			paucNativeUnderwaterFogBypassLogged = true;
 			Iris.logger.info("PauC keeps native shader underwater fog for DH LOD presentation: {} (profile={}).", programName, profile.id());
@@ -1056,7 +1056,7 @@ public class IrisLodRenderProgram {
 			return source;
 		}
 
-		if (!Boolean.parseBoolean(System.getProperty("pauc.lod.blissHorizonPatch", "true"))) {
+		if (!fr.hoyatla.pauc.PauCTunables.readBoolean("pauc.lod.blissHorizonPatch", true)) {
 			return source;
 		}
 
@@ -1183,7 +1183,8 @@ public class IrisLodRenderProgram {
 	}
 
 	private static boolean shouldApplyPaucSyntheticLodShadow(PauCLodShaderProfiles.Profile profile) {
-		return readBoolean(SYNTHETIC_LOD_SHADOW_PROPERTY, false) && profile.shouldApplySyntheticLodShadow();
+		return readBoolean(SYNTHETIC_LOD_SHADOW_PROPERTY, profile.defaultSyntheticLodShadowEnabled())
+			&& profile.shouldApplySyntheticLodShadow();
 	}
 
 	private static boolean shouldApplyPaucBoundaryLodShadow(PauCLodShaderProfiles.Profile profile) {

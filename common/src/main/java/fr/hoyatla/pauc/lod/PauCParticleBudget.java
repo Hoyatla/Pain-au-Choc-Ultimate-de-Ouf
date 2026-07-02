@@ -51,7 +51,7 @@ public final class PauCParticleBudget {
 		syncFrame();
 		spawnedThisFrame++;
 
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
+		if (!fr.hoyatla.pauc.PauCTunables.readBoolean(ENABLED_PROPERTY, true)) {
 			return false;
 		}
 		boolean scenePressure = PauCVillagePerformanceDiagnostics.isScenePressureActive();
@@ -154,7 +154,7 @@ public final class PauCParticleBudget {
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

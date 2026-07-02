@@ -186,7 +186,7 @@ public final class PauCVillagePerformanceDiagnostics {
 	}
 
 	public static void onClientTick(Minecraft minecraft) {
-		diagnosticsEnabled = Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"));
+		diagnosticsEnabled = fr.hoyatla.pauc.PauCTunables.readBoolean(ENABLED_PROPERTY, true);
 		if (!diagnosticsEnabled || minecraft == null || minecraft.level == null) {
 			villagePressureActive = false;
 			villagePressureTicks = 0;
@@ -341,19 +341,19 @@ public final class PauCVillagePerformanceDiagnostics {
 
 	public static boolean isVillagePressureActive() {
 		return diagnosticsEnabled
-			&& Boolean.parseBoolean(System.getProperty(VILLAGE_PRESSURE_ENABLED_PROPERTY, "true"))
+			&& fr.hoyatla.pauc.PauCTunables.readBoolean(VILLAGE_PRESSURE_ENABLED_PROPERTY, true)
 			&& villagePressureActive;
 	}
 
 	public static boolean isHordePressureActive() {
 		return diagnosticsEnabled
-			&& Boolean.parseBoolean(System.getProperty(HORDE_PRESSURE_ENABLED_PROPERTY, "true"))
+			&& fr.hoyatla.pauc.PauCTunables.readBoolean(HORDE_PRESSURE_ENABLED_PROPERTY, true)
 			&& hordePressureActive;
 	}
 
 	public static boolean isScenePressureActive() {
 		return diagnosticsEnabled
-			&& Boolean.parseBoolean(System.getProperty(SCENE_PRESSURE_ENABLED_PROPERTY, "true"))
+			&& fr.hoyatla.pauc.PauCTunables.readBoolean(SCENE_PRESSURE_ENABLED_PROPERTY, true)
 			&& scenePressureActive;
 	}
 
@@ -379,7 +379,7 @@ public final class PauCVillagePerformanceDiagnostics {
 	}
 
 	public static int animationLodTier() {
-		if (!diagnosticsEnabled || !Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true"))) {
+		if (!diagnosticsEnabled || !fr.hoyatla.pauc.PauCTunables.readBoolean(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, true)) {
 			return 0;
 		}
 		return Math.max(0, Math.min(3, lastAnimationLodTier));
@@ -529,7 +529,7 @@ public final class PauCVillagePerformanceDiagnostics {
 		long windowBlockEntities,
 		long windowVillageBlockEntities
 	) {
-		if (!Boolean.parseBoolean(System.getProperty(VILLAGE_PRESSURE_ENABLED_PROPERTY, "true"))) {
+		if (!fr.hoyatla.pauc.PauCTunables.readBoolean(VILLAGE_PRESSURE_ENABLED_PROPERTY, true)) {
 			villagePressureActive = false;
 			villagePressureTicks = 0;
 			return;
@@ -581,7 +581,7 @@ public final class PauCVillagePerformanceDiagnostics {
 	}
 
 	private static void updateHordePressure(int totalEntities, long windowEntities, long windowBlockEntities) {
-		if (!Boolean.parseBoolean(System.getProperty(HORDE_PRESSURE_ENABLED_PROPERTY, "true"))) {
+		if (!fr.hoyatla.pauc.PauCTunables.readBoolean(HORDE_PRESSURE_ENABLED_PROPERTY, true)) {
 			hordePressureActive = false;
 			hordePressureTicks = 0;
 			lastAnimationLodTier = 0;
@@ -627,14 +627,14 @@ public final class PauCVillagePerformanceDiagnostics {
 				tier = 1;
 			}
 		}
-		lastAnimationLodTier = Boolean.parseBoolean(System.getProperty(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, "true")) ? tier : 0;
+		lastAnimationLodTier = fr.hoyatla.pauc.PauCTunables.readBoolean(HORDE_ANIMATION_LOD_ENABLED_PROPERTY, true) ? tier : 0;
 		int steadyBudget = readInt(HORDE_BLOCK_ENTITY_STEADY_BUDGET_PROPERTY, 1500, 128, 20000);
 		int severeBudget = readInt(HORDE_BLOCK_ENTITY_SEVERE_BUDGET_PROPERTY, 600, 64, 10000);
 		lastBlockEntityFrameBudget = tier >= 2 || villagePressureActive ? severeBudget : steadyBudget;
 	}
 
 	private static void updateScenePressure(Minecraft minecraft, long windowEntities, long windowBlockEntities) {
-		if (!Boolean.parseBoolean(System.getProperty(SCENE_PRESSURE_ENABLED_PROPERTY, "true"))) {
+		if (!fr.hoyatla.pauc.PauCTunables.readBoolean(SCENE_PRESSURE_ENABLED_PROPERTY, true)) {
 			scenePressureActive = false;
 			scenePressureTicks = 0;
 			lastScenePressureTier = 0;
@@ -755,7 +755,7 @@ public final class PauCVillagePerformanceDiagnostics {
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return fallback;
 		}
@@ -767,7 +767,7 @@ public final class PauCVillagePerformanceDiagnostics {
 	}
 
 	private static double readDouble(String key, double fallback, double min, double max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

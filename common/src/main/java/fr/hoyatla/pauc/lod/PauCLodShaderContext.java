@@ -224,6 +224,16 @@ public final class PauCLodShaderContext {
 		return fallbackActive && readBoolean(FALLBACK_FOG_PROPERTY, true);
 	}
 
+	// Packs that render LODs but ship NO native DH fog program (e.g. Sildur's Vibrant - dhScan terrain/water=false)
+	// leave the LOD field ending in a hard cut against the sky, with no map-closing fog. They DO read the RenderSystem
+	// fog uniforms, so we extend the vanilla distance fog out to the LOD horizon for them (as the fallback path does),
+	// which closes the map. Native-DH packs (Photon/Solas) own their atmospheric fog and are untouched.
+	public static boolean shouldApplyLodHorizonFogForNoDhFogPack() {
+		return shaderPackInUse
+			&& readBoolean(FALLBACK_FOG_PROPERTY, true)
+			&& PauCLodShaderProfiles.profile(PauCLodShaderProfiles.familyForKey(shaderPackKey)).lacksNativeDhPrograms();
+	}
+
 	public static boolean consumeTransitionHoldFrame() {
 		int frames = transitionHoldFrames;
 		if (frames <= 0) {
@@ -327,12 +337,12 @@ public final class PauCLodShaderContext {
 	}
 
 	private static boolean readBoolean(String key, boolean fallback) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		return rawValue == null ? fallback : Boolean.parseBoolean(rawValue);
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

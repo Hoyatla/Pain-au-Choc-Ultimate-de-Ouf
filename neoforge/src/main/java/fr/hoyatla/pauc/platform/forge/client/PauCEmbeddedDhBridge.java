@@ -15,6 +15,7 @@ import com.seibel.distanthorizons.api.enums.rendering.EDhApiTransparency;
 import com.seibel.distanthorizons.api.enums.worldGeneration.EDhApiDistantGeneratorMode;
 import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfig;
 import com.seibel.distanthorizons.api.interfaces.config.IDhApiConfigValue;
+import fr.hoyatla.pauc.lod.PauCFrameSpikeAbsorber;
 import fr.hoyatla.pauc.lod.PauCLodClientSettings;
 import fr.hoyatla.pauc.lod.PauCLodHorizonState;
 import fr.hoyatla.pauc.lod.PauCLodNearClipOverride;
@@ -160,11 +161,18 @@ public final class PauCEmbeddedDhBridge {
 	private static final String KEEP_RENDER_CACHE_ON_SHADER_PRESENTATION_CHANGE_PROPERTY = "pauc.lod.keepRenderCacheOnShaderPresentationChange";
 	private static final String CLEAR_RENDER_CACHE_ON_SHADER_RUNTIME_CHANGE_PROPERTY = "pauc.lod.clearRenderCacheOnShaderRuntimeChange";
 	private static final String PRESENTATION_SIGNATURE_STABLE_TICKS_PROPERTY = "pauc.lod.presentationSignatureStableTicks";
+	private static final String FPS_PRESSURE_WORKER_YIELD_PROPERTY = "pauc.lod.fpsPressureWorkerYield";
+	private static final String FPS_PRESSURE_WORKER_YIELD_FLOOR_PROPERTY = "pauc.lod.fpsPressureWorkerYieldFloor";
+	private static final String FPS_PRESSURE_WORKER_YIELD_QUIET_MS_PROPERTY = "pauc.lod.fpsPressureWorkerYieldQuietMs";
 	private static final String PRESENTATION_SIGNATURE_HOLD_MS_PROPERTY = "pauc.lod.presentationSignatureHoldMs";
 	private static final Map<String, SavedCoreConfigValue> SAVED_CORE_CONFIG_VALUES = new ConcurrentHashMap<>();
 	private static volatile long lastCoarseFillRenderRefreshAtMillis;
 	private static volatile long lastDeferredRenderCacheClearLogAtMillis;
 	private static volatile int coarseFillRenderRefreshes;
+	private static volatile boolean workerYieldEngaged;
+	private static volatile long workerYieldLastAbsorbMs;
+	private static volatile double workerYieldLastScale = 1.0D;
+	private static volatile long workerYieldLastLogMs;
 	private static volatile RuntimeLodSettings lastStableRuntimeSettings;
 	private static volatile RuntimeLodSettings pendingRuntimeSettings;
 	private static volatile int pendingRuntimeSettingsTicks;
@@ -1156,6 +1164,58 @@ public final class PauCEmbeddedDhBridge {
 		}
 	}
 
+	/**
+	 * Yield factor applied to the LOD build worker pool (thread count + DH duty ratio) when the frame
+	 * spike absorber measures the render thread struggling against its own baseline. Bamboo-jungle-style
+	 * dimension returns schedule thousands of expensive chunk builds; without this coupling the workers
+	 * saturate every core at up to 92% duty and starve the render thread (measured: fps 53-78 with
+	 * queue=60%, avgChunkMs=317). Full speed is kept whenever a screen is open (loading screens, menus):
+	 * fps is not being judged there and dimension/map loads should fill as fast as possible. Distance and
+	 * LOD quality are untouched - the backlog just drains a little later.
+	 */
+	private static double fpsPressureWorkerYield() {
+		if (!readBoolean(FPS_PRESSURE_WORKER_YIELD_PROPERTY, true)) {
+			return 1.0D;
+		}
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null || minecraft.player == null || minecraft.screen != null) {
+			return 1.0D;
+		}
+		long now = System.currentTimeMillis();
+		if (PauCFrameSpikeAbsorber.isAbsorbing()) {
+			double floor = readDouble(FPS_PRESSURE_WORKER_YIELD_FLOOR_PROPERTY, 0.35D, 0.10D, 1.0D);
+			double yield = Math.max(floor, PauCFrameSpikeAbsorber.workScale());
+			workerYieldLastAbsorbMs = now;
+			workerYieldLastScale = yield;
+			if (!workerYieldEngaged) {
+				workerYieldEngaged = true;
+				if (now - workerYieldLastLogMs > 60_000L) {
+					workerYieldLastLogMs = now;
+					LOGGER.info(
+						"PauC LOD worker yield engaged: scaling build workers to {} of normal while the frame spike absorber is active.",
+						String.format(java.util.Locale.ROOT, "%.2f", yield)
+					);
+				}
+			}
+			return yield;
+		}
+		if (workerYieldEngaged) {
+			// Hysteresis: releasing the workers the instant the absorber calms down re-spikes the frame and
+			// flaps engage/release every ~2s (measured: 128 cycles in 5 min). Hold the reduced pool through a
+			// quiet window before restoring full speed.
+			int quietMs = readInt(FPS_PRESSURE_WORKER_YIELD_QUIET_MS_PROPERTY, 4000, 500, 60_000);
+			if (now - workerYieldLastAbsorbMs < quietMs) {
+				return workerYieldLastScale;
+			}
+			workerYieldEngaged = false;
+			if (now - workerYieldLastLogMs > 60_000L) {
+				workerYieldLastLogMs = now;
+				LOGGER.info("PauC LOD worker yield released: build workers back to full speed.");
+			}
+		}
+		return 1.0D;
+	}
+
 	private static int clampInt(int value, int min, int max) {
 		return Math.max(min, Math.min(max, value));
 	}
@@ -1286,6 +1346,11 @@ public final class PauCEmbeddedDhBridge {
 				if (fpsFirstVanilla && !shaderRuntime) {
 					defaultRuntimeRatio = Math.max(defaultRuntimeRatio, activeTravelFill ? 0.76D : 0.68D);
 				}
+			}
+			double workerYield = fpsPressureWorkerYield();
+			if (workerYield < 1.0D) {
+				defaultThreads = clampInt((int) Math.ceil(defaultThreads * workerYield), 2, threadCeiling);
+				defaultRuntimeRatio = clampDouble(defaultRuntimeRatio * workerYield, 0.05D, 0.92D);
 			}
 			return new RuntimeLodSettings(
 				defaultMaxHorizontalResolution(),

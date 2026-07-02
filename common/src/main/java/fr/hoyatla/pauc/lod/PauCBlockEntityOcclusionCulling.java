@@ -72,7 +72,7 @@ public final class PauCBlockEntityOcclusionCulling {
 		if (blockEntity == null) {
 			return false;
 		}
-		if (!Boolean.parseBoolean(System.getProperty(ENABLED_PROPERTY, "true"))) {
+		if (!fr.hoyatla.pauc.PauCTunables.readBoolean(ENABLED_PROPERTY, true)) {
 			return false;
 		}
 		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
@@ -248,7 +248,7 @@ public final class PauCBlockEntityOcclusionCulling {
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}
@@ -260,7 +260,7 @@ public final class PauCBlockEntityOcclusionCulling {
 	}
 
 	private static double readDouble(String key, double fallback, double min, double max) {
-		String rawValue = System.getProperty(key);
+		String rawValue = fr.hoyatla.pauc.PauCTunables.raw(key);
 		if (rawValue == null) {
 			return Math.max(min, Math.min(max, fallback));
 		}

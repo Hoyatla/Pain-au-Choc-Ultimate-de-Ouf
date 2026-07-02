@@ -374,20 +374,37 @@ public final class PauCLodShaderProfiles {
 				&& (!preservesNativeDhPresentation() || waterProgram || family == Family.BSL);
 		}
 
+		// Packs that ship NO native DH terrain/shadow programs (verified: dhScan terrain/shadow=false) need PauC's own
+		// LOD fog + shadow synthesis, exactly like GENERIC - otherwise the LOD field ends in a hard horizon cut (no
+		// map-closing fog) and no vanilla-shadow junction forms. Sildur's Vibrant/Enhanced are such packs; Photon/Solas
+		// ship their own DH programs and keep the native path. This gives each pack its own path (no cross-conflict).
+		public boolean lacksNativeDhPrograms() {
+			return family == Family.GENERIC
+				|| family == Family.SILDURS_VIBRANT
+				|| family == Family.SILDURS_ENHANCED;
+		}
+
 		public boolean preservesNativeDhPresentation() {
-			return family != Family.GENERIC;
+			return !lacksNativeDhPrograms();
 		}
 
 		public boolean shouldAttenuateNativeFog() {
-			return family == Family.GENERIC;
+			return lacksNativeDhPrograms();
 		}
 
 		public boolean shouldApplyNativeWaterTonePatch() {
-			return family == Family.GENERIC || family == Family.PHOTON;
+			return lacksNativeDhPrograms() || family == Family.PHOTON;
 		}
 
 		public boolean shouldApplySyntheticLodShadow() {
-			return family == Family.GENERIC;
+			return lacksNativeDhPrograms();
+		}
+
+		// Sildur ships no DH shadow program, so the boundary-shadow path (which needs a native DH shadow source) can
+		// produce nothing - the synthetic LOD shadow is the only way to form the LOD<->vanilla shadow junction here.
+		// Default it ON for these packs only (Photon/Solas/GENERIC keep their existing opt-in default).
+		public boolean defaultSyntheticLodShadowEnabled() {
+			return family == Family.SILDURS_VIBRANT || family == Family.SILDURS_ENHANCED;
 		}
 
 		public String describe() {
