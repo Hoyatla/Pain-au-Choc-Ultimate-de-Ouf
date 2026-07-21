@@ -60,6 +60,17 @@ public final class PauCLodVideoSettings {
 		PauCLodVideoSettings::setTerrainMorphingEnabled
 	);
 
+	public static final OptionInstance<Integer> SHADOW_QUALITY = new PauCShadowQualityOption(
+		"options.pauc.shadows",
+		minecraft -> Tooltip.create(Component.translatable("options.pauc.shadows.tooltip")),
+		PauCLodVideoSettings::shadowCaption,
+		new OptionInstance.IntRange(
+			fr.hoyatla.pauc.shadow.PauCShadowMode.OFF.index(),
+			fr.hoyatla.pauc.shadow.PauCShadowMode.HIGH.index()),
+		PauCLodClientSettings.shadowMode().index(),
+		PauCLodVideoSettings::setShadowMode
+	);
+
 	public static final OptionInstance<Integer> DYNAMIC_RESOLUTION = new PauCDynamicResolutionOption(
 		"options.pauc.dynamicResolution",
 		minecraft -> Tooltip.create(Component.translatable("options.pauc.dynamicResolution.tooltip")),
@@ -74,6 +85,7 @@ public final class PauCLodVideoSettings {
 
 	public static void syncFromClientSettings() {
 		VANILLA_FOG.set(PauCLodClientSettings.isVanillaFogEnabled());
+		SHADOW_QUALITY.set(PauCLodClientSettings.shadowMode().index());
 		LOD_RENDER_DISTANCE.set(PauCLodClientSettings.configuredTargetDistanceChunks());
 		LOD_CLOUDS.set(PauCLodClientSettings.isLodCloudsEnabled());
 		NVIDIA_ACCELERATION.set(PauCLodClientSettings.isNvidiaAccelerationEnabled());
@@ -104,6 +116,16 @@ public final class PauCLodVideoSettings {
 	private static void setDynamicResolutionMode(int modeIndex) {
 		PauCLodClientSettings.setDynamicResolutionMode(PauCDynamicResolutionMode.byIndex(modeIndex));
 		updateLinkedWidgets();
+	}
+
+	private static void setShadowMode(int modeIndex) {
+		PauCLodClientSettings.setShadowMode(fr.hoyatla.pauc.shadow.PauCShadowMode.byIndex(modeIndex));
+	}
+
+	private static Component shadowCaption(Component option, int modeIndex) {
+		fr.hoyatla.pauc.shadow.PauCShadowMode mode = fr.hoyatla.pauc.shadow.PauCShadowMode.byIndex(modeIndex);
+		return Component.translatable("options.generic_value", option,
+			Component.translatable("options.pauc.shadows." + mode.id()));
 	}
 
 	private static Component distanceCaption(Component option, int chunks) {
@@ -285,6 +307,26 @@ public final class PauCLodVideoSettings {
 		public AbstractWidget createButton(Options options, int x, int y, int width) {
 			AbstractWidget widget = super.createButton(options, x, y, width);
 			terrainMorphingWidget = widget;
+			updateLinkedWidgets();
+			return widget;
+		}
+	}
+
+	private static final class PauCShadowQualityOption extends OptionInstance<Integer> {
+		private PauCShadowQualityOption(
+			String caption,
+			TooltipSupplier<Integer> tooltip,
+			CaptionBasedToString<Integer> captionBasedToString,
+			ValueSet<Integer> values,
+			Integer initialValue,
+			Consumer<Integer> changeCallback
+		) {
+			super(caption, tooltip, captionBasedToString, values, initialValue, changeCallback);
+		}
+
+		@Override
+		public AbstractWidget createButton(Options options, int x, int y, int width) {
+			AbstractWidget widget = super.createButton(options, x, y, width);
 			updateLinkedWidgets();
 			return widget;
 		}

@@ -35,6 +35,31 @@ public final class PauCLodShaderContext {
 	private PauCLodShaderContext() {
 	}
 
+	private static long lastExternalPollMs;
+
+	/**
+	 * P3 (iris-removal plan): EXTERNAL shader-state detection. The vendored pipeline PUSHES pack
+	 * changes into this context ({@code Iris.java} calls {@link #markShaderPackSelected}); an external
+	 * Iris/Oculus never will — so the client tick POLLS the reflective facade (~1s cadence) and feeds
+	 * the same entry point. While the vendored push still exists the poll observes identical state and
+	 * exits before touching anything, so the two sources never fight.
+	 */
+	public static void pollExternalShaderState() {
+		long now = System.currentTimeMillis();
+		if (now - lastExternalPollMs < 1_000L) {
+			return;
+		}
+		lastExternalPollMs = now;
+		boolean inUse = fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShaderPackInUse();
+		String name = inUse ? fr.hoyatla.pauc.shadercompat.PauCShaderCompat.currentPackName() : null;
+		String normalized = name == null || name.isBlank() ? "(unknown)" : name;
+		if (inUse == shaderPackInUse && (!inUse || shaderPackName.equals(normalized))) {
+			return; // no change (or the vendored push already recorded it) — never rescan on a timer
+		}
+		markShaderPackSelected(normalized, inUse,
+			inUse ? fr.hoyatla.pauc.shadercompat.PauCShaderCompat.currentPackPath() : null);
+	}
+
 	public static void markShaderPackSelected(String packName, boolean inUse) {
 		markShaderPackSelected(packName, inUse, null);
 	}

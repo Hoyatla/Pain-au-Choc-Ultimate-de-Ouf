@@ -26,6 +26,7 @@
     "options.MixinSodiumGameOptionPages",
     "options.MixinSodiumGameOptions",
     "options.MixinSodiumOptionsGUI",
+    "pauc.MixinOcclusionCuller",
     "pauc.RenderSectionManagerAccessor",
     "pauc.SodiumWorldRendererAccessor",
     "pbr_animation.MixinSpriteContents",

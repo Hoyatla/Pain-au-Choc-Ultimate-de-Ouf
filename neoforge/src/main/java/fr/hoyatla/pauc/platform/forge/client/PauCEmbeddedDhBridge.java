@@ -30,7 +30,6 @@ import fr.hoyatla.pauc.platform.forge.diagnostics.PauCLodReloadDiagnostics;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.client.Minecraft;
-import net.irisshaders.iris.api.v0.IrisApi;
 import org.slf4j.Logger;
 
 public final class PauCEmbeddedDhBridge {
@@ -164,6 +163,9 @@ public final class PauCEmbeddedDhBridge {
 	private static final String FPS_PRESSURE_WORKER_YIELD_PROPERTY = "pauc.lod.fpsPressureWorkerYield";
 	private static final String FPS_PRESSURE_WORKER_YIELD_FLOOR_PROPERTY = "pauc.lod.fpsPressureWorkerYieldFloor";
 	private static final String FPS_PRESSURE_WORKER_YIELD_QUIET_MS_PROPERTY = "pauc.lod.fpsPressureWorkerYieldQuietMs";
+	private static final String VANILLA_FIDELITY_RING_PROPERTY = "pauc.lod.vanillaFidelityRing";
+	private static final String VANILLA_FIDELITY_MIN_TARGET_PROPERTY = "pauc.lod.vanillaFidelityMinTarget";
+	private static final String MENU_PREGEN_BOOST_PROPERTY = "pauc.lod.menuPregenBoost";
 	private static final String PRESENTATION_SIGNATURE_HOLD_MS_PROPERTY = "pauc.lod.presentationSignatureHoldMs";
 	private static final Map<String, SavedCoreConfigValue> SAVED_CORE_CONFIG_VALUES = new ConcurrentHashMap<>();
 	private static volatile long lastCoarseFillRenderRefreshAtMillis;
@@ -173,6 +175,8 @@ public final class PauCEmbeddedDhBridge {
 	private static volatile long workerYieldLastAbsorbMs;
 	private static volatile double workerYieldLastScale = 1.0D;
 	private static volatile long workerYieldLastLogMs;
+	private static volatile boolean vanillaFidelityRingLogged;
+	private static volatile long menuPregenBoostLastLogMs;
 	private static volatile RuntimeLodSettings lastStableRuntimeSettings;
 	private static volatile RuntimeLodSettings pendingRuntimeSettings;
 	private static volatile int pendingRuntimeSettingsTicks;
@@ -182,6 +186,11 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	public static void applyLodRange(PauCLodRange range) {
+		// Standalone safety: without the external DH mod, no code path below may run (it resolves com.seibel).
+		if (!fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			state = BridgeState.unavailable("dh-not-installed");
+			return;
+		}
 		if (range == null || !range.enabled()) {
 			disableLodRendering("lod-inactive");
 			return;
@@ -280,6 +289,188 @@ public final class PauCEmbeddedDhBridge {
 		configureDirectGpuRendererPath("startup");
 	}
 
+	/**
+	 * Wires the DH-free facade used by always-on callers. Called from the bootstrap ONLY when the
+	 * external Distant Horizons mod is present — without DH the facade keeps returning safe defaults
+	 * and this class is never referenced from hot code.
+	 */
+	public static void registerFacadeHooks() {
+		fr.hoyatla.pauc.lod.PauCLodBridgeAccess.registerHooks(
+			PauCEmbeddedDhBridge::isDirectGpuUploadActive,
+			PauCEmbeddedDhBridge::describeGpuUploadState,
+			PauCEmbeddedDhBridge::describeActuationState,
+			PauCEmbeddedDhBridge::resetPresentationStability,
+			PauCEmbeddedDhBridge::refreshRenderCacheForCoarseFill
+		);
+		// DH-as-data-source (approach 1): let PauC's distant generator read DH's LOD columns.
+		fr.hoyatla.pauc.lod.PauCLodBridgeAccess.registerDhChunkFiller(PauCEmbeddedDhBridge::fillChunkFromDh);
+	}
+
+	private static boolean dhFillFailureLogged;
+
+	/**
+	 * Fills PauC surface spans for a chunk from Distant Horizons' terrain-data repo (faithful mapping:
+	 * surface + water-floor / under-canopy ground reconstructed from DH's vertical segments). Runs on
+	 * PauC generator daemon threads → colours use {@code getMapColor} (thread-safe, no GL/atlas access).
+	 * Best-effort: any failure leaves the column as {@link Short#MIN_VALUE} so the caller regenerates it.
+	 */
+	private static int fillChunkFromDh(int chunkX, int chunkZ, int step,
+			short[] ys, int[] colors, short[] bottoms, int[] bottomColors) {
+		try {
+			com.seibel.distanthorizons.api.interfaces.data.IDhApiTerrainDataRepo repo = com.seibel.distanthorizons.api.DhApi.Delayed.terrainRepo;
+			com.seibel.distanthorizons.api.interfaces.world.IDhApiWorldProxy worldProxy = com.seibel.distanthorizons.api.DhApi.Delayed.worldProxy;
+			if (repo == null || worldProxy == null) {
+				return 0;
+			}
+			net.minecraft.client.multiplayer.ClientLevel level = net.minecraft.client.Minecraft.getInstance().level;
+			if (level == null) {
+				return 0;
+			}
+			com.seibel.distanthorizons.api.interfaces.world.IDhApiLevelWrapper levelWrapper = worldProxy.getSinglePlayerLevel();
+			if (levelWrapper == null) {
+				return 0;
+			}
+			int minX = chunkX << 4;
+			int minZ = chunkZ << 4;
+			int filled = 0;
+			for (int tz = 0; tz < 16; tz += step) {
+				for (int tx = 0; tx < 16; tx += step) {
+					int wx = minX + tx;
+					int wz = minZ + tz;
+					com.seibel.distanthorizons.api.objects.DhApiResult<com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint[]> result =
+						repo.getColumnDataAtBlockPos(levelWrapper, wx, wz, null);
+					if (result == null || !result.success || result.payload == null || result.payload.length == 0) {
+						continue;
+					}
+					if (fillOneColumn(level, result.payload, wx, wz, (tz << 4) | tx, ys, colors, bottoms, bottomColors)) {
+						filled++;
+					}
+				}
+			}
+			return filled;
+		} catch (Throwable throwable) {
+			if (!dhFillFailureLogged) {
+				dhFillFailureLogged = true;
+				org.slf4j.LoggerFactory.getLogger(PauCEmbeddedDhBridge.class)
+					.warn("PauC DH-data-source fill failed; falling back to PauC generation.", throwable);
+			}
+			return 0;
+		}
+	}
+
+	/** Maps one DH column (vertical segments) to PauC spans: surface + water-floor / tree-ground. */
+	private static boolean fillOneColumn(net.minecraft.client.multiplayer.ClientLevel level,
+			com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint[] column,
+			int wx, int wz, int idx, short[] ys, int[] colors, short[] bottoms, int[] bottomColors) {
+		// Surface = segment with the highest top Y.
+		com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint surface = null;
+		for (com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint p : column) {
+			if (p != null && (surface == null || p.topYBlockPos > surface.topYBlockPos)) {
+				surface = p;
+			}
+		}
+		if (surface == null) {
+			return false;
+		}
+		String serial = surface.blockStateWrapper != null ? surface.blockStateWrapper.getSerialString() : null;
+		net.minecraft.world.level.block.state.BlockState state = resolveState(serial);
+		if (state == null || state.isAir()) {
+			return false;
+		}
+		boolean water = !state.getFluidState().isEmpty() || serialContains(serial, "water");
+		boolean tree = serialContains(serial, "leaves") || serialContains(serial, "_log") || serialContains(serial, "log_");
+		int topY = surface.topYBlockPos;
+		int surfaceColor = mapColor(level, state, wx, topY, wz);
+		if (water) {
+			ys[idx] = (short) topY;
+			colors[idx] = (fr.hoyatla.pauc.lodengine.PauCSurfaceColumnStore.WATER_ALPHA << 24) | (surfaceColor & 0x00ffffff);
+			// Floor = highest non-water segment below the surface.
+			com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint floor = highestBelow(column, topY, "water", null);
+			if (floor != null) {
+				net.minecraft.world.level.block.state.BlockState fs = resolveState(floor.blockStateWrapper != null ? floor.blockStateWrapper.getSerialString() : null);
+				bottoms[idx] = (short) floor.topYBlockPos;
+				bottomColors[idx] = 0xff000000 | (fs != null ? (mapColor(level, fs, wx, floor.topYBlockPos, wz) & 0x00ffffff) : 0x333333);
+			}
+			return true;
+		}
+		if (tree) {
+			ys[idx] = (short) topY;
+			colors[idx] = (fr.hoyatla.pauc.lodengine.PauCSurfaceColumnStore.TREE_ALPHA << 24) | (surfaceColor & 0x00ffffff);
+			// Ground under the canopy = highest non-leaf/non-log segment below.
+			com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint ground = highestBelow(column, topY, "leaves", "log");
+			if (ground != null) {
+				net.minecraft.world.level.block.state.BlockState gs = resolveState(ground.blockStateWrapper != null ? ground.blockStateWrapper.getSerialString() : null);
+				bottoms[idx] = (short) ground.topYBlockPos;
+				bottomColors[idx] = 0xff000000 | (gs != null ? (mapColor(level, gs, wx, ground.topYBlockPos, wz) & 0x00ffffff) : 0x5E4A33);
+			} else {
+				bottoms[idx] = (short) (topY - 6);
+				bottomColors[idx] = 0xff5E4A33;
+			}
+			return true;
+		}
+		// Plain land: surface only; the renderer derives soil/stone strata on walls.
+		ys[idx] = (short) topY;
+		colors[idx] = (fr.hoyatla.pauc.lodengine.PauCSurfaceColumnStore.SOIL_ALPHA << 24) | (surfaceColor & 0x00ffffff);
+		return true;
+	}
+
+	/** Highest segment strictly below {@code aboveY} whose serial contains NEITHER exclude token. */
+	private static com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint highestBelow(
+			com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint[] column, int aboveY, String excl1, String excl2) {
+		com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint best = null;
+		for (com.seibel.distanthorizons.api.objects.data.DhApiTerrainDataPoint p : column) {
+			if (p == null || p.topYBlockPos >= aboveY) {
+				continue;
+			}
+			String s = p.blockStateWrapper != null ? p.blockStateWrapper.getSerialString() : null;
+			if (serialContains(s, excl1) || (excl2 != null && serialContains(s, excl2))) {
+				continue;
+			}
+			if (best == null || p.topYBlockPos > best.topYBlockPos) {
+				best = p;
+			}
+		}
+		return best;
+	}
+
+	private static boolean serialContains(String serial, String token) {
+		return serial != null && token != null && serial.toLowerCase(java.util.Locale.ROOT).contains(token);
+	}
+
+	/** Resolves a DH serial string ("minecraft:grass_block[...]") to a BlockState (default state). */
+	private static net.minecraft.world.level.block.state.BlockState resolveState(String serial) {
+		if (serial == null || serial.isEmpty()) {
+			return null;
+		}
+		int i = 0;
+		while (i < serial.length()) {
+			char c = serial.charAt(i);
+			if (c == ':' || c == '_' || c == '/' || c == '.' || c == '-' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+				i++;
+			} else {
+				break;
+			}
+		}
+		String id = serial.substring(0, i);
+		net.minecraft.resources.ResourceLocation rl = net.minecraft.resources.ResourceLocation.tryParse(id);
+		if (rl == null) {
+			return null;
+		}
+		net.minecraft.world.level.block.Block block = net.minecraft.core.registries.BuiltInRegistries.BLOCK.get(rl);
+		return block == null ? null : block.defaultBlockState();
+	}
+
+	/** Thread-safe ARGB from a block's map colour (no GL/atlas access — safe on the generator threads). */
+	private static int mapColor(net.minecraft.client.multiplayer.ClientLevel level,
+			net.minecraft.world.level.block.state.BlockState state, int x, int y, int z) {
+		try {
+			net.minecraft.world.level.material.MapColor mc = state.getMapColor(level, new net.minecraft.core.BlockPos(x, y, z));
+			return mc == null ? 0xff808080 : (0xff000000 | (mc.calculateRGBColor(net.minecraft.world.level.material.MapColor.Brightness.NORMAL) & 0x00ffffff));
+		} catch (Throwable ignored) {
+			return 0xff808080;
+		}
+	}
+
 	public static String describeState() {
 		return "embeddedDh[available="
 			+ state.available()
@@ -333,14 +524,24 @@ public final class PauCEmbeddedDhBridge {
 	}
 
 	public static boolean isDirectGpuUploadActive() {
+		// Standalone safety: the GPU upload state probes DH render internals (nested DhGpuUploadState).
+		if (!fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			return false;
+		}
 		return PauCLodClientSettings.isDirectGpuUploadEnabled() && captureCachedGpuUploadState().direct();
 	}
 
 	public static String describeGpuUploadState() {
+		if (!fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			return "dhGpu[dh-not-installed]";
+		}
 		return captureCachedGpuUploadState().describe();
 	}
 
 	public static void refreshRenderCacheForCoarseFill(double coverageRatio, int expectedCells, int coveredCells) {
+		if (!fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			return;
+		}
 		if (!readBoolean(COARSE_FILL_RENDER_REFRESH_PROPERTY, false)) {
 			return;
 		}
@@ -491,6 +692,16 @@ public final class PauCEmbeddedDhBridge {
 				previousSignature.describe(),
 				signature.describe()
 			);
+			return;
+		}
+		if (qualityOnlyChange
+			&& signature.maxHorizontalResolution() == EDhApiMaxHorizontalResolution.BLOCK
+			&& PauCLodClientSettings.isVanillaFidelityRingActive()) {
+			// Vanilla fidelity ring: realize the BLOCK upgrade NOW. Keeping the old meshes defers the re-mesh
+			// to lazy section reloads — invisible while the player stands still (measured: 26 min at
+			// TWO_BLOCKS after the latch engaged). The clear is a one-time cost, health-latched upstream and
+			// absorbed by the worker yield / menu pre-generation boost.
+			clearRenderDataCacheForSignatureChange(previousSignature, signature, "vanilla fidelity ring upgrade");
 			return;
 		}
 		if (qualityOnlyChange && readBoolean(KEEP_RENDER_CACHE_ON_QUALITY_CHANGE_PROPERTY, true)) {
@@ -1088,7 +1299,7 @@ public final class PauCEmbeddedDhBridge {
 
 	private static boolean isShaderPackRuntimeInUse() {
 		try {
-			return IrisApi.getInstance().isShaderPackInUse();
+			return fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShaderPackInUse();
 		} catch (RuntimeException | LinkageError exception) {
 			LOGGER.debug("PauC could not query Iris shader state while configuring embedded DH.", exception);
 			return PauCLodShaderContext.isShaderPackInUse();
@@ -1162,6 +1373,56 @@ public final class PauCEmbeddedDhBridge {
 		} catch (IllegalArgumentException ignored) {
 			return fallback;
 		}
+	}
+
+	/**
+	 * "Vanilla fidelity ring": at high LOD gauges (perceived-vanilla horizon project, up to 94 chunks) the
+	 * DEFAULT DH resolution moves to BLOCK (nearest LOD ring geometrically identical to vanilla terrain)
+	 * with a gentler horizontal dropoff. Explicit properties and the governor's dynamic quality tiers still
+	 * override this default, so the existing fps protection keeps the last word under pressure.
+	 */
+	private static boolean vanillaFidelityRingActive() {
+		boolean active = PauCLodClientSettings.isVanillaFidelityRingActive();
+		if (active && !vanillaFidelityRingLogged) {
+			vanillaFidelityRingLogged = true;
+			LOGGER.info(
+				"PauC vanilla fidelity ring active (LOD gauge {}): governor will move DH resolution to BLOCK once the backlog drains and frames are healthy.",
+				PauCLodClientSettings.targetDistanceChunks()
+			);
+		}
+		return active;
+	}
+
+	/**
+	 * Menu/pause pre-generation boost: while a screen is open fps is not being judged (player rule), so if
+	 * LOD build backlog remains the worker pool runs at its ceiling to swallow first-generation of large
+	 * gauges (94 chunks = ~27k LOD chunks). Complements the fps-pressure worker yield, which protects
+	 * gameplay frames; the two are mutually exclusive by construction (yield is inert while a screen is open).
+	 */
+	private static boolean isMenuPregenBoostActive() {
+		if (!readBoolean(MENU_PREGEN_BOOST_PROPERTY, true)) {
+			return false;
+		}
+		Minecraft minecraft = Minecraft.getInstance();
+		if (minecraft == null || minecraft.level == null || minecraft.screen == null) {
+			return false;
+		}
+		boolean backlog = PauCEmbeddedLodRuntimeDiagnostics.pendingTasks() > 0
+			|| PauCEmbeddedLodRuntimeDiagnostics.backlogTasks() > 0
+			|| PauCEmbeddedLodRuntimeDiagnostics.pendingChunks() > 0;
+		if (backlog) {
+			long now = System.currentTimeMillis();
+			if (now - menuPregenBoostLastLogMs > 60_000L) {
+				menuPregenBoostLastLogMs = now;
+				LOGGER.info(
+					"PauC menu pre-generation boost engaged: screen open with LOD backlog (pending={}, backlog={}, chunks={}); workers at ceiling.",
+					PauCEmbeddedLodRuntimeDiagnostics.pendingTasks(),
+					PauCEmbeddedLodRuntimeDiagnostics.backlogTasks(),
+					PauCEmbeddedLodRuntimeDiagnostics.pendingChunks()
+				);
+			}
+		}
+		return backlog;
 	}
 
 	/**
@@ -1347,6 +1608,10 @@ public final class PauCEmbeddedDhBridge {
 					defaultRuntimeRatio = Math.max(defaultRuntimeRatio, activeTravelFill ? 0.76D : 0.68D);
 				}
 			}
+			if (isMenuPregenBoostActive()) {
+				defaultThreads = threadCeiling;
+				defaultRuntimeRatio = 0.92D;
+			}
 			double workerYield = fpsPressureWorkerYield();
 			if (workerYield < 1.0D) {
 				defaultThreads = clampInt((int) Math.ceil(defaultThreads * workerYield), 2, threadCeiling);
@@ -1383,7 +1648,7 @@ public final class PauCEmbeddedDhBridge {
 			EDhApiMaxHorizontalResolution configured = readEnum(
 				FAST_MAX_RESOLUTION_PROPERTY,
 				EDhApiMaxHorizontalResolution.class,
-				EDhApiMaxHorizontalResolution.TWO_BLOCKS
+				vanillaFidelityRingActive() ? EDhApiMaxHorizontalResolution.BLOCK : EDhApiMaxHorizontalResolution.TWO_BLOCKS
 			);
 			EDhApiMaxHorizontalResolution dynamic = readEnum(DYNAMIC_MAX_RESOLUTION_PROPERTY, EDhApiMaxHorizontalResolution.class, configured);
 			return PauCClientSurfaceLodMode.adjustMaxHorizontalResolution(dynamic);
@@ -1443,7 +1708,7 @@ public final class PauCEmbeddedDhBridge {
 			EDhApiHorizontalQuality configured = readEnum(
 				FAST_HORIZONTAL_QUALITY_PROPERTY,
 				EDhApiHorizontalQuality.class,
-				EDhApiHorizontalQuality.LOW
+				vanillaFidelityRingActive() ? EDhApiHorizontalQuality.MEDIUM : EDhApiHorizontalQuality.LOW
 			);
 			EDhApiHorizontalQuality dynamic = readEnum(DYNAMIC_HORIZONTAL_QUALITY_PROPERTY, EDhApiHorizontalQuality.class, configured);
 			return PauCClientSurfaceLodMode.adjustHorizontalQuality(dynamic);

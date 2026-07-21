@@ -886,7 +886,7 @@ public final class PauCClientFrontierWarmupManager {
 		if (!snapshot.preferCoarseFill() && !coverageNeedsPresentationHold(snapshot)) {
 			return;
 		}
-		PauCEmbeddedDhBridge.refreshRenderCacheForCoarseFill(snapshot.ratio(), snapshot.expected(), snapshot.covered());
+		fr.hoyatla.pauc.lod.PauCLodBridgeAccess.refreshRenderCacheForCoarseFill(snapshot.ratio(), snapshot.expected(), snapshot.covered());
 	}
 
 	private static void requestCudaReadyRenderRefreshIfNeeded(int readyCells) {
@@ -900,7 +900,7 @@ public final class PauCClientFrontierWarmupManager {
 		if (!snapshot.preferCoarseFill() && !shaderFallbackFillActive() && !coverageNeedsPresentationHold(snapshot)) {
 			return;
 		}
-		PauCEmbeddedDhBridge.refreshRenderCacheForCoarseFill(snapshot.ratio(), snapshot.expected(), snapshot.covered());
+		fr.hoyatla.pauc.lod.PauCLodBridgeAccess.refreshRenderCacheForCoarseFill(snapshot.ratio(), snapshot.expected(), snapshot.covered());
 	}
 
 	private static boolean coverageNeedsPresentationHold(CoverageSnapshot snapshot) {

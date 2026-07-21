@@ -1,55 +1,23 @@
 {
-  "required": false,
-  "minVersion": "0.8",
-  "package": "net.irisshaders.iris.mixin.forge",
-  "refmap": "paucultimate.refmap.json",
-  "compatibilityLevel": "JAVA_17",
-  "mixins": [
-    "compat.MixinItemEntityMergeThrottle",
-    "compat.MixinMinecraftServerTickRuntime",
-    "compat.MixinMobAiThrottler",
-    "compat.MixinNaturalSpawnerThrottle",
-    "compat.MixinPauCAsyncPathFinder",
-    "compat.MixinPauCDhChunkMap",
-    "compat.MixinMinecraftServerShutdownBarrier",
-    "compat.MixinPathNavigationCircuitBreaker",
-    "compat.MixinPoiManagerQueryCache",
-    "compat.MixinPauCDhServerPlayer",
-    "compat.MixinPauCDhUtilBackgroundThread",
-    "compat.MixinPauCDhWorldGenerationQueue",
-    "compat.MixinServerLevelShutdownBarrier",
-    "compat.MixinServerLevelStructureCircuitBreaker",
-    "compat.MixinVoicechatServerVoiceEvents",
-    "worldgen.MixinHangingEntityInvalidPosition",
-    "worldgen.MixinWorldGenRegion"
-  ],
-  "client": [
-    "compat.MixinBeyondTheAbyssShaders",
-    "compat.MixinBeyondTheAbyssWorldShader",
-    "compat.MixinClientChunkCacheRetention",
-    "compat.MixinCreateGoggleOverlayRenderer",
-    "compat.MixinPauCDhCloudParams",
-    "compat.MixinPauCDhCloudParamsAccessor",
-    "compat.MixinPauCDhCloudRenderHandler",
-    "compat.MixinPauCDhGenericObjectRenderer",
-    "compat.MixinPauCDhGlShader",
-    "compat.MixinPauCDhLevelRenderer",
-    "compat.MixinPauCDhLightTexture",
-    "compat.MixinPauCDhMinecraftClientWrapper",
-    "compat.MixinPauCDhRenderUtil",
-    "compat.MixinPauCDhTerrainShaderProgram",
-    "compat.MixinSandwormClientEvents",
-    "compat.MixinSandwormSonicBoomPostProcessor",
-    "compat.MixinXaeroWorldMapSession",
-    "MixinInstancedIcosphere",
-    "MixinItemBlockRenderTypes",
-    "MixinShaderInstance",
-    "MixinRenderFlame",
-    "MixinShadowRenderer",
-    "MixinVBOIE"
-  ],
-  "injectors": {
-    "defaultRequire": 0,
-    "maxShiftBy": 2
-  }
+	"required": false,
+	"minVersion": "0.8",
+	"package": "net.irisshaders.iris.mixin.forge",
+	"plugin": "fr.hoyatla.pauc.compat.dh.PauCDhMixinConfigPlugin",
+	"refmap": "paucultimate.refmap.json",
+	"compatibilityLevel": "JAVA_17",
+	"mixins": [
+	],
+	"client": [
+		"compat.MixinPauCDhLevelRenderer",
+		"compat.MixinPauCDhTerrainShaderProgram",
+		"MixinItemBlockRenderTypes",
+		"MixinShaderInstance",
+		"MixinRenderFlame",
+		"MixinShadowRenderer",
+		"MixinVBOIE"
+	],
+	"injectors": {
+		"defaultRequire": 0,
+		"maxShiftBy": 2
+	}
 }

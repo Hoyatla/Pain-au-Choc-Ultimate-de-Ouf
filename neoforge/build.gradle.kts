@@ -35,11 +35,13 @@ mixin {
     //add(project(":common").sourceSets.getByName("paucorCompatibility"), "paucultimate.refmap.json")
     setIgnoreConstraints(true)
     config("paucultimate.mixins.json")
+    config("paucperf.mixins.json")
     config("paucultimate-compat-dh.mixins.json")
     config("paucultimate-vertexformat.mixins.json")
     config("paucultimate-batched-entity-rendering.mixins.json")
     config("paucultimate-fantastic.mixins.json")
     config("paucultimate-forge.mixins.json")
+    config("paucultimate-pauc-forge.mixins.json")
 }
 
 sourceSets {
@@ -172,22 +174,18 @@ tasks.jarJar {
     dependsOn("reobfJar")
     archiveClassifier = ""
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from(zipTree(embeddedLodRuntimeJar)) {
-        excludeEmbeddedDistantHorizonsLoader()
-    }
+    // 0.6.0: Distant Horizons is no longer embedded. Players install the official DH mod alongside PauC;
+    // PauC integrates against it as an external dependency (CurseForge third-party policy compliance).
 }
 
+// 0.6.0: DH-related fragments are legitimate now — PauC's own classes reference com.seibel.distanthorizons
+// to integrate with the EXTERNAL Distant Horizons mod (no longer embedded/rebranded).
 val forbiddenJarNameFragments = listOf(
     "fabric",
     "iris",
     "oculus",
     "sodium",
-    "indium",
-    "dh_sqlite",
-    "distanthorizons",
-    "distant horizons",
-    "com/seibel/distanthorizons",
-    "com.seibel.distanthorizons"
+    "indium"
 )
 val sameLengthJarReplacements = listOf(
     "SODIUM" to "PAUCOR",
@@ -202,25 +200,6 @@ val sameLengthJarReplacements = listOf(
     "FABRIC" to "FORGEX",
     "Fabric" to "ForgeX",
     "fabric" to "forgex",
-    "com/seibel/distanthorizons" to "fr/hoyatla/pauc/lodruntime",
-    "com.seibel.distanthorizons" to "fr.hoyatla.pauc.lodruntime",
-    "assets/distanthorizons" to "assets/paucultimatelod",
-    "DistantHorizons.toml" to "PaucUltimateLOD.toml",
-    "distanthorizons.toml" to "paucultimatelod.toml",
-    "DistantHorizons" to "PaucUltimateLOD",
-    "distantHorizons" to "paucUltimateLOD",
-    "distanthorizons" to "paucultimatelod",
-    "Distant Horizons" to "PauC UltimateLOD",
-    "DH-" to "PL-",
-    "DH_" to "PL_",
-    "DH " to "PL ",
-    "dh_" to "pl_",
-    "DhApi" to "PlApi",
-    "SelfUpdater" to "SafeNoopRun",
-    "GitlabGetter" to "SafeGitNoopX",
-    "ModrinthGetter" to "SafeModNoopRun",
-    "WebDownloader" to "SafeWebNoopXX",
-    "ProcessRunner" to "NoProcessInfo",
     "IRIS" to "PAUC",
     "Iris" to "PauC",
     "iris" to "pauc"
@@ -852,12 +831,9 @@ tasks {
         from(layout.buildDirectory.file("tmp/compileJava/compileJava-refmap.json")) {
             rename { "paucultimate.refmap.json" }
         }
-        from(zipTree(embeddedLodRuntimeJar)) {
-            excludeEmbeddedDistantHorizonsLoader()
-        }
         manifest {
             attributes(
-                "MixinConfigs" to "paucultimate.mixins.json,paucultimate-compat-dh.mixins.json,paucultimate-vertexformat.mixins.json,paucultimate-batched-entity-rendering.mixins.json,paucultimate-fantastic.mixins.json,paucultimate-forge.mixins.json"
+                "MixinConfigs" to "paucultimate.mixins.json,paucperf.mixins.json,paucultimate-compat-dh.mixins.json,paucultimate-vertexformat.mixins.json,paucultimate-batched-entity-rendering.mixins.json,paucultimate-fantastic.mixins.json,paucultimate-forge.mixins.json,paucultimate-pauc-forge.mixins.json"
             )
         }
     }

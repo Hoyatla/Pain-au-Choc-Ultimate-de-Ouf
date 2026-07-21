@@ -454,7 +454,7 @@ public final class PauCClientGpuPathController {
 				+ ", bindless="
 				+ bindlessIndirect
 				+ ", "
-				+ PauCEmbeddedDhBridge.describeGpuUploadState()
+				+ fr.hoyatla.pauc.lod.PauCLodBridgeAccess.describeGpuUploadState()
 				+ ", rendererBridge="
 				+ PauCorRendererBridge.describeState()
 				+ (blockers.isBlank() ? "" : ", blockers=" + blockers)

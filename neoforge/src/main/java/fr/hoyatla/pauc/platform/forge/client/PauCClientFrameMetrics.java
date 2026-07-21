@@ -3,7 +3,6 @@ package fr.hoyatla.pauc.platform.forge.client;
 import com.mojang.logging.LogUtils;
 import fr.hoyatla.pauc.PauCIdentity;
 import fr.hoyatla.pauc.lod.PauCFrameSpikeAbsorber;
-import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
@@ -67,7 +66,7 @@ public final class PauCClientFrameMetrics {
 		// so measuring between consecutive fires yields sub-frame (≈half) intervals — which made the absorber and
 		// watchdog under-read true frame time by ~2x and barely react to real GPU-bound dips. Ignore the shadow-pass
 		// firing so every sample is a true frame boundary.
-		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+		if (fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShadowPassActive()) {
 			return;
 		}
 		long now = System.nanoTime();

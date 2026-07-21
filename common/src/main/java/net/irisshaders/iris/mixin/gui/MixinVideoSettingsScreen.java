@@ -46,6 +46,7 @@ public abstract class MixinVideoSettingsScreen extends Screen {
 				PauCLodVideoSettings.VANILLA_FOG,
 				PauCLodVideoSettings.LOD_RENDER_DISTANCE,
 				PauCLodVideoSettings.LOD_CLOUDS,
+				PauCLodVideoSettings.SHADOW_QUALITY,
 				PauCLodVideoSettings.NVIDIA_ACCELERATION,
 				PauCLodVideoSettings.TERRAIN_MORPHING,
 				PauCLodVideoSettings.DYNAMIC_RESOLUTION
@@ -57,6 +58,7 @@ public abstract class MixinVideoSettingsScreen extends Screen {
 				PauCLodVideoSettings.NVIDIA_ACCELERATION,
 				PauCLodVideoSettings.TERRAIN_MORPHING,
 				PauCLodVideoSettings.LOD_CLOUDS,
+				PauCLodVideoSettings.SHADOW_QUALITY,
 				PauCLodVideoSettings.DYNAMIC_RESOLUTION
 			};
 		OptionInstance<?>[] options = new OptionInstance[$$0.length + paucOptions.length];

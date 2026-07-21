@@ -35,6 +35,16 @@ public final class PauCEmbeddedDhRuntime {
 		return initialized;
 	}
 
+	/**
+	 * TRUE when Distant Horizons (embedded OR external) is on the classpath — its public API class is
+	 * loadable. Framework-independent (pure reflective probe), safe to call from a mixin config plugin
+	 * before mod loading is wired. Used to GATE DH-bound mixins (P3/P4 iris-removal: replaces the
+	 * vendored {@code IrisPlatformHelpers.isModLoaded("distanthorizons")} check).
+	 */
+	public static boolean isDistantHorizonsPresent() {
+		return classExists(DH_API_CLASS);
+	}
+
 	public static String describe() {
 		return "embeddedDhRuntime[classes=" + embeddedClassesAreAvailable()
 			+ ", bootstrapStarted=" + bootstrapStarted

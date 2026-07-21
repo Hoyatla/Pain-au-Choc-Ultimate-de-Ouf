@@ -1,6 +1,5 @@
 package fr.hoyatla.pauc.lod;
 
-import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -63,7 +62,7 @@ public final class PauCBlockEntityRenderBudget {
 		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {
 			return false;
 		}
-		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+		if (fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShadowPassActive()) {
 			return false;
 		}
 

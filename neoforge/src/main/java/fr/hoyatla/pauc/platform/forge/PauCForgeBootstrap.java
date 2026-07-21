@@ -9,7 +9,6 @@ import fr.hoyatla.pauc.platform.forge.compat.PauCCompatibilityGuards;
 import fr.hoyatla.pauc.platform.forge.client.PauCEmbeddedDhBootstrap;
 import fr.hoyatla.pauc.platform.forge.scheduler.PauCScheduler;
 import fr.hoyatla.pauc.platform.forge.worldgen.PauCWorldgenEventBridge;
-import net.irisshaders.iris.gui.screen.ShaderPackScreen;
 import net.minecraft.client.KeyMapping;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.client.ConfigScreenHandler;
@@ -60,7 +59,14 @@ public final class PauCForgeBootstrap {
 		bootstrapOptionalPauCorBridge(modVersion);
 		ModLoadingContext.get().registerExtensionPoint(
 			ConfigScreenHandler.ConfigScreenFactory.class,
-			() -> new ConfigScreenHandler.ConfigScreenFactory((mc, screen) -> new ShaderPackScreen(screen))
+			// P3 (iris-removal): the shader-pack screen resolves through the reflective facade — once
+			// the vendored pipeline is gone, the config button simply returns to the parent screen
+			// (or opens the EXTERNAL Iris/Oculus screen when one is installed).
+			() -> new ConfigScreenHandler.ConfigScreenFactory((mc, screen) -> {
+				net.minecraft.client.gui.screens.Screen packScreen =
+					fr.hoyatla.pauc.shadercompat.PauCShaderCompat.createShaderPackScreen(screen);
+				return packScreen != null ? packScreen : screen;
+			})
 		);
 		FMLJavaModLoadingContext.get().getModEventBus().addListener(PauCForgeBootstrap::registerKeys);
 		MinecraftForge.EVENT_BUS.register(COMPAT_EVENT_BRIDGE);

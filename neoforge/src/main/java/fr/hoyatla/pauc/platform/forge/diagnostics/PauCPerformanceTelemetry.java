@@ -376,7 +376,9 @@ public final class PauCPerformanceTelemetry {
 		lastFpsGovernorLine = PauCClientFpsGovernor.describeState();
 		lastPlayerVideoLine = PauCPlayerVideoSettings.capture(Minecraft.getInstance()).describe();
 		lastDistanceGovernorLine = PauCClientDistanceGovernor.describeState();
-		lastSurfaceLodLine = PauCClientSurfaceLodMode.describeState();
+		lastSurfaceLodLine = fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()
+			? PauCClientSurfaceLodMode.describeState()
+			: "surfaceLod[dh-not-installed]";
 		lastCudaLine = PauCCudaWorker.describeMetrics();
 		lastGpuLine = PauCClientGpuPathController.describeState();
 		lastSchedulerLine = PauCScheduler.describeState();
@@ -386,7 +388,7 @@ public final class PauCPerformanceTelemetry {
 		lastVillageLine = PauCVillagePerformanceDiagnostics.describeState();
 		lastReloadLine = PauCLodReloadDiagnostics.describeState();
 		lastGovernorActuationLine = PauCClientFpsGovernor.describeActuationState();
-		lastEmbeddedDhActuationLine = PauCEmbeddedDhBridge.describeActuationState();
+		lastEmbeddedDhActuationLine = fr.hoyatla.pauc.lod.PauCLodBridgeAccess.describeActuationState();
 		lastFrontierActuationLine = PauCClientFrontierWarmupManager.describeActuationState();
 		lastUploadBudgetLine = PauCClientUploadBudgetController.describeState();
 	}

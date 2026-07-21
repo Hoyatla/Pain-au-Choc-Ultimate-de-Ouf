@@ -1,6 +1,12 @@
 # custom sodium versions
 custom_sodium/
 
+# dist jars
+dist/
+
+# DH reference source (not compiled into PauC)
+distant-horizons-main/
+
 # gradle
 
 .gradle/

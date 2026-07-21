@@ -83,6 +83,9 @@ public final class PauCClientFpsGovernor {
 	private static int qualityHeadroomStreak;
 	private static int qualityUpgradeConfirmations;
 	private static boolean lastVillagePressure;
+	private static boolean pauc$fidelityLatched;
+	private static long pauc$fidelityHealthySinceMs;
+	private static long pauc$fidelityDistressSinceMs;
 	private static boolean lastVillageSeverePressure;
 	private static boolean villageSeverePressure;
 	private static int villageSevereCandidateTicks;
@@ -159,7 +162,7 @@ public final class PauCClientFpsGovernor {
 		PauCLodShaderContext.DhShaderMode dhMode = PauCLodShaderContext.effectiveDhMode();
 		String currentRuntime = runtimeId(shaderActive, shaderFamily);
 		PauCClientGpuPathController.GpuSnapshot gpuSnapshot = PauCClientGpuPathController.getLastSnapshot();
-		boolean directGpuUpload = PauCEmbeddedDhBridge.isDirectGpuUploadActive();
+		boolean directGpuUpload = fr.hoyatla.pauc.lod.PauCLodBridgeAccess.isDirectGpuUploadActive();
 		int runtimeFps = fps > 0
 			? Math.max(1, Math.min(fps, (int) Math.round(targetFps * deliveryRatio)))
 			: fps;
@@ -198,7 +201,7 @@ public final class PauCClientFpsGovernor {
 			qualityUpgradeConfirmations = 0;
 			lastQualityRuntime = currentRuntime;
 			clearPresentationQualityStabilizer();
-			PauCEmbeddedDhBridge.resetPresentationStability("runtime-switch:" + currentRuntime);
+			fr.hoyatla.pauc.lod.PauCLodBridgeAccess.resetPresentationStability("runtime-switch:" + currentRuntime);
 			LOGGER.info("PauC reset LOD quality headroom tracking after runtime switch to {}.", currentRuntime);
 		}
 
@@ -394,7 +397,7 @@ public final class PauCClientFpsGovernor {
 			+ ", "
 			+ PauCLodShaderRuntime.describe()
 			+ ", "
-			+ PauCClientSurfaceLodMode.describeState()
+			+ (fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized() ? PauCClientSurfaceLodMode.describeState() : "surfaceLod[dh-not-installed]")
 			+ ", "
 			+ PauCClientFluidityState.describeState()
 			+ "]";
@@ -773,9 +776,20 @@ public final class PauCClientFpsGovernor {
 		setSystemPropertyIfChanged(DYNAMIC_TARGET_DISTANCE_PROPERTY, Integer.toString(targetDistance));
 		setSystemPropertyIfChanged(DYNAMIC_RETENTION_MARGIN_PROPERTY, Integer.toString(retentionMarginChunks));
 		setSystemPropertyIfChanged(DYNAMIC_GENERATION_RATE_PROPERTY, Integer.toString(generationRequestRateLimit));
-		setSystemPropertyIfChanged(DYNAMIC_MAX_RESOLUTION_PROPERTY, qualityTier.maxHorizontalResolution);
-		setSystemPropertyIfChanged(DYNAMIC_HORIZONTAL_QUALITY_PROPERTY, qualityTier.horizontalQuality);
-		String verticalQuality = PauCClientSurfaceLodMode.adjustVerticalQuality(qualityTier.verticalQuality);
+		String maxHorizontalResolution = qualityTier.maxHorizontalResolution;
+		String horizontalQuality = qualityTier.horizontalQuality;
+		if (pauc$vanillaFidelityUpgradeActive()) {
+			// Vanilla fidelity ring: the governor's tier writes DYNAMIC_* continuously, so the upgrade must
+			// happen HERE (a bridge-side default is never read). Health-latched to avoid resolution
+			// ping-pong — each BLOCK<->TWO_BLOCKS flip clears the LOD render cache.
+			maxHorizontalResolution = "BLOCK";
+			horizontalQuality = "MEDIUM";
+		}
+		setSystemPropertyIfChanged(DYNAMIC_MAX_RESOLUTION_PROPERTY, maxHorizontalResolution);
+		setSystemPropertyIfChanged(DYNAMIC_HORIZONTAL_QUALITY_PROPERTY, horizontalQuality);
+		String verticalQuality = fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()
+			? PauCClientSurfaceLodMode.adjustVerticalQuality(qualityTier.verticalQuality)
+			: qualityTier.verticalQuality;
 		setSystemPropertyIfChanged(DYNAMIC_VERTICAL_QUALITY_PROPERTY, verticalQuality);
 
 		if (policy != lastPolicy
@@ -795,8 +809,8 @@ public final class PauCClientFpsGovernor {
 				describeTargetDistance(targetDistance),
 				generationRequestRateLimit,
 				retentionMarginChunks,
-				qualityTier.maxHorizontalResolution,
-				qualityTier.horizontalQuality,
+				maxHorizontalResolution,
+				horizontalQuality,
 				verticalQuality,
 				villagePressure ? "on" : "off",
 				villageSeverePressure ? "on" : "off",
@@ -1100,7 +1114,7 @@ public final class PauCClientFpsGovernor {
 			|| !lastWorkloadRecovered
 			|| targetDistance < lastPresentationQualityTargetDistance
 			|| lastQueuePressure > readDouble("pauc.lod.presentationQualityDropMaxQueuePressure", 0.06D, 0.0D, 1.0D)
-			|| PauCClientSurfaceLodMode.prefersAccurateFeatureLods();
+			|| (fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized() && PauCClientSurfaceLodMode.prefersAccurateFeatureLods());
 		if (urgentDrop) {
 			lastPresentationQualityTargetDistance = targetDistance;
 			clearPendingPresentationQuality();
@@ -1179,8 +1193,10 @@ public final class PauCClientFpsGovernor {
 		clearPresentationQualityStabilizer();
 		lastPresentationQualityTargetDistance = configuredTargetDistance;
 		PauCClientFrontierWarmupManager.onConfiguredTargetDistanceChanged(configuredTargetDistance);
-		PauCClientSurfaceLodMode.onConfiguredTargetDistanceChanged(configuredTargetDistance);
-		PauCEmbeddedDhBridge.resetPresentationStability("target-distance:" + configuredTargetDistance);
+		if (fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			PauCClientSurfaceLodMode.onConfiguredTargetDistanceChanged(configuredTargetDistance);
+		}
+		fr.hoyatla.pauc.lod.PauCLodBridgeAccess.resetPresentationStability("target-distance:" + configuredTargetDistance);
 		LOGGER.info("PauC synchronized manual LOD distance change to {} chunks and cleared stale presentation state.", configuredTargetDistance);
 	}
 
@@ -1314,6 +1330,57 @@ public final class PauCClientFpsGovernor {
 			&& !idleQueueResolvedState
 			&& !backlogResolved
 			&& !lastWorkloadRecovered;
+	}
+
+	/**
+	 * Health latch for the vanilla fidelity ring: engage BLOCK resolution only once the LOD backlog is
+	 * drained and frames have been calm for a sustained window; release only under sustained frame
+	 * pressure. Both windows are long on purpose — every resolution flip rebuilds the LOD render cache.
+	 */
+	private static boolean pauc$vanillaFidelityUpgradeActive() {
+		if (!PauCLodClientSettings.isVanillaFidelityRingActive()
+			|| !fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			pauc$fidelityLatched = false;
+			pauc$fidelityHealthySinceMs = 0L;
+			pauc$fidelityDistressSinceMs = 0L;
+			return false;
+		}
+
+		long now = System.currentTimeMillis();
+		boolean absorbing = fr.hoyatla.pauc.lod.PauCFrameSpikeAbsorber.isAbsorbing();
+		if (!pauc$fidelityLatched) {
+			int pendingChunks = PauCEmbeddedLodRuntimeDiagnostics.pendingChunks();
+			boolean healthy = !absorbing
+				&& pendingChunks <= readInt("pauc.lod.vanillaFidelityMaxPendingChunks", 2048, 0, 1_000_000);
+			if (!healthy) {
+				pauc$fidelityHealthySinceMs = 0L;
+				return false;
+			}
+			if (pauc$fidelityHealthySinceMs == 0L) {
+				pauc$fidelityHealthySinceMs = now;
+				return false;
+			}
+			if (now - pauc$fidelityHealthySinceMs >= readInt("pauc.lod.vanillaFidelityHealthyMs", 30_000, 1_000, 600_000)) {
+				pauc$fidelityLatched = true;
+				pauc$fidelityDistressSinceMs = 0L;
+				LOGGER.info("PauC vanilla fidelity ring engaged: LOD backlog drained and frames healthy - DH resolution BLOCK, horizontal MEDIUM.");
+			}
+			return pauc$fidelityLatched;
+		}
+
+		if (absorbing) {
+			if (pauc$fidelityDistressSinceMs == 0L) {
+				pauc$fidelityDistressSinceMs = now;
+			} else if (now - pauc$fidelityDistressSinceMs >= readInt("pauc.lod.vanillaFidelityDistressMs", 15_000, 1_000, 600_000)) {
+				pauc$fidelityLatched = false;
+				pauc$fidelityHealthySinceMs = 0L;
+				pauc$fidelityDistressSinceMs = 0L;
+				LOGGER.info("PauC vanilla fidelity ring released after sustained frame pressure; DH resolution back to the governor tier.");
+			}
+		} else {
+			pauc$fidelityDistressSinceMs = 0L;
+		}
+		return pauc$fidelityLatched;
 	}
 
 	private static int readInt(String key, int fallback, int min, int max) {

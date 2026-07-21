@@ -302,7 +302,7 @@ public final class PauCClientUploadBudgetController {
 	}
 
 	private static void refreshCachedScales(boolean fpsFirstVanilla, boolean aggressiveUpload) {
-		boolean directGpuUpload = PauCEmbeddedDhBridge.isDirectGpuUploadActive();
+		boolean directGpuUpload = fr.hoyatla.pauc.lod.PauCLodBridgeAccess.isDirectGpuUploadActive();
 		cachedDirectGpuNormalScale = directGpuUpload
 			? readDouble("pauc.lod.directGpuUploadBudgetScale", 1.22D, 1.0D, 1.75D)
 			: 1.0D;

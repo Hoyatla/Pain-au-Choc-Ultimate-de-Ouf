@@ -31,6 +31,7 @@ public final class PauCLodClientSettings {
 	private static final String DIRECT_GPU_UPLOAD_KEY = "directGpuUploadEnabled";
 	private static final String TERRAIN_MORPHING_KEY = "terrainMorphingEnabled";
 	private static final String DYNAMIC_RESOLUTION_MODE_KEY = "dynamicResolutionMode";
+	private static final String SHADOW_MODE_KEY = "shadowMode";
 	private static final String ENABLED_PROPERTY = "pauc.lod.enabled";
 	private static final String LOD_CLOUDS_PROPERTY = "pauc.lod.clouds";
 	private static final String VANILLA_FOG_PROPERTY = "pauc.lod.vanillaFog";
@@ -57,6 +58,7 @@ public final class PauCLodClientSettings {
 	private static final String TERRAIN_MORPHING_PROPERTY = "pauc.lod.shaderOffSeamMorph";
 	private static final String DYNAMIC_RESOLUTION_PROPERTY = "pauc.client.dynamicResolution";
 	private static final String DYNAMIC_RESOLUTION_MODE_PROPERTY = "pauc.client.dynamicResolutionMode";
+	private static final String SHADOW_MODE_PROPERTY = "pauc.shadow.mode";
 	private static final String DYNAMIC_RESOLUTION_MIN_SCALE_PROPERTY = "pauc.client.dynamicResolutionMinScale";
 	private static final String DYNAMIC_RESOLUTION_DOWN_RATE_PROPERTY = "pauc.client.dynamicResolutionDownRatePerSecond";
 	private static final String DYNAMIC_RESOLUTION_UP_RATE_PROPERTY = "pauc.client.dynamicResolutionUpRatePerSecond";
@@ -77,8 +79,25 @@ public final class PauCLodClientSettings {
 	private static boolean directGpuUploadEnabled = true;
 	private static boolean terrainMorphingEnabled = true;
 	private static PauCDynamicResolutionMode dynamicResolutionMode = PauCDynamicResolutionMode.OFF;
+	// BASIC by user decision (07-19, after a profiler-measured session showed the pass at ~0.01ms
+	// render-thread with the current implementation): its real cost is displayed on the
+	// "PauC render profiler" log line ("shadow avg=..."), so the gauge is an informed choice.
+	private static fr.hoyatla.pauc.shadow.PauCShadowMode shadowMode = fr.hoyatla.pauc.shadow.PauCShadowMode.BASIC;
 
 	private PauCLodClientSettings() {
+	}
+
+	public static fr.hoyatla.pauc.shadow.PauCShadowMode shadowMode() {
+		ensureLoaded();
+		String override = System.getProperty(SHADOW_MODE_PROPERTY);
+		return override == null ? shadowMode : fr.hoyatla.pauc.shadow.PauCShadowMode.byId(override);
+	}
+
+	public static void setShadowMode(fr.hoyatla.pauc.shadow.PauCShadowMode mode) {
+		ensureLoaded();
+		shadowMode = mode == null ? fr.hoyatla.pauc.shadow.PauCShadowMode.OFF : mode;
+		System.setProperty(SHADOW_MODE_PROPERTY, shadowMode.id());
+		save();
 	}
 
 	public static boolean isLodsEnabled() {
@@ -345,6 +364,7 @@ public final class PauCLodClientSettings {
 			directGpuUploadEnabled = Boolean.parseBoolean(properties.getProperty(DIRECT_GPU_UPLOAD_KEY, Boolean.toString(directGpuUploadEnabled)));
 			terrainMorphingEnabled = Boolean.parseBoolean(properties.getProperty(TERRAIN_MORPHING_KEY, Boolean.toString(terrainMorphingEnabled)));
 			dynamicResolutionMode = PauCDynamicResolutionMode.byId(properties.getProperty(DYNAMIC_RESOLUTION_MODE_KEY, dynamicResolutionMode.id()));
+			shadowMode = fr.hoyatla.pauc.shadow.PauCShadowMode.byId(properties.getProperty(SHADOW_MODE_KEY, shadowMode.id()));
 			migratedProfileDefaults = migrateProfileDefaults(profileDefaultsVersion);
 		} catch (IOException exception) {
 			LOGGER.warn("PauC could not read LOD client settings from {}.", path, exception);
@@ -373,6 +393,7 @@ public final class PauCLodClientSettings {
 		properties.setProperty(DIRECT_GPU_UPLOAD_KEY, Boolean.toString(directGpuUploadEnabled));
 		properties.setProperty(TERRAIN_MORPHING_KEY, Boolean.toString(terrainMorphingEnabled));
 		properties.setProperty(DYNAMIC_RESOLUTION_MODE_KEY, dynamicResolutionMode.id());
+		properties.setProperty(SHADOW_MODE_KEY, shadowMode.id());
 
 		try {
 			Files.createDirectories(path.getParent());
@@ -407,9 +428,11 @@ public final class PauCLodClientSettings {
 		directGpuUploadEnabled = true;
 		terrainMorphingEnabled = true;
 		dynamicResolutionMode = PauCDynamicResolutionMode.OFF;
+		shadowMode = fr.hoyatla.pauc.shadow.PauCShadowMode.BASIC;
 	}
 
 	private static void syncRuntimeProperties() {
+		System.setProperty(SHADOW_MODE_PROPERTY, shadowMode.id());
 		System.setProperty(ENABLED_PROPERTY, Boolean.toString(lodsEnabled));
 		System.setProperty(LOD_CLOUDS_PROPERTY, Boolean.toString(lodCloudsEnabled));
 		System.setProperty(TARGET_DISTANCE_PROPERTY, Integer.toString(targetDistanceChunks));
@@ -471,6 +494,16 @@ public final class PauCLodClientSettings {
 		}
 
 		return changed;
+	}
+
+	/**
+	 * "Vanilla fidelity ring" (perceived-vanilla horizon project): at high LOD gauges the nearest LOD ring
+	 * should render at BLOCK resolution (geometrically identical to vanilla terrain). DH-free predicate so
+	 * the always-on FPS governor can consult it; the governor owns WHEN to apply it (health-latched).
+	 */
+	public static boolean isVanillaFidelityRingActive() {
+		return readBooleanProperty("pauc.lod.vanillaFidelityRing", true)
+			&& targetDistanceChunks() >= Math.max(8, Math.min(96, readIntProperty("pauc.lod.vanillaFidelityMinTarget", 48)));
 	}
 
 	private static int readIntProperty(String key, int fallback) {

@@ -1,0 +1,137 @@
+================================================================================
+ PauC Ultimate — FEUILLE DE ROUTE LOD  (P1 → P5)
+ Audit génération/refinement + alignement sur l'architecture Distant Horizons
+ Rédigé le 2026-07-21
+================================================================================
+
+PRINCIPE DE TRAVAIL (imposé par l'historique de régressions)
+------------------------------------------------------------
+Chaque proposition est FEATURE-FLAGGÉE, DÉFAUT OFF. Le comportement actuel reste
+strictement inchangé tant que le flag n'est pas mis. Chaque flag est testable en
+jeu isolément. Aucune modification hot-path n'est activée par défaut sans
+validation en jeu par l'utilisateur (je ne peux pas tester moi-même).
+
+--------------------------------------------------------------------------------
+1. CONSTAT — CE QUE FAIT PauC AUJOURD'HUI
+--------------------------------------------------------------------------------
+GÉNÉRATION : heightmap seul. PauCDistantSurfaceGenerator.generate() appelle
+  gen.getBaseHeight(...) par colonne, + teinte de biome + heuristique matériau.
+  -> Jamais la génération réelle du chunk. Donc :
+     * matériau de surface DEVINÉ (tag/altitude), pas les vrais blocs
+     * arbres = IMPOSTEURS par densité de biome, pas de vrais arbres
+     * ZÉRO structure (village, manoir, etc.)
+REFINEMENT : échelle 16 (blitz) -> 4 (coverage) -> 2/1 (near), en ANNEAUX
+  RELATIFS AU JOUEUR (dataStepForRadial). Deux lanes : coverage (worker) +
+  fine (fineWorker). PENDING_CAP + lanes réservées.
+RENDU : bandes de détail EN ANNEAUX RELATIFS AU JOUEUR (bandStep). Une seule
+  origine de dessin. -> Bouger de 96 blocs = REBUILD COMPLET de la carte
+  (re-mesh de ~2000-2600 régions). Cf. scheduleBuilds():
+     needFull = movedFar(96b) | movedY(96b) | lightChanged(jour/nuit) | radiusChanged
+STOCKAGE : colonnes dans .pauclod (PauCSurfaceColumnStore) ; le NIVEAU DE DÉTAIL
+  vit à part dans chunksteps.bin (step-map). Désaccord de version = tempête
+  (incident 2026-07-20).
+
+RISQUES RELEVÉS
+  A. Rechargements massifs : anneaux joueur -> rebuild global sur déplacement,
+     cycle jour/nuit, changement de render distance.
+  B. Remplissage incomplet : wedge de staging (force-swap avec régions manquantes
+     = trous), régions non générées en vol rapide, désaccord détail-données
+     (rendu step-1 sur données step-4 = grossier), détail figé entre 2 rebuilds.
+  G. Génération : profondeur heightmap-seul (plafond de fidélité), précision
+     bornée pour éviter le wedge, re-génération qui écrase, détail séparé des
+     données.
+
+--------------------------------------------------------------------------------
+2. CE QUE FAIT DISTANT HORIZONS  (source distant-horizons-main + jars)
+--------------------------------------------------------------------------------
+GÉNÉRATION MULTI-ÉTAPES, PROFONDEUR RÉGLABLE (EDhApiDistantGeneratorMode) :
+     PRE_EXISTING_ONLY -> SURFACE -> FEATURES -> INTERNAL_SERVER
+  Exécute le vrai pipeline vanilla (StepBiomes/Noise/Surface/Features/
+  StructureStart/StructureReference). D'où arbres réels + structures.
+QUADTREE ALIGNÉ-MONDE (LodQuadTree, DhSectionPos) : sections encodées
+  (detailLevel, x, z) en long, largeur = 2^detail, GRILLE FIXE. Bouger ne change
+  que le NIVEAU de sections fixes, re-maillées INDIVIDUELLEMENT. Jamais de
+  rebuild global. (getChildByIndex, contains, getCenterBlockPos = vrai quadtree.)
+STOCKAGE SQLite PAR SECTION avec le détail intégré (FullDataSourceV2,
+  deleteLowDetailDataForRegen.sql) : monter en détail = régénérer CETTE section.
+DÉTAIL : EDhApiDetailLevel { BLOCK, CHUNK, REGION } + widthInBlocks.
+
+--------------------------------------------------------------------------------
+3. ATTENTES JOUEURS  (recherche web, juillet 2026)
+--------------------------------------------------------------------------------
+  * Distance étendue (128-256) ; >256 imperceptible.
+  * Distant simplifié ACCEPTÉ en échange de la couverture (compromis attendu).
+  * Transitions DOUCES bas-détail -> plein-détail, SANS pop-in brutal.
+  * Structures et constructions visibles de loin.
+  * Couture vanilla<->LOD invisible (plainte historique, issue #471).
+  * Framerate jouable ; -10 à -20 fps acceptés.
+
+--------------------------------------------------------------------------------
+4. PLAN D'EXÉCUTION  P1 -> P5
+--------------------------------------------------------------------------------
+
+P1 — GRILLE DE SECTIONS ALIGNÉE-MONDE   [flag: pauc.lodengine.worldAlignedGrid]
+  BUT : tuer le rebuild global (A), le wedge sur extension de détail (G3), le
+        détail figé entre rebuilds (B4).
+  FONDATION : PauCLodSectionGrid existe déjà (detailLevel/section, builtLevel,
+        sectionsNeedingRebuild, markBuilt). NON câblée.
+  ÉTAPES :
+    (a) MeshJob porte un niveau de section par région (sectionLevel) ; quand le
+        flag est ON, le mailleur utilise un STEP FIXE par région dérivé du niveau
+        (level->step) au lieu de bandStep radial par tuile.
+    (b) scheduleBuilds : sur déplacement (et non first/light/radius/data), au lieu
+        de startFullRebuild, calculer sectionsNeedingRebuild(grille) et
+        re-mailler UNIQUEMENT ces régions (incrémental), markBuilt après upload.
+    (c) Régions hors-portée : forget + drop du mesh.
+  VALIDATION EN JEU : bouger ne doit plus provoquer de rebuild global (log
+        "witness render" stable), fps stable en déplacement, pas de couture
+        mouvante. Comparer flag ON vs OFF.
+  RISQUE : le niveau par section (uniforme) remplace le dégradé radial lisse ;
+        transitions gérées en P5. Garder OFF jusqu'à validation.
+
+P2 — PROFONDEUR DE GÉNÉRATION -> SURFACE puis FEATURES
+        [flag: pauc.lodengine.genDepth = HEIGHTMAP|SURFACE|FEATURES]
+  BUT : vrais blocs de surface (fin du matériau deviné) puis vrais arbres.
+  DÉPEND DE P1 (coût absorbé par l'incrémental par section).
+  ÉTAPES :
+    (a) SURFACE : au lieu de getBaseHeight seul, sampler la vraie colonne via le
+        générateur de chunk (surface builder) pour lire le BLOC de surface réel
+        -> couleur exacte via PauCBlockColorCache. Coût ~x3 gen : réservé au tier
+        haut, budgété, en lane fine.
+    (b) FEATURES : s'inspirer de BatchGenerationEnvironment de DH pour exécuter
+        StepFeatures hors-thread (vrais arbres). Gros morceau ; itératif.
+  VALIDATION : couleurs de sol distantes = near ; arbres = vrais emplacements.
+  RISQUE : lourd. Ne JAMAIS activer par défaut. Mesurer le temps de gen au log.
+
+P3 — STRUCTURES EN LOD   [flag: pauc.lodengine.distantStructures]
+  BUT : villages/manoirs visibles de loin (attente joueur forte).
+  FONDATION : PauCDistantStructureLocator trouve déjà les positions seed.
+  ÉTAPES : rendu d'archétypes (boîtes heightfield par type de structure) au bon
+        emplacement, tagué, dessiné par un renderer dédié (PauCStructureLodRenderer
+        existe). Pas d'imposteurs voxel : emprise + hauteur, façon DH LOD.
+  VALIDATION : une structure apparaît à sa vraie position avant visite.
+
+P4 — DÉTAIL STOCKÉ AVEC LA DONNÉE   [flag: pauc.lodengine.detailInData]
+  BUT : supprimer la step-map fragile (incident tempête), détail autoritatif.
+  ÉTAPES : ajouter le step par colonne/région dans le format .pauclod (bump
+        PERSIST_MAGIC/version, migration douce), retirer la dépendance à
+        chunksteps.bin. Monter en détail = régénérer la section (comme DH).
+  RISQUE : format de stockage. Migration testée avant activation.
+
+P5 — TRANSITIONS DOUCES PAR SECTION   [flag: pauc.lodengine.smoothLodTransitions]
+  BUT : pas de pop-in au changement de niveau (attente joueur).
+  DÉPEND DE P1.
+  ÉTAPES : au changement de niveau d'une section, cross-fade (alpha/morph des
+        hauteurs de coin) entre l'ancien et le nouveau mesh sur quelques frames,
+        au lieu du swap sec.
+  VALIDATION : approcher une zone -> montée en détail fondue, pas de claquement.
+
+--------------------------------------------------------------------------------
+5. ORDRE ET DÉPENDANCES
+--------------------------------------------------------------------------------
+  P1 d'abord (racine de la moitié des bugs, débloque P2 et P5).
+  Puis P4 (stockage sain) en parallèle conceptuel.
+  Puis P2 (fidélité), P3 (structures), P5 (transitions).
+  Chaque étape : compiler, déployer, VALIDER EN JEU flag ON vs OFF avant la
+  suivante. Aucune activation par défaut sans ce feu vert.
+================================================================================

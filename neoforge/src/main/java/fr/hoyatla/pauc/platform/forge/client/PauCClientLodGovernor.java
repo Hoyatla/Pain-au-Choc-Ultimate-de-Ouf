@@ -26,6 +26,14 @@ public final class PauCClientLodGovernor {
 	}
 
 	public static void onClientTick() {
+		// PauC must run standalone: without the external Distant Horizons mod the LOD subsystem stays off
+		// and the bridge (whose code paths resolve com.seibel classes) must never execute.
+		if (!fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			currentRange = PauCLodRange.disabled(readVanillaDistance(Minecraft.getInstance()), readTargetDistance());
+			PauCLodHorizonState.update(currentRange);
+			lastFrame = LodFrame.unavailable();
+			return;
+		}
 		if (!PauCCompatManager.isEnabled(PauCCompatModule.CLIENT_LOD_HORIZON)) {
 			currentRange = PauCLodRange.disabled(readVanillaDistance(Minecraft.getInstance()), readTargetDistance());
 			PauCLodHorizonState.update(currentRange);
@@ -73,7 +81,11 @@ public final class PauCClientLodGovernor {
 		PauCLodVideoSettings.syncFromClientSettings();
 		currentRange = PauCLodRange.disabled(2, readTargetDistance());
 		PauCLodHorizonState.reset();
-		PauCEmbeddedDhBridge.reset();
+		if (fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			// Heavy packs eagerly resolve the bridge's constant pool at first invoke; without the external
+			// DH mod the bridge class must never be touched (NCDFE on its com.seibel enum references).
+			PauCEmbeddedDhBridge.reset();
+		}
 		lastFrame = LodFrame.unavailable();
 		ticksUntilNextLog = 0;
 		startupRefreshTicks = 40;
@@ -96,9 +108,12 @@ public final class PauCClientLodGovernor {
 
 	public static String describeState() {
 		LodFrame frame = lastFrame;
+		String bridgeState = fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()
+			? PauCEmbeddedDhBridge.describeState()
+			: "embeddedDh[dh-not-installed]";
 		return frame.available()
-			? frame.describe() + ", " + PauCEmbeddedDhBridge.describeState() + ", " + PauCLodShaderContext.describe()
-			: "lodGovernor[unavailable], " + PauCEmbeddedDhBridge.describeState() + ", " + PauCLodShaderContext.describe();
+			? frame.describe() + ", " + bridgeState + ", " + PauCLodShaderContext.describe()
+			: "lodGovernor[unavailable], " + bridgeState + ", " + PauCLodShaderContext.describe();
 	}
 
 	public static String telemetryStateKey() {

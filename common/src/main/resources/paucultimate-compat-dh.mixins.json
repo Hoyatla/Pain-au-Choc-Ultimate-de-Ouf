@@ -1,7 +1,7 @@
 {
   "required": true,
   "minVersion": "0.8",
-  "plugin": "net.irisshaders.iris.compat.dh.DHMixinConfigPlugin",
+  "plugin": "fr.hoyatla.pauc.compat.dh.PauCDhMixinConfigPlugin",
   "package": "net.irisshaders.iris.compat.dh.mixin",
   "compatibilityLevel": "JAVA_17",
   "client": [

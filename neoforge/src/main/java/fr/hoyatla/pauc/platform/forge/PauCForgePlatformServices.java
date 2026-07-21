@@ -2,7 +2,6 @@ package fr.hoyatla.pauc.platform.forge;
 
 import fr.hoyatla.pauc.PauCIdentity;
 import fr.hoyatla.pauc.platform.PauCPlatformServices;
-import net.irisshaders.iris.Iris;
 import net.minecraftforge.fml.ModList;
 import net.minecraftforge.fml.loading.FMLLoader;
 import net.minecraftforge.fml.loading.FMLPaths;
@@ -56,7 +55,10 @@ public final class PauCForgePlatformServices implements PauCPlatformServices {
 			// Keep startup resilient if Forge metadata is temporarily unavailable.
 		}
 
-		return Iris.getVersion();
+		// P4 (iris-removal): fall back to PauC's OWN build identity, not the vendored Iris version
+		// (a relocated-BuildConfig artifact). PauCIdentity reads PauCBuildConfig since P3, so this
+		// removes the last HARD fr.hoyatla → net.irisshaders dependency outside the reflective facade.
+		return PauCIdentity.runtimeVersion();
 	}
 
 	@Override

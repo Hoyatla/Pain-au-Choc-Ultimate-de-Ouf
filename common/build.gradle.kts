@@ -39,6 +39,14 @@ buildConfig {
     buildConfigField("PAUC_BUILD_GIT_HASH", paucGitHash)
     buildConfigField("PAUC_BUILD_ID", paucBuildId)
 
+    // P3 (iris-removal): PauC's identity constants in a PauC package — fr.hoyatla code must not
+    // read the iris-tree BuildConfig (which only survives until P4 removes the vendored pipeline).
+    forClass(packageName = "fr.hoyatla.pauc", className = "PauCBuildConfig") {
+        buildConfigField("PAUC_BUILD_VERSION", paucBuildVersion)
+        buildConfigField("PAUC_BUILD_GIT_HASH", paucGitHash)
+        buildConfigField("PAUC_BUILD_ID", paucBuildId)
+    }
+
     sourceSets.getByName("desktop") {
         buildConfigField("IS_SHARED_BETA", false)
         buildConfigField("PAUC_BUILD_VERSION", paucBuildVersion)

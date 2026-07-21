@@ -1,6 +1,5 @@
 package fr.hoyatla.pauc;
 
-import net.irisshaders.iris.BuildConfig;
 
 public final class PauCIdentity {
 	public static final String MOD_ID = "paucultimate";
@@ -14,7 +13,7 @@ public final class PauCIdentity {
 	public static final String CORE_FINGERPRINT_FILE = "paucultimate-core-fingerprint.json";
 	public static final String SHADER_CONFIG_FILE = "paucultimate-shader.properties";
 	public static final String SHADER_UPDATE_FILE = "paucultimate-shader-update-info.json";
-	private static volatile String runtimeVersion = sanitize(BuildConfig.PAUC_BUILD_VERSION, "0.0.0");
+	private static volatile String runtimeVersion = sanitize(PauCBuildConfig.PAUC_BUILD_VERSION, "0.0.0");
 
 	private PauCIdentity() {
 	}
@@ -28,15 +27,15 @@ public final class PauCIdentity {
 	}
 
 	public static String buildVersion() {
-		return sanitize(BuildConfig.PAUC_BUILD_VERSION, "0.0.0");
+		return sanitize(PauCBuildConfig.PAUC_BUILD_VERSION, "0.0.0");
 	}
 
 	public static String buildGitHash() {
-		return sanitize(BuildConfig.PAUC_BUILD_GIT_HASH, "unknown");
+		return sanitize(PauCBuildConfig.PAUC_BUILD_GIT_HASH, "unknown");
 	}
 
 	public static String buildId() {
-		String configuredBuildId = sanitize(BuildConfig.PAUC_BUILD_ID, "");
+		String configuredBuildId = sanitize(PauCBuildConfig.PAUC_BUILD_ID, "");
 		String runtimeBuildId = runtimeVersion() + "+" + buildGitHash();
 		return configuredBuildId.startsWith(buildVersion() + "+") ? runtimeBuildId : runtimeBuildId;
 	}

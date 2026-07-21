@@ -1,6 +1,5 @@
 package fr.hoyatla.pauc.lod;
 
-import net.irisshaders.iris.pipeline.PauCShaderPackProgramPatches;
 import net.minecraft.client.Minecraft;
 
 public final class PauCLodDiagnostics {
@@ -27,12 +26,14 @@ public final class PauCLodDiagnostics {
 	}
 
 	public static String shaderLine() {
+		// Program-patch state via the reflective facade (P3): empty string once the vendored pipeline
+		// is removed — the line simply loses its last segment instead of crashing the HUD.
+		String patches = fr.hoyatla.pauc.shadercompat.PauCShaderCompat.describeProgramPatches();
 		return "[PauC LOD] "
 			+ PauCLodShaderProfiles.describeCurrent()
 			+ ", "
 			+ PauCLodShaderRuntime.describe()
-			+ ", "
-			+ PauCShaderPackProgramPatches.describeState();
+			+ (patches.isEmpty() ? "" : ", " + patches);
 	}
 
 	public static String policyLine() {

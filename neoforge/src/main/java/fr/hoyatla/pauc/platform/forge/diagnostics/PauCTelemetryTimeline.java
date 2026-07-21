@@ -61,7 +61,9 @@ public final class PauCTelemetryTimeline {
 
 		long now = System.currentTimeMillis();
 		String governorKey = PauCClientFpsGovernor.telemetryStateKey();
-		String surfaceKey = PauCClientSurfaceLodMode.telemetryStateKey();
+		String surfaceKey = fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()
+			? PauCClientSurfaceLodMode.telemetryStateKey()
+			: "dh-off";
 		String lodKey = PauCClientLodGovernor.telemetryStateKey();
 		boolean watchdogSpike = Boolean.parseBoolean(System.getProperty(RUNTIME_FRAME_WATCHDOG_SPIKE_PROPERTY, "false"));
 		recordTransition(now, "governor", lastGovernorKey, governorKey);
@@ -211,7 +213,7 @@ public final class PauCTelemetryTimeline {
 				+ "\"scheduler\":\"" + json(PauCScheduler.describeState()) + "\","
 				+ "\"governor\":\"" + json(governorKey) + "\","
 				+ "\"governorActuation\":\"" + json(PauCClientFpsGovernor.describeActuationState()) + "\","
-				+ "\"embeddedDhActuation\":\"" + json(PauCEmbeddedDhBridge.describeActuationState()) + "\","
+				+ "\"embeddedDhActuation\":\"" + json(fr.hoyatla.pauc.lod.PauCLodBridgeAccess.describeActuationState()) + "\","
 				+ "\"frontierActuation\":\"" + json(PauCClientFrontierWarmupManager.describeActuationState()) + "\","
 				+ "\"surface\":\"" + json(surfaceKey) + "\","
 				+ "\"lodRange\":\"" + json(lodKey) + "\","

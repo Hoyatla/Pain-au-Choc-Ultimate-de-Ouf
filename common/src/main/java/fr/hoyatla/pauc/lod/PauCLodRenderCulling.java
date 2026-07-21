@@ -1,7 +1,6 @@
 package fr.hoyatla.pauc.lod;
 
 import it.unimi.dsi.fastutil.objects.ObjectArrayList;
-import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
@@ -123,7 +122,7 @@ public final class PauCLodRenderCulling {
 		if (!active() || entity == null) {
 			return false;
 		}
-		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+		if (fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShadowPassActive()) {
 			return false;
 		}
 
@@ -163,7 +162,7 @@ public final class PauCLodRenderCulling {
 		if (!active() || blockEntity == null) {
 			return false;
 		}
-		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+		if (fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShadowPassActive()) {
 			return false;
 		}
 

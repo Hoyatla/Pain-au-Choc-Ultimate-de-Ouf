@@ -96,6 +96,12 @@ public final class PauCClientSurfaceLodMode {
 	}
 
 	public static void onClientTick(Minecraft minecraft) {
+		// Standalone safety: this subsystem drives DH quality enums (EDhApi*); without the external DH mod
+		// none of it may execute or the class resolution crashes the client tick.
+		if (!fr.hoyatla.pauc.lod.PauCEmbeddedDhRuntime.isInitialized()) {
+			lastState = SurfaceState.unavailable("dh-not-installed");
+			return;
+		}
 		SurfaceSample sample = recoverTransientSurfaceSample(sample(minecraft));
 		sample = stabilizeFeatureBlockingSample(sample);
 		updateFeatureTransitionState(sample);

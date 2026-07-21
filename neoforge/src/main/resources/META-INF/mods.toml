@@ -19,6 +19,15 @@ versionRange = "*"
 ordering = "NONE"
 side = "CLIENT"
 
+# Distant Horizons is an external dependency since 0.6.0 (no longer embedded). Optional: without it,
+# PauC runs as shader + performance core with the LOD subsystem disabled. Install DH 3.0.x alongside.
+[[dependencies.paucultimate]]
+modId = "distanthorizons"
+mandatory = false
+versionRange = "[3.0,4.0)"
+ordering = "AFTER"
+side = "CLIENT"
+
 
 [mods."paucultimate:options"]
 "mixin.features.render.world.sky" = false

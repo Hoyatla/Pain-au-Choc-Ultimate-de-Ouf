@@ -454,18 +454,20 @@ public final class PauCCudaWorker {
 
 		int samplesPerFeature = 3;
 		int profileMinimum = Math.max(1, (preferredTerrainBatchSize() + samplesPerFeature - 1) / samplesPerFeature);
-		int configuredMinimum = readInt(WORLD_CACHE_COALESCER_MIN_FEATURES_PROPERTY, profileMinimum, 1, 2048);
+		int configuredMinimum = readInt(WORLD_CACHE_COALESCER_MIN_FEATURES_PROPERTY, profileMinimum, 1, 4096);
 		int target = Math.max(sanitized, Math.max(profileMinimum, configuredMinimum));
 		if (hotRestore) {
-			float scale = readFloat(WORLD_CACHE_COALESCER_HOT_RESTORE_SCALE_PROPERTY, 1.25F, 1.0F, 3.0F);
+			float scale = readFloat(WORLD_CACHE_COALESCER_HOT_RESTORE_SCALE_PROPERTY, 1.50F, 1.0F, 4.0F);
 			target = Math.max(target, (int) Math.ceil(target * scale));
 		}
 		if (requestRadius >= 192) {
-			target = Math.max(target, 96);
+			target = Math.max(target, 128);
 		} else if (requestRadius >= 128) {
-			target = Math.max(target, 64);
+			target = Math.max(target, 80);
+		} else if (requestRadius >= 64) {
+			target = Math.max(target, 48);
 		}
-		target = Math.min(2048, target);
+		target = Math.min(4096, target);
 		if (target != sanitized) {
 			WORLD_CACHE_COALESCED_BATCHES.incrementAndGet();
 		}
@@ -1117,7 +1119,11 @@ public final class PauCCudaWorker {
 	}
 
 	private static boolean validatedCudaPath(String enabledProperty, String validatedProperty) {
-		return readBoolean(enabledProperty, false)
+		// P5 CUDA EXPANSION: vanillaMesher, worldgenSupport, hordeFlow, and bulkRestore are now
+		// ENABLED BY DEFAULT. The validated gate still protects against premature activation —
+		// the path only becomes live after the CUDA self-test marks the validated property true.
+		// Users can opt-out via -D{enabledProperty}=false.
+		return readBoolean(enabledProperty, true)
 			&& readBoolean(validatedProperty, false)
 			&& lastState.available()
 			&& readBoolean(CUDA_AVAILABLE_PROPERTY, lastState.available());

@@ -1,9 +1,6 @@
 package net.irisshaders.iris.mixin.entity_render_context;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import fr.hoyatla.pauc.lod.PauCEntityOcclusionCulling;
-import fr.hoyatla.pauc.lod.PauCEntityRenderBudget;
-import fr.hoyatla.pauc.lod.PauCLodRenderCulling;
 import fr.hoyatla.pauc.lod.PauCVillagePerformanceDiagnostics;
 import it.unimi.dsi.fastutil.objects.Object2IntFunction;
 import it.unimi.dsi.fastutil.objects.Reference2IntOpenHashMap;
@@ -47,28 +44,7 @@ public class MixinEntityRenderDispatcher {
 		PAUC_ENTITY_ID_CACHE.defaultReturnValue(Integer.MIN_VALUE);
 	}
 
-	@Inject(method = "render", at = @At("HEAD"), cancellable = true)
-	private void pauc$cullFarEntity(Entity entity, double x, double y, double z, float yaw, float tickDelta,
-									PoseStack poseStack, MultiBufferSource bufferSource, int light,
-									CallbackInfo ci) {
-		if (PauCLodRenderCulling.shouldCullEntity(entity)) {
-			PauCVillagePerformanceDiagnostics.recordEntityCull(entity);
-			ci.cancel();
-			return;
-		}
-		if (PauCEntityOcclusionCulling.shouldCull(entity)) {
-			// Hidden behind opaque terrain (caves/walls): not visible, so skip render + animation entirely.
-			PauCVillagePerformanceDiagnostics.recordEntityCull(entity);
-			ci.cancel();
-			return;
-		}
-		if (PauCEntityRenderBudget.shouldDeferEntityRender(entity)) {
-			// Animation-LOD: dephase tiny far entities during a measured frame spike (no steady-state effect).
-			ci.cancel();
-			return;
-		}
-		PauCVillagePerformanceDiagnostics.recordEntityRender(entity);
-	}
+	// PauC entity culling moved to fr.hoyatla.pauc.mixin.MixinPauCEntityCulling (Iris-removal P2).
 
 	// Inject after MatrixStack#push since at this point we know that most cancellation checks have already passed.
 	@ModifyVariable(method = "render", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/vertex/PoseStack;pushPose()V", shift = At.Shift.AFTER),

@@ -2,7 +2,6 @@ package fr.hoyatla.pauc.lod;
 
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
-import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
@@ -75,7 +74,7 @@ public final class PauCBlockEntityOcclusionCulling {
 		if (!fr.hoyatla.pauc.PauCTunables.readBoolean(ENABLED_PROPERTY, true)) {
 			return false;
 		}
-		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+		if (fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShadowPassActive()) {
 			return false;
 		}
 

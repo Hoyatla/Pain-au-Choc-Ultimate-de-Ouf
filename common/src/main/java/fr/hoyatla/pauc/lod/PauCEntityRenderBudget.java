@@ -1,6 +1,5 @@
 package fr.hoyatla.pauc.lod;
 
-import net.irisshaders.iris.shadows.ShadowRenderingState;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.AABB;
@@ -71,7 +70,7 @@ public final class PauCEntityRenderBudget {
 		if (!PauCFrameSpikeAbsorber.isAbsorbing()) {
 			return false;
 		}
-		if (ShadowRenderingState.areShadowsCurrentlyBeingRendered()) {
+		if (fr.hoyatla.pauc.shadercompat.PauCShaderCompat.isShadowPassActive()) {
 			return false;
 		}
 
