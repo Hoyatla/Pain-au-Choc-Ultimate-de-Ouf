@@ -82,8 +82,13 @@ public final class PauCLodFogRenderer {
 
         this.lastWidth = width;
         this.lastHeight = height;
-        this.fogShader = compileShader("pauc/fog/quad_apply.vert", "pauc/fog/fog.frag");
-        this.applyShader = compileShader("pauc/fog/quad_apply.vert", "pauc/fog/apply.frag");
+        this.fogShader = compileShader("pauc/shared/quad_apply.vert", "pauc/fog/fog.frag");
+        this.applyShader = compileShader("pauc/shared/quad_apply.vert", "pauc/fog/apply.frag");
+        if (fogShader == 0 || applyShader == 0) {
+            LOGGER.warn("PauC fog renderer disabled: shader compilation failed");
+            this.enabled = false;
+            return;
+        }
 
         this.fogFbo = GL32.glGenFramebuffers();
         this.fogColorTex = createColorTexture(width, height, GL32.GL_RGBA16, GL32.GL_RGBA, GL32.GL_UNSIGNED_SHORT);

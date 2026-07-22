@@ -49,9 +49,14 @@ public final class PauCLodFadeRenderer {
 
     public void init() {
         if (initialized) return;
-        this.vanillaFadeShader = compileShader("pauc/fade/quad_apply.vert", "pauc/fade/vanilla_fade.frag");
-        this.dhFadeShader = compileShader("pauc/fade/quad_apply.vert", "pauc/fade/dh_fade.frag");
-        this.applyShader = compileShader("pauc/fade/quad_apply.vert", "pauc/fade/apply.frag");
+        this.vanillaFadeShader = compileShader("pauc/shared/quad_apply.vert", "pauc/fade/vanilla_fade.frag");
+        this.dhFadeShader = compileShader("pauc/shared/quad_apply.vert", "pauc/fade/dh_fade.frag");
+        this.applyShader = compileShader("pauc/shared/quad_apply.vert", "pauc/fade/apply.frag");
+        if (vanillaFadeShader == 0 || dhFadeShader == 0 || applyShader == 0) {
+            LOGGER.warn("PauC fade renderer disabled: shader compilation failed");
+            this.enabled = false;
+            return;
+        }
 
         this.quadVao = GL32.glGenVertexArrays();
         this.quadVbo = GL32.glGenBuffers();

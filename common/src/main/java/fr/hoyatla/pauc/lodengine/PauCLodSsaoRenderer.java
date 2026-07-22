@@ -58,8 +58,13 @@ public final class PauCLodSsaoRenderer {
 
         this.lastWidth = width;
         this.lastHeight = height;
-        this.aoShader = compileShader("pauc/ssao/quad_apply.vert", "pauc/ssao/ao.frag");
-        this.applyShader = compileShader("pauc/ssao/quad_apply.vert", "pauc/ssao/apply.frag");
+        this.aoShader = compileShader("pauc/shared/quad_apply.vert", "pauc/ssao/ao.frag");
+        this.applyShader = compileShader("pauc/shared/quad_apply.vert", "pauc/ssao/apply.frag");
+        if (aoShader == 0 || applyShader == 0) {
+            LOGGER.warn("PauC SSAO renderer disabled: shader compilation failed");
+            this.enabled = false;
+            return;
+        }
 
         this.ssaoFbo = GL32.glGenFramebuffers();
         this.ssaoTex = createR16FTexture(width, height);

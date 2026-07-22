@@ -123,6 +123,13 @@ public final class PauCSurfaceWitnessRenderer {
 	private static volatile float fogStartChunksShared;
 	private static volatile float fogEndChunksShared;
 	// Trunk/dirt/stone colours resolved once from the block textures (render thread, atlas loaded).
+	// DH-imported utilities: circuit breaker (auto-disable on repeated failures, resettable),
+	// GL state save/restore, SSAO/fog/fade post-processors.
+	private static final PauCCircuitBreaker RENDER_BREAKER = new PauCCircuitBreaker("WitnessRenderer", 4, 2000);
+	private static final PauCLodSsaoRenderer SSAO = PauCLodSsaoRenderer.getInstance();
+	private static final PauCLodFogRenderer FOG = PauCLodFogRenderer.getInstance();
+	private static final PauCLodFadeRenderer FADE = PauCLodFadeRenderer.getInstance();
+	private static boolean postProcessorsInitialized;
 	private static final PauCBlockColorCache MATERIAL_CACHE = new PauCBlockColorCache();
 	private static float trunkR = 109.0F;
 	private static float trunkG = 87.0F;
@@ -458,6 +465,9 @@ public final class PauCSurfaceWitnessRenderer {
 			return;
 		}
 
+		if (RENDER_BREAKER.isTripped()) {
+			return;
+		}
 		try {
 			// CEILING DIMENSIONS (Nether): MULTI-DIM (07-20, user). A heightfield can't capture the
 			// Nether's full 3D volume, but the store already samples the WALKABLE surface under the roof
@@ -531,47 +541,93 @@ public final class PauCSurfaceWitnessRenderer {
 			}
 			int drawnVisible = visibleMeshes.size();
 
-			poseStack.pushPose();
-			poseStack.translate(originX - cameraPos.x, originY - cameraPos.y, originZ - cameraPos.z);
-			RenderSystem.enableDepthTest();
-			RenderSystem.depthMask(true);
-			RenderSystem.disableCull();
-			// Blend ON for the whole LOD draw: opaque tiles carry alpha 255 (blend is a no-op → identical
-			// to opaque), only the seam-fade ring carries alpha < 255 and dissolves into vanilla. Water
-			// (alpha 185) also uses this same blend func; depthMask stays ON so water reads as solid.
-			RenderSystem.enableBlend();
-			RenderSystem.defaultBlendFunc();
-			org.joml.Matrix4f pose = poseStack.last().pose();
-			org.joml.Matrix4f proj = RenderSystem.getProjectionMatrix();
-			for (int i = 0; i < drawnVisible; i++) {
-				RegionMesh mesh = visibleMeshes.get(i);
-				if (mesh.opaque != null && mesh.quads > 0) {
-					mesh.opaque.bind();
-					mesh.opaque.drawWithShader(pose, proj, shader);
-				}
+			// Initialize post-processors on first use (needs GL context + dimensions).
+			// Each init is independent: one failure doesn't block the others.
+			if (!postProcessorsInitialized) {
+				postProcessorsInitialized = true;
+				try {
+					int fbW = minecraft.getWindow().getWidth();
+					int fbH = minecraft.getWindow().getHeight();
+					SSAO.init(fbW, fbH);
+				} catch (Throwable t) { LOGGER.debug("SSAO init skipped: {}", t.getMessage()); }
+				try {
+					int fbW = minecraft.getWindow().getWidth();
+					int fbH = minecraft.getWindow().getHeight();
+					FOG.init(fbW, fbH);
+				} catch (Throwable t) { LOGGER.debug("Fog init skipped: {}", t.getMessage()); }
+				try {
+					FADE.init();
+				} catch (Throwable t) { LOGGER.debug("Fade init skipped: {}", t.getMessage()); }
 			}
-			for (int i = 0; i < drawnVisible; i++) {
-				RegionMesh mesh = visibleMeshes.get(i);
-				if (mesh.water != null && mesh.waterQuads > 0) {
-					mesh.water.bind();
-					mesh.water.drawWithShader(pose, proj, shader);
+
+			// DH-imported GL state safety: snapshot ALL OpenGL state before our draw calls,
+			// restore on exit — prevents state leaking into MC/Iris/Sodium.
+			try (PauCGLState glState = new PauCGLState()) {
+				poseStack.pushPose();
+				poseStack.translate(originX - cameraPos.x, originY - cameraPos.y, originZ - cameraPos.z);
+				RenderSystem.enableDepthTest();
+				RenderSystem.depthMask(true);
+				RenderSystem.disableCull();
+				// Blend ON for the whole LOD draw: opaque tiles carry alpha 255 (blend is a no-op -> identical
+				// to opaque), only the seam-fade ring carries alpha < 255 and dissolves into vanilla. Water
+				// (alpha 185) also uses this same blend func; depthMask stays ON so water reads as solid.
+				RenderSystem.enableBlend();
+				RenderSystem.defaultBlendFunc();
+				org.joml.Matrix4f pose = poseStack.last().pose();
+				org.joml.Matrix4f proj = RenderSystem.getProjectionMatrix();
+				for (int i = 0; i < drawnVisible; i++) {
+					RegionMesh mesh = visibleMeshes.get(i);
+					if (mesh.opaque != null && mesh.quads > 0) {
+						mesh.opaque.bind();
+						mesh.opaque.drawWithShader(pose, proj, shader);
+					}
 				}
-			}
-			RenderSystem.disableBlend();
-			VertexBuffer.unbind();
-			RenderSystem.enableCull();
-			poseStack.popPose();
+				for (int i = 0; i < drawnVisible; i++) {
+					RegionMesh mesh = visibleMeshes.get(i);
+					if (mesh.water != null && mesh.waterQuads > 0) {
+						mesh.water.bind();
+						mesh.water.drawWithShader(pose, proj, shader);
+					}
+				}
+				RenderSystem.disableBlend();
+				VertexBuffer.unbind();
+				RenderSystem.enableCull();
+				poseStack.popPose();
+
+				// --- DH-imported post-processing passes ---
+				// SSAO: depth-based ambient occlusion on LOD terrain (if enabled via pauc.lodengine.ssao).
+				if (SSAO.isEnabled()) {
+					try {
+						// SSAO reads from the LOD depth — rendered as part of the main draw above.
+						// When a dedicated LOD FBO is wired, the depth texture would be passed here.
+						// For now SSAO is available but requires FBO integration (next step).
+					} catch (Throwable ignored) { }
+				}
+
+				// Enhanced fog: dual-pass post-process (far + height fog) replacing the vertex-baked fog
+				// when pauc.lodengine.enhancedFog is enabled. Falls back to vertex-baked fog when off.
+				if (FOG.isEnabled() && PauCTunables.readBoolean("pauc.lodengine.enhancedFog", false)) {
+					try {
+						FOG.setFogColor(fogStartChunksShared > 0 ? 0.65F : 1.0F, 0.75F, 0.92F);
+						// Fog render requires the LOD depth texture — when the LOD FBO path is wired,
+						// this will composite fog over the terrain. For now the vertex-baked fog remains
+						// the primary path; enhanced fog activates when the FBO is available.
+					} catch (Throwable ignored) { }
+				}
+			} // PauCGLState auto-restores all GL state here
 
 			if (!firstDrawLogged) {
 				firstDrawLogged = true;
 				LOGGER.info("PauC LOD engine witness renderer: first PauC-drawn horizon tiles on screen ({} quads).", builtQuads);
 			}
+			RENDER_BREAKER.recordSuccess();
 		} catch (Throwable throwable) {
-			if (!renderFailureLogged) {
+			RENDER_BREAKER.recordFailure();
+			if (!renderFailureLogged && RENDER_BREAKER.isTripped()) {
 				renderFailureLogged = true;
-				LOGGER.warn("PauC LOD engine witness renderer failed; disabled for this session.", throwable);
+				LOGGER.warn("PauC LOD engine witness renderer tripped circuit breaker ({} failures); disabled. Call PauCCircuitBreaker.reset() to retry.",
+					RENDER_BREAKER.getState(), throwable);
 			}
-			System.setProperty(ENABLED_PROPERTY, "false");
 		}
 	}
 
