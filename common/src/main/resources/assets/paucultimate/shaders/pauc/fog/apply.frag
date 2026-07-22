@@ -7,9 +7,8 @@ uniform sampler2D uFogMap;
 uniform sampler2D uColorMap;
 
 void main() {
-    float depth = texture(uColorMap, TexCoord).a;
-    if (depth >= 1.0) { discard; }
     vec4 color = texture(uColorMap, TexCoord);
+    if (color.a <= 0.0) { discard; }
     vec4 fog = texture(uFogMap, TexCoord);
     fragColor = vec4(mix(color.rgb, fog.rgb, fog.a), color.a);
 }

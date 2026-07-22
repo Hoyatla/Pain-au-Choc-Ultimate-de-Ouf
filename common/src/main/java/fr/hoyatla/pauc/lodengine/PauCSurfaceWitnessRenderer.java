@@ -15,10 +15,9 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.Vec3;
+import org.lwjgl.opengl.GL32;
 import org.slf4j.Logger;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -130,6 +129,10 @@ public final class PauCSurfaceWitnessRenderer {
 	private static final PauCLodFogRenderer FOG = PauCLodFogRenderer.getInstance();
 	private static final PauCLodFadeRenderer FADE = PauCLodFadeRenderer.getInstance();
 	private static boolean postProcessorsInitialized;
+	private static int lodFbo;
+	private static int lodColorTex;
+	private static int lodDepthTex;
+	private static int lastFboW, lastFboH;
 	private static final PauCBlockColorCache MATERIAL_CACHE = new PauCBlockColorCache();
 	private static float trunkR = 109.0F;
 	private static float trunkG = 87.0F;
@@ -152,12 +155,9 @@ public final class PauCSurfaceWitnessRenderer {
 	//     re-mesh, in place, against the current snapshot -> new terrain appears within one pool cycle
 	//     instead of waiting for a whole-world rebuild. This is what makes near detail "update live".
 	private static final int MESH_POOL_THREADS = Math.max(2, Math.min(4, Runtime.getRuntime().availableProcessors() - 2));
-	private static final ExecutorService MESH_POOL = Executors.newFixedThreadPool(MESH_POOL_THREADS, runnable -> {
-		Thread thread = new Thread(runnable, "PauC-LodEngine-Mesh");
-		thread.setDaemon(true);
-		thread.setPriority(Thread.NORM_PRIORITY - 1);
-		return thread;
-	});
+	private static final PauCPriorityTaskPicker TASK_PICKER = new PauCPriorityTaskPicker(MESH_POOL_THREADS);
+	private static final PauCPriorityTaskPicker.PooledExecutor MESH_EXECUTOR =
+		TASK_PICKER.createExecutor("Mesh");
 	/** Vertex writers + emission state — POOLED, never reused until the render thread has uploaded. */
 	private static final class BuildCtx {
 		final BufferBuilder main = new BufferBuilder(2 * 1024 * 1024);
@@ -453,6 +453,49 @@ public final class PauCSurfaceWitnessRenderer {
 	}
 
 
+	// ---- LOD FBO: offscreen render target for post-processor depth/color access ----
+
+	private static void ensureLodFbo(int w, int h) {
+		if (lodFbo != 0 && lastFboW == w && lastFboH == h) return;
+		destroyLodFbo();
+		lastFboW = w;
+		lastFboH = h;
+		try {
+			lodFbo = GL32.glGenFramebuffers();
+			lodColorTex = createLodTex(w, h, GL32.GL_RGBA8, GL32.GL_RGBA, GL32.GL_UNSIGNED_BYTE);
+			lodDepthTex = createLodTex(w, h, GL32.GL_DEPTH_COMPONENT32F, GL32.GL_DEPTH_COMPONENT, GL32.GL_FLOAT);
+			GL32.glBindFramebuffer(GL32.GL_FRAMEBUFFER, lodFbo);
+			GL32.glFramebufferTexture2D(GL32.GL_FRAMEBUFFER, GL32.GL_COLOR_ATTACHMENT0, GL32.GL_TEXTURE_2D, lodColorTex, 0);
+			GL32.glFramebufferTexture2D(GL32.GL_FRAMEBUFFER, GL32.GL_DEPTH_ATTACHMENT, GL32.GL_TEXTURE_2D, lodDepthTex, 0);
+			int status = GL32.glCheckFramebufferStatus(GL32.GL_FRAMEBUFFER);
+			GL32.glBindFramebuffer(GL32.GL_FRAMEBUFFER, 0);
+			if (status != GL32.GL_FRAMEBUFFER_COMPLETE) {
+				LOGGER.warn("PauC LOD FBO incomplete: 0x{}", Integer.toHexString(status));
+				destroyLodFbo();
+			}
+		} catch (Throwable t) {
+			LOGGER.debug("LOD FBO creation failed: {}", t.getMessage());
+			destroyLodFbo();
+		}
+	}
+
+	private static void destroyLodFbo() {
+		if (lodFbo != 0) { GL32.glDeleteFramebuffers(lodFbo); lodFbo = 0; }
+		if (lodColorTex != 0) { GL32.glDeleteTextures(lodColorTex); lodColorTex = 0; }
+		if (lodDepthTex != 0) { GL32.glDeleteTextures(lodDepthTex); lodDepthTex = 0; }
+	}
+
+	private static int createLodTex(int w, int h, int internalFmt, int fmt, int type) {
+		int tex = GL32.glGenTextures();
+		GL32.glBindTexture(GL32.GL_TEXTURE_2D, tex);
+		GL32.glTexImage2D(GL32.GL_TEXTURE_2D, 0, internalFmt, w, h, 0, fmt, type, 0L);
+		GL32.glTexParameteri(GL32.GL_TEXTURE_2D, GL32.GL_TEXTURE_MIN_FILTER, GL32.GL_NEAREST);
+		GL32.glTexParameteri(GL32.GL_TEXTURE_2D, GL32.GL_TEXTURE_MAG_FILTER, GL32.GL_NEAREST);
+		GL32.glTexParameteri(GL32.GL_TEXTURE_2D, GL32.GL_TEXTURE_WRAP_S, GL32.GL_CLAMP_TO_EDGE);
+		GL32.glTexParameteri(GL32.GL_TEXTURE_2D, GL32.GL_TEXTURE_WRAP_T, GL32.GL_CLAMP_TO_EDGE);
+		return tex;
+	}
+
 	private PauCSurfaceWitnessRenderer() {
 	}
 
@@ -562,17 +605,31 @@ public final class PauCSurfaceWitnessRenderer {
 
 			// DH-imported GL state safety: snapshot ALL OpenGL state before our draw calls,
 			// restore on exit — prevents state leaking into MC/Iris/Sodium.
+			int fbW = minecraft.getWindow().getWidth();
+			int fbH = minecraft.getWindow().getHeight();
+			ensureLodFbo(fbW, fbH);
+
 			try (PauCGLState glState = new PauCGLState()) {
+				// Redirect LOD rendering to offscreen FBO when available.
+				if (lodFbo != 0) {
+					GL32.glBindFramebuffer(GL32.GL_FRAMEBUFFER, lodFbo);
+					GL32.glViewport(0, 0, fbW, fbH);
+					GL32.glClear(GL32.GL_COLOR_BUFFER_BIT | GL32.GL_DEPTH_BUFFER_BIT);
+				}
+
 				poseStack.pushPose();
 				poseStack.translate(originX - cameraPos.x, originY - cameraPos.y, originZ - cameraPos.z);
 				RenderSystem.enableDepthTest();
 				RenderSystem.depthMask(true);
 				RenderSystem.disableCull();
-				// Blend ON for the whole LOD draw: opaque tiles carry alpha 255 (blend is a no-op -> identical
-				// to opaque), only the seam-fade ring carries alpha < 255 and dissolves into vanilla. Water
-				// (alpha 185) also uses this same blend func; depthMask stays ON so water reads as solid.
-				RenderSystem.enableBlend();
-				RenderSystem.defaultBlendFunc();
+				// When drawing into the LOD FBO: no blending for opaque pass so vertex alpha
+				// is preserved in the color texture for correct composite over vanilla.
+				// When drawing directly to backbuffer (FBO unavailable): standard blend.
+				boolean useFbo = lodFbo != 0;
+				if (!useFbo) {
+					RenderSystem.enableBlend();
+					RenderSystem.defaultBlendFunc();
+				}
 				org.joml.Matrix4f pose = poseStack.last().pose();
 				org.joml.Matrix4f proj = RenderSystem.getProjectionMatrix();
 				for (int i = 0; i < drawnVisible; i++) {
@@ -581,6 +638,16 @@ public final class PauCSurfaceWitnessRenderer {
 						mesh.opaque.bind();
 						mesh.opaque.drawWithShader(pose, proj, shader);
 					}
+				}
+				// Water pass: blend water with terrain already in the buffer.
+				// Use separate blend to preserve source alpha for the fog composite.
+				RenderSystem.enableBlend();
+				if (useFbo) {
+					GL32.glBlendFuncSeparate(
+						GL32.GL_SRC_ALPHA, GL32.GL_ONE_MINUS_SRC_ALPHA,
+						GL32.GL_ONE, GL32.GL_ZERO);
+				} else {
+					RenderSystem.defaultBlendFunc();
 				}
 				for (int i = 0; i < drawnVisible; i++) {
 					RegionMesh mesh = visibleMeshes.get(i);
@@ -592,26 +659,44 @@ public final class PauCSurfaceWitnessRenderer {
 				RenderSystem.disableBlend();
 				VertexBuffer.unbind();
 				RenderSystem.enableCull();
+
+				// Capture matrices for post-processing before popPose invalidates the reference.
+				float[] projArr = new float[16];
+				float[] invProjArr = new float[16];
+				float[] invMvpArr = new float[16];
+				{
+					org.joml.Matrix4f projMat = new org.joml.Matrix4f(proj);
+					org.joml.Matrix4f poseMat = new org.joml.Matrix4f(pose);
+					projMat.get(projArr);
+					new org.joml.Matrix4f(projMat).invert().get(invProjArr);
+					org.joml.Matrix4f mvp = new org.joml.Matrix4f(projMat).mul(poseMat);
+					new org.joml.Matrix4f(mvp).invert().get(invMvpArr);
+				}
+
 				poseStack.popPose();
+
+				// Unbind LOD FBO — post-processors write to MC's backbuffer.
+				if (useFbo) {
+					GL32.glBindFramebuffer(GL32.GL_FRAMEBUFFER, 0);
+					GL32.glViewport(0, 0, fbW, fbH);
+				}
 
 				// --- DH-imported post-processing passes ---
 				// SSAO: depth-based ambient occlusion on LOD terrain (if enabled via pauc.lodengine.ssao).
-				if (SSAO.isEnabled()) {
+				if (SSAO.isEnabled() && useFbo) {
 					try {
-						// SSAO reads from the LOD depth — rendered as part of the main draw above.
-						// When a dedicated LOD FBO is wired, the depth texture would be passed here.
-						// For now SSAO is available but requires FBO integration (next step).
+						SSAO.render(lodDepthTex, projArr, invProjArr);
 					} catch (Throwable ignored) { }
 				}
 
 				// Enhanced fog: dual-pass post-process (far + height fog) replacing the vertex-baked fog
 				// when pauc.lodengine.enhancedFog is enabled. Falls back to vertex-baked fog when off.
-				if (FOG.isEnabled() && PauCTunables.readBoolean("pauc.lodengine.enhancedFog", false)) {
+				if (FOG.isEnabled() && PauCTunables.readBoolean("pauc.lodengine.enhancedFog", false) && useFbo) {
 					try {
 						FOG.setFogColor(fogStartChunksShared > 0 ? 0.65F : 1.0F, 0.75F, 0.92F);
-						// Fog render requires the LOD depth texture — when the LOD FBO path is wired,
-						// this will composite fog over the terrain. For now the vertex-baked fog remains
-						// the primary path; enhanced fog activates when the FBO is available.
+						float renderDist = minecraft.options.getEffectiveRenderDistance();
+						FOG.renderFog(lodColorTex, lodDepthTex, 0,
+							projArr, invMvpArr, renderDist, (float) cameraPos.y);
 					} catch (Throwable ignored) { }
 				}
 			} // PauCGLState auto-restores all GL state here
@@ -894,7 +979,7 @@ public final class PauCSurfaceWitnessRenderer {
 
 	private static void enqueueRegion(long regionKey, MeshJob job, int stamp, boolean incremental) {
 		inFlight.incrementAndGet();
-		MESH_POOL.submit(() -> {
+		MESH_EXECUTOR.submit(() -> {
 			try {
 				buildOneRegion(job, regionKey, stamp, incremental);
 			} catch (Throwable throwable) {
